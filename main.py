@@ -1,10 +1,10 @@
 from fastapi import FastAPI, Request, Depends, HTTPException, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from .database import get_db, User
-from .auth import login, logout, get_current_user
+from database import SessionLocal, User, get_db
+from auth import login, logout, get_current_user
 import uvicorn
 
 app = FastAPI()
@@ -26,11 +26,12 @@ async def login_page(request: Request):
 @app.post("/login")
 async def login_post(
     request: Request,
+    response: Response,
     username: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    if login(request, request, username, password, db):
+    if login(request, response, username, password, db):
         return RedirectResponse(url="/", status_code=303)
     return RedirectResponse(url="/login?error=1", status_code=303)
 

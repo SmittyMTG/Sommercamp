@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from passlib.context import CryptContext
+from fastapi import Depends
 
 # SQLite DB
 DATABASE_URL = "sqlite:///./users.db"
@@ -22,6 +23,14 @@ class User(Base):
 # Create tables
 Base.metadata.create_all(bind=engine)
 
+# Dependency to get DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 # Add a test user (run once)
 def add_test_user():
     db = SessionLocal()
@@ -32,4 +41,4 @@ def add_test_user():
     db.close()
 
 # Uncomment to create a test user:
-# add_test_user()
+#add_test_user()

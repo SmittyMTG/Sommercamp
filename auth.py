@@ -2,7 +2,7 @@ from fastapi import Depends, HTTPException, status, Request, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
-from .database import SessionLocal, User
+from database import SessionLocal, User
 from fastapi.responses import RedirectResponse
 import secrets
 
@@ -12,14 +12,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # Session management
 SECRET_KEY = secrets.token_urlsafe(32)
 session_storage = {}
-
-# Dependency to get DB session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # Verify password
 def verify_password(plain_password, hashed_password):
@@ -37,7 +29,7 @@ def authenticate_user(db: Session, username: str, password: str):
     return user
 
 # Login
-def login(request: Request, response: Response, username: str, password: str, db: Session = Depends(get_db)):
+def login(request: Request, response: Response, username: str, password: str, db: Session):
     user = authenticate_user(db, username, password)
     if not user:
         return False
