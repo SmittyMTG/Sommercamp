@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>Welcome, {{ user }}!</h1>
+<p>This is your dynamic website.</p>
+<a href="/calculator" class="btn btn-success">Go to Calculator</a>
+<a href="/logout" class="btn btn-danger">Logout</a>
+{% endblock %}
