@@ -3,7 +3,7 @@
 // Screen-Navigation + Countdown. Datenanbindung folgt später.
 // ===========================================================
 
-const CAMP_START = new Date("2026-08-03T00:00:00");
+const CAMP_START = new Date("2026-08-04T00:00:00");
 const CAMP_END = new Date("2026-08-16T23:59:59");
 
 /* ---------- Screen switching ---------- */
@@ -50,8 +50,9 @@ function updateCountdown() {
   const days = Math.floor(diffMs / 86400000);
   const hours = Math.floor((diffMs % 86400000) / 3600000);
   const minutes = Math.floor((diffMs % 3600000) / 60000);
+  const seconds = Math.floor((diffMs % 60000) / 1000);
 
-  el.innerHTML = `${days}<small>T</small> ${hours}<small>Std</small> ${minutes}<small>Min</small>`;
+  el.innerHTML = `${days}<small>T</small> ${hours}<small>Std</small> ${minutes}<small>Min</small> ${seconds}<small>Sek</small>`;
 
   if (progressEl) {
     // Fortschritt seit "heute - 60 Tage" als grobe Annäherung, rein optisch
@@ -66,5 +67,5 @@ function updateCountdown() {
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
   updateCountdown();
-  setInterval(updateCountdown, 60000);
+  setInterval(updateCountdown, 1000);
 });
