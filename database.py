@@ -6,7 +6,7 @@ from fastapi import Depends
 from datetime import datetime
 
 # SQLite DB
-DATABASE_URL = "sqlite:///./users.db"
+DATABASE_URL = "sqlite:///./camp.db"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
