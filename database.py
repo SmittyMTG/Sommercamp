@@ -19,6 +19,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
+    role = Column(String)
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -32,13 +33,12 @@ def get_db():
         db.close()
 
 # Add a test user (run once)
-def add_test_user():
+def add_test_user(pUsername, pPassword, pRole):
     db = SessionLocal()
-    hashed_password = pwd_context.hash("password123")
-    db_user = User(username="admin", hashed_password=hashed_password)
+    hashed_password = pwd_context.hash(pPassword)
+    db_user = User(username=pUsername, hashed_password=hashed_password, role=pRole)
     db.add(db_user)
     db.commit()
     db.close()
 
-# Uncomment to create a test user:
-#add_test_user()
+    
