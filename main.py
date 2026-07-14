@@ -11,11 +11,20 @@ from auth import login, logout, get_current_user
 import uvicorn
 
 BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+
+
+def static_version(filename: str) -> int:
+    """mtime of a static file, used as a cache-busting query param."""
+    return int((STATIC_DIR / filename).stat().st_mtime)
+
+
+templates.env.globals["static_version"] = static_version
 
 
 # --- Schemas ---
