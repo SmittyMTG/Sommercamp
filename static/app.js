@@ -63,9 +63,151 @@ function updateCountdown() {
   }
 }
 
+/* ---------- Helpers ---------- */
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+/* ---------- Generic modal ---------- */
+const modal = document.getElementById("modal");
+const modalForm = document.getElementById("modalForm");
+const modalTitle = document.getElementById("modalTitle");
+const modalEyebrow = document.getElementById("modalEyebrow");
+const modalBody = document.getElementById("modalBody");
+
+let modalSubmitHandler = null;
+
+function openModal({ eyebrow, title, bodyHtml, onSubmit }) {
+  modalEyebrow.textContent = eyebrow || "";
+  modalTitle.textContent = title || "";
+  modalBody.innerHTML = bodyHtml || "";
+  modalSubmitHandler = onSubmit;
+  modal.showModal();
+  const firstInput = modalBody.querySelector("input, textarea, select");
+  if (firstInput) firstInput.focus();
+}
+
+function closeModal() {
+  modal.close();
+  modalForm.reset();
+  modalSubmitHandler = null;
+}
+
+document.getElementById("modalClose").addEventListener("click", closeModal);
+document.getElementById("modalCancel").addEventListener("click", closeModal);
+modal.addEventListener("click", (e) => {
+  if (e.target === modal) closeModal();
+});
+
+modalForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (modalSubmitHandler) {
+    await modalSubmitHandler();
+  }
+});
+
+/* ---------- Einkaufsliste ---------- */
+const shoppingListEl = document.getElementById("shoppingList");
+const quickShoppingEl = document.getElementById("quickShopping");
+
+function renderShoppingItem(item) {
+  const row = document.createElement("div");
+  row.className = "list-item" + (item.done ? " done" : "");
+  row.dataset.id = item.id;
+  row.innerHTML = `
+    <input type="checkbox" ${item.done ? "checked" : ""} aria-label="Erledigt">
+    <div class="list-item-name">${escapeHtml(item.name)}</div>
+    <button type="button" class="list-item-delete" aria-label="Löschen">×</button>
+  `;
+
+  row.querySelector('input[type="checkbox"]').addEventListener("change", async () => {
+    const res = await fetch(`/api/shopping/${item.id}/toggle`, { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      item.done = data.done;
+      row.classList.toggle("done", data.done);
+      updateQuickShoppingCount();
+    }
+  });
+
+  row.querySelector(".list-item-delete").addEventListener("click", async () => {
+    const res = await fetch(`/api/shopping/${item.id}`, { method: "DELETE" });
+    if (res.ok) {
+      row.remove();
+      updateQuickShoppingCount();
+      if (!shoppingListEl.querySelector(".list-item")) {
+        shoppingListEl.innerHTML = `<div class="empty-state"><p>Einkaufsliste ist noch leer.</p></div>`;
+      }
+    }
+  });
+
+  return row;
+}
+
+function updateQuickShoppingCount() {
+  if (!quickShoppingEl) return;
+  const open = shoppingListEl.querySelectorAll(".list-item:not(.done)").length;
+  quickShoppingEl.textContent = `${open} offen`;
+}
+
+async function loadShoppingList() {
+  try {
+    const res = await fetch("/api/shopping");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const items = await res.json();
+
+    shoppingListEl.innerHTML = "";
+    if (items.length === 0) {
+      shoppingListEl.innerHTML = `<div class="empty-state"><p>Einkaufsliste ist noch leer.</p></div>`;
+    } else {
+      items.forEach((item) => shoppingListEl.appendChild(renderShoppingItem(item)));
+    }
+    updateQuickShoppingCount();
+  } catch (err) {
+    shoppingListEl.innerHTML = `<div class="empty-state"><p>Liste konnte nicht geladen werden.</p></div>`;
+  }
+}
+
+function openAddShoppingModal() {
+  openModal({
+    eyebrow: "Einkauf",
+    title: "Artikel hinzufügen",
+    bodyHtml: `
+      <label>Produktname
+        <input type="text" id="shoppingNameInput" placeholder="z. B. Kohle für den Grill" required>
+      </label>
+    `,
+    onSubmit: async () => {
+      const input = document.getElementById("shoppingNameInput");
+      const name = input.value.trim();
+      if (!name) return;
+
+      const res = await fetch("/api/shopping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      if (res.ok) {
+        const item = await res.json();
+        const emptyState = shoppingListEl.querySelector(".empty-state");
+        if (emptyState) emptyState.remove();
+        shoppingListEl.prepend(renderShoppingItem(item));
+        updateQuickShoppingCount();
+        closeModal();
+      }
+    },
+  });
+}
+
+document.getElementById("addShoppingButton").addEventListener("click", openAddShoppingModal);
+
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
   updateCountdown();
   setInterval(updateCountdown, 1000);
+  loadShoppingList();
 });

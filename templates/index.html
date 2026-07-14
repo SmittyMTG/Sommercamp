@@ -116,9 +116,7 @@
           <button id="addShoppingButton" class="primary compact">＋ Artikel</button>
         </div>
         <div id="shoppingList" class="stack">
-          <div class="empty-state">
-            <p>Einkaufsliste ist noch leer.</p>
-          </div>
+          <div class="empty-state">Lädt …</div>
         </div>
       </section>
 
@@ -165,6 +163,23 @@
     <button class="nav-item" data-screen="shopping"><span>✓</span>Einkauf</button>
     <button class="nav-item" data-screen="more"><span>•••</span>Mehr</button>
   </nav>
+
+  <dialog id="modal">
+    <form id="modalForm" class="modal-card">
+      <div class="modal-header">
+        <div>
+          <div id="modalEyebrow" class="eyebrow"></div>
+          <h2 id="modalTitle"></h2>
+        </div>
+        <button type="button" id="modalClose" class="icon-button" aria-label="Schließen">×</button>
+      </div>
+      <div id="modalBody" class="form-stack"></div>
+      <div class="modal-actions">
+        <button type="button" id="modalCancel" class="secondary">Abbrechen</button>
+        <button type="submit" id="modalSubmit" class="primary">Speichern</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="/static/app.js" defer></script>
 </body>
