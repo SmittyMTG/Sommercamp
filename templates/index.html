@@ -3,12 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0c0c0f">
+  <meta name="theme-color" content="#10140F">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="OFFMAP">
-  <link rel="stylesheet" href="static/style.css">
-  <title>OFFMAP 2026</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <title>Sommercamp 2026</title>
 </head>
 <body>
   <div id="offlineBar" class="offline hidden">Keine Verbindung – geladene Inhalte bleiben sichtbar.</div>
@@ -16,177 +19,153 @@
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="brand">OFFMAP</div>
-        <div class="subtitle">Sommercamp 2026</div>
+        <div class="brand">Sommercamp<span class="brand-accent">26</span></div>
+        <div class="subtitle">Final Chapter · 04.–16. August</div>
       </div>
-      <button id="profileButton" class="avatar-button" aria-label="Profil">?</button>
+      <button id="profileButton" class="avatar-button" aria-label="Profil">{{ user.username[0]|upper if user and user.username else "?" }}</button>
     </header>
 
-    <section id="setupScreen" class="setup-screen hidden">
-      <div class="hero-card setup-card">
-        <div class="eyebrow">Einmalige Einrichtung</div>
-        <h1>Wer bist du?</h1>
-        <p>Wähle deinen Namen und gib den Camp-Code ein. Henning trägt zusätzlich den Admin-PIN ein.</p>
-        <form id="claimForm" class="form-stack">
-          <label>Name
-            <select id="claimName" required></select>
-          </label>
-          <label>Camp-Code
-            <input id="claimCode" autocomplete="off" placeholder="OFFMAP26" required>
-          </label>
-          <label id="adminPinWrap">Admin-PIN
-            <input id="claimAdminPin" inputmode="numeric" autocomplete="off" placeholder="Nur Henning">
-          </label>
-          <button class="primary" type="submit">App öffnen</button>
-          <p id="claimError" class="error-text"></p>
-        </form>
-      </div>
-    </section>
-
-    <section id="configScreen" class="setup-screen hidden">
-      <div class="hero-card setup-card">
-        <div class="eyebrow">Noch nicht online verbunden</div>
-        <h1>Die App-Dateien sind fertig.</h1>
-        <p>Trage in <strong>config.js</strong> die Supabase-Daten ein und veröffentliche den Ordner. Die genaue Anleitung liegt bei.</p>
-      </div>
-    </section>
-
-    <section id="appContent" class="hidden">
+    <section id="appContent">
+      <!-- ============ HOME ============ -->
       <section id="screen-home" class="screen active">
         <div class="hero-card">
-          <div class="eyebrow">Countdown bis zum Camp</div>
-          <div id="countdown" class="countdown">Wird geladen …</div>
-          <div id="campRange" class="muted">04.–16. August 2026</div>
-          <div class="progress"><span id="countdownProgress"></span></div>
-        </div>
-
-        <div id="installCard" class="card accent-card hidden">
-          <div>
-            <strong>Als App installieren</strong>
-            <p id="installText">Zum Home-Bildschirm hinzufügen, damit OFFMAP wie eine normale App geöffnet wird.</p>
+          <div class="contour-field" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
           </div>
-          <button id="installButton" class="small-button">Installieren</button>
+          <div class="hero-inner">
+            <div class="eyebrow">Countdown bis zum Camp</div>
+            <div id="countdown" class="countdown">--<small>T</small> --<small>Std</small> --<small>Min</small></div>
+            <div id="campRange" class="muted">04.–16. August 2026</div>
+            <div class="progress"><span id="countdownProgress"></span></div>
+          </div>
         </div>
-
-        <div id="announcementCard" class="card announcement hidden"></div>
 
         <div class="section-heading">
           <div>
             <div class="eyebrow">Dashboard</div>
             <h2 id="todayHeading">Heute geplant</h2>
           </div>
-          <button id="adminAddPlanHome" class="icon-button admin-only hidden">＋</button>
         </div>
-        <div id="todayPlan" class="stack"></div>
-
-        <div class="section-heading">
-          <h2>Für dich</h2>
+        <div id="todayPlan" class="stack">
+          <div class="empty-state">
+            <p>Noch nichts geplant für heute.</p>
+          </div>
         </div>
-        <div id="personalSummary" class="summary-grid"></div>
 
         <div class="section-heading">
           <h2>Schnellzugriff</h2>
         </div>
         <div class="quick-grid">
-          <button data-go="costs" class="quick-card"><span>💶</span><strong>Ausgabe</strong><small>In Sekunden eintragen</small></button>
-          <button data-go="shopping" class="quick-card"><span>🛒</span><strong>Einkauf</strong><small id="quickShopping">0 offen</small></button>
-          <button data-go="plan" class="quick-card"><span>📅</span><strong>Gesamtplan</strong><small>Alle Camp-Tage</small></button>
-          <button data-go="more" class="quick-card"><span>📌</span><strong>Mehr</strong><small>Aufgaben & Infos</small></button>
+          <button data-go="costs" class="quick-card">
+            <span class="quick-icon">€</span>
+            <strong>Ausgabe</strong>
+            <small>In Sekunden eintragen</small>
+          </button>
+          <button data-go="shopping" class="quick-card">
+            <span class="quick-icon">✓</span>
+            <strong>Einkauf</strong>
+            <small id="quickShopping">0 offen</small>
+          </button>
+          <button data-go="plan" class="quick-card">
+            <span class="quick-icon">▣</span>
+            <strong>Gesamtplan</strong>
+            <small>Alle Camp-Tage</small>
+          </button>
+          <button data-go="more" class="quick-card">
+            <span class="quick-icon">•••</span>
+            <strong>Mehr</strong>
+            <small>Aufgaben & Infos</small>
+          </button>
         </div>
       </section>
 
+      <!-- ============ PLAN ============ -->
       <section id="screen-plan" class="screen">
         <div class="section-heading sticky-heading">
           <div><div class="eyebrow">Alle Tage</div><h2>Camp-Plan</h2></div>
-          <button id="addPlanButton" class="primary compact admin-only hidden">＋ Eintrag</button>
+          <button id="addPlanButton" class="primary compact">＋ Eintrag</button>
         </div>
-        <div id="planList" class="stack"></div>
+        <div id="planList" class="stack">
+          <div class="empty-state">
+            <p>Hier entsteht der Camp-Plan.</p>
+          </div>
+        </div>
       </section>
 
+      <!-- ============ COSTS ============ -->
       <section id="screen-costs" class="screen">
         <div class="section-heading">
           <div><div class="eyebrow">Splitten ohne Kopfrechnen</div><h2>Kosten & Schulden</h2></div>
           <button id="addExpenseButton" class="primary compact">＋ Ausgabe</button>
         </div>
-        <div id="balanceHero" class="hero-card mini-hero"></div>
-        <h3>Vereinfachte Abrechnung</h3>
-        <div id="settlements" class="stack"></div>
+        <div id="balanceHero" class="hero-card mini-hero">
+          <div class="muted">Noch keine Ausgaben erfasst.</div>
+        </div>
         <h3>Alle Ausgaben</h3>
-        <div id="expenseList" class="stack"></div>
+        <div id="expenseList" class="stack">
+          <div class="empty-state">
+            <p>Noch keine Einträge.</p>
+          </div>
+        </div>
       </section>
 
+      <!-- ============ SHOPPING ============ -->
       <section id="screen-shopping" class="screen">
         <div class="section-heading sticky-heading">
           <div><div class="eyebrow">Für alle synchron</div><h2>Einkaufsliste</h2></div>
           <button id="addShoppingButton" class="primary compact">＋ Artikel</button>
         </div>
-        <div class="filter-row" id="shoppingFilters"></div>
-        <div id="shoppingList" class="stack"></div>
+        <div id="shoppingList" class="stack">
+          <div class="empty-state">
+            <p>Einkaufsliste ist noch leer.</p>
+          </div>
+        </div>
       </section>
 
+      <!-- ============ MORE ============ -->
       <section id="screen-more" class="screen">
         <div class="section-heading">
           <div><div class="eyebrow">Organisation</div><h2>Aufgaben</h2></div>
-          <button id="addTaskButton" class="primary compact admin-only hidden">＋ Aufgabe</button>
+          <button id="addTaskButton" class="primary compact">＋ Aufgabe</button>
         </div>
-        <div id="taskList" class="stack"></div>
+        <div id="taskList" class="stack">
+          <div class="empty-state"><p>Keine Aufgaben.</p></div>
+        </div>
 
         <div class="section-heading">
           <h2>Packliste</h2>
           <button id="addPackButton" class="primary compact">＋ Eintrag</button>
         </div>
-        <div id="packList" class="stack"></div>
+        <div id="packList" class="stack">
+          <div class="empty-state"><p>Packliste ist leer.</p></div>
+        </div>
 
         <div class="section-heading">
           <h2>Wichtige Infos</h2>
-          <button id="addInfoButton" class="primary compact admin-only hidden">＋ Info</button>
         </div>
-        <div id="infoList" class="stack"></div>
-
-        <div class="section-heading">
-          <h2>Benachrichtigungen</h2>
-        </div>
-        <div class="card">
-          <p>Bei Planänderungen kann OFFMAP Push-Mitteilungen senden. Auf dem iPhone muss die App vorher zum Home-Bildschirm hinzugefügt werden.</p>
-          <button id="notificationButton" class="secondary">Benachrichtigungen aktivieren</button>
-          <button id="addAnnouncementButton" class="primary admin-only hidden" style="margin-top:10px">Wichtige Meldung senden</button>
-          <p id="notificationStatus" class="muted"></p>
+        <div id="infoList" class="stack">
+          <div class="empty-state"><p>Noch keine Infos hinterlegt.</p></div>
         </div>
 
         <div class="section-heading">
           <h2>Profil</h2>
         </div>
-        <div id="profileCard" class="card"></div>
+        <div class="card">
+          <p>Angemeldet als <strong>{{ user.username if user else "?" }}</strong></p>
+          <a href="/logout" class="secondary link-button">Ausloggen</a>
+        </div>
       </section>
     </section>
   </main>
 
-  <nav id="bottomNav" class="bottom-nav hidden">
-    <button class="active" data-screen="home"><span>⌂</span>Heute</button>
-    <button data-screen="plan"><span>▣</span>Plan</button>
-    <button data-screen="costs"><span>€</span>Kosten</button>
-    <button data-screen="shopping"><span>✓</span>Einkauf</button>
-    <button data-screen="more"><span>•••</span>Mehr</button>
+  <nav id="bottomNav" class="bottom-nav">
+    <button class="nav-item active" data-screen="home"><span>⌂</span>Heute</button>
+    <button class="nav-item" data-screen="plan"><span>▣</span>Plan</button>
+    <button class="nav-item" data-screen="costs"><span>€</span>Kosten</button>
+    <button class="nav-item" data-screen="shopping"><span>✓</span>Einkauf</button>
+    <button class="nav-item" data-screen="more"><span>•••</span>Mehr</button>
   </nav>
 
-  <dialog id="modal">
-    <form id="modalForm" method="dialog" class="modal-card">
-      <div class="modal-header">
-        <div>
-          <div id="modalEyebrow" class="eyebrow"></div>
-          <h2 id="modalTitle"></h2>
-        </div>
-        <button type="button" id="modalClose" class="icon-button">×</button>
-      </div>
-      <div id="modalBody" class="form-stack"></div>
-      <div class="modal-actions">
-        <button type="button" id="modalCancel" class="secondary">Abbrechen</button>
-        <button type="submit" id="modalSubmit" class="primary">Speichern</button>
-      </div>
-    </form>
-  </dialog>
-
-  <script src="config.js"></script>
-  <script type="module" src="app.js"></script>
+  <script src="/static/app.js" defer></script>
 </body>
 </html>
