@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import FastAPI, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,10 +10,12 @@ from database import SessionLocal, User, ShoppingItem, get_db
 from auth import login, logout, get_current_user
 import uvicorn
 
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
+BASE_DIR = Path(__file__).resolve().parent
 
-templates = Jinja2Templates(directory="templates")
+app = FastAPI()
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+
+templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
 # --- Schemas ---
