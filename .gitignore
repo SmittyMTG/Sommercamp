@@ -61,6 +61,11 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Project database (live data, must never be tracked/overwritten by deploys)
+*.db
+*.db-journal
+*.sqlite3-journal
+
 # Flask stuff:
 instance/
 .webassets-cache
