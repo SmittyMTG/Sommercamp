@@ -11,7 +11,7 @@ function goToScreen(name) {
   document.querySelectorAll(".screen").forEach((el) => {
     el.classList.toggle("active", el.id === `screen-${name}`);
   });
-  document.querySelectorAll(".nav-item").forEach((btn) => {
+  document.querySelectorAll(".bottom-nav button").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.screen === name);
   });
   window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
@@ -76,14 +76,20 @@ const modalForm = document.getElementById("modalForm");
 const modalTitle = document.getElementById("modalTitle");
 const modalEyebrow = document.getElementById("modalEyebrow");
 const modalBody = document.getElementById("modalBody");
+const modalSubmit = document.getElementById("modalSubmit");
 
 let modalSubmitHandler = null;
 
-function openModal({ eyebrow, title, bodyHtml, onSubmit }) {
+function openModal({ eyebrow, title, bodyHtml, onSubmit, submitLabel, danger }) {
   modalEyebrow.textContent = eyebrow || "";
   modalTitle.textContent = title || "";
   modalBody.innerHTML = bodyHtml || "";
   modalSubmitHandler = onSubmit;
+  modalSubmit.textContent = submitLabel || "Speichern";
+  
+  modal.classList.toggle("delete-dialog", !!danger);
+  modalSubmit.classList.toggle("danger", !!danger);
+  
   modal.showModal();
   const firstInput = modalBody.querySelector("input, textarea, select");
   if (firstInput) firstInput.focus();
@@ -91,8 +97,10 @@ function openModal({ eyebrow, title, bodyHtml, onSubmit }) {
 
 function closeModal() {
   modal.close();
+  modal.classList.remove("delete-dialog");
   modalForm.reset();
   modalSubmitHandler = null;
+  modalSubmit.classList.remove("danger");
 }
 
 document.getElementById("modalClose").addEventListener("click", closeModal);
@@ -113,42 +121,62 @@ const shoppingListEl = document.getElementById("shoppingList");
 const quickShoppingEl = document.getElementById("quickShopping");
 
 function renderShoppingItem(item) {
-  const row = document.createElement("div");
-  row.className = "list-item" + (item.done ? " done" : "");
-  row.dataset.id = item.id;
-  row.innerHTML = `
-    <input type="checkbox" ${item.done ? "checked" : ""} aria-label="Erledigt">
-    <div class="list-item-name">${escapeHtml(item.name)}</div>
-    <button type="button" class="list-item-delete" aria-label="Löschen">×</button>
+  const card = document.createElement("div");
+  card.className = "list-card" + (item.done ? " done" : "");
+  card.dataset.id = item.id;
+  
+  card.innerHTML = `
+    <div class="list-card-content">
+      <button type="button" class="list-card-checkbox${item.done ? " checked" : ""}" aria-label="Erledigt"></button>
+      <div class="list-card-text">
+        <p class="list-card-title">${escapeHtml(item.name)}</p>
+      </div>
+    </div>
+    <div class="list-card-actions">
+      <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
+    </div>
   `;
 
-  row.querySelector('input[type="checkbox"]').addEventListener("change", async () => {
+  const checkbox = card.querySelector(".list-card-checkbox");
+  checkbox.addEventListener("click", async (e) => {
+    e.preventDefault();
     const res = await fetch(`/api/shopping/${item.id}/toggle`, { method: "PATCH" });
     if (res.ok) {
       const data = await res.json();
       item.done = data.done;
-      row.classList.toggle("done", data.done);
+      checkbox.classList.toggle("checked", data.done);
+      card.classList.toggle("done", data.done);
       updateQuickShoppingCount();
     }
   });
 
-  row.querySelector(".list-item-delete").addEventListener("click", async () => {
-    const res = await fetch(`/api/shopping/${item.id}`, { method: "DELETE" });
-    if (res.ok) {
-      row.remove();
-      updateQuickShoppingCount();
-      if (!shoppingListEl.querySelector(".list-item")) {
-        shoppingListEl.innerHTML = `<div class="empty-state"><p>Einkaufsliste ist noch leer.</p></div>`;
-      }
-    }
+  card.querySelector(".delete-btn").addEventListener("click", () => {
+    openModal({
+      eyebrow: "Einkauf",
+      title: `„${item.name}" löschen?`,
+      bodyHtml: `<p class="muted warning-text">Der Artikel wird für alle aus der Liste entfernt. Das lässt sich nicht rückgängig machen.</p>`,
+      submitLabel: "Löschen",
+      danger: true,
+      onSubmit: async () => {
+        const res = await fetch(`/api/shopping/${item.id}`, { method: "DELETE" });
+        if (res.ok) {
+          card.remove();
+          updateQuickShoppingCount();
+          if (!shoppingListEl.querySelector(".list-card")) {
+            shoppingListEl.innerHTML = `<div class="empty"><p>Einkaufsliste ist noch leer.</p></div>`;
+          }
+        }
+        closeModal();
+      },
+    });
   });
 
-  return row;
+  return card;
 }
 
 function updateQuickShoppingCount() {
   if (!quickShoppingEl) return;
-  const open = shoppingListEl.querySelectorAll(".list-item:not(.done)").length;
+  const open = shoppingListEl.querySelectorAll(".list-card:not(.done)").length;
   quickShoppingEl.textContent = `${open} offen`;
 }
 
@@ -160,13 +188,13 @@ async function loadShoppingList() {
 
     shoppingListEl.innerHTML = "";
     if (items.length === 0) {
-      shoppingListEl.innerHTML = `<div class="empty-state"><p>Einkaufsliste ist noch leer.</p></div>`;
+      shoppingListEl.innerHTML = `<div class="empty"><p>Einkaufsliste ist noch leer.</p></div>`;
     } else {
       items.forEach((item) => shoppingListEl.appendChild(renderShoppingItem(item)));
     }
     updateQuickShoppingCount();
   } catch (err) {
-    shoppingListEl.innerHTML = `<div class="empty-state"><p>Liste konnte nicht geladen werden.</p></div>`;
+    shoppingListEl.innerHTML = `<div class="empty"><p>Liste konnte nicht geladen werden.</p></div>`;
   }
 }
 
@@ -175,9 +203,11 @@ function openAddShoppingModal() {
     eyebrow: "Einkauf",
     title: "Artikel hinzufügen",
     bodyHtml: `
-      <label>Produktname
-        <input type="text" id="shoppingNameInput" placeholder="z. B. Kohle für den Grill" required>
-      </label>
+      <div class="form-stack">
+        <label>Produktname
+          <input type="text" id="shoppingNameInput" placeholder="z. B. Kohle für den Grill" required>
+        </label>
+      </div>
     `,
     onSubmit: async () => {
       const input = document.getElementById("shoppingNameInput");
@@ -192,7 +222,7 @@ function openAddShoppingModal() {
 
       if (res.ok) {
         const item = await res.json();
-        const emptyState = shoppingListEl.querySelector(".empty-state");
+        const emptyState = shoppingListEl.querySelector(".empty");
         if (emptyState) emptyState.remove();
         shoppingListEl.prepend(renderShoppingItem(item));
         updateQuickShoppingCount();
