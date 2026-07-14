@@ -1,22 +1,32 @@
-from fastapi import FastAPI, Request, Depends, HTTPException, Form
+from fastapi import FastAPI, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from database import SessionLocal, User, get_db
+from database import SessionLocal, User
 from auth import login, logout, get_current_user
 import uvicorn
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 templates = Jinja2Templates(directory="templates")
 
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 # --- Routes ---
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", name="index", response_class=HTMLResponse)
 async def home(request: Request):
     user = get_current_user(request)
     if not user:
-        return RedirectResponse(url="/login")
+        return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse("index.html", {"request": request, "user": user})
 
 @app.get("/login", response_class=HTMLResponse)
@@ -26,33 +36,35 @@ async def login_page(request: Request):
 @app.post("/login")
 async def login_post(
     request: Request,
-    response: Response,
     username: str = Form(...),
     password: str = Form(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    if login(request, response, username, password, db):
-        return RedirectResponse(url="/", status_code=303)
+    redirect = RedirectResponse(url=request.url_for("index"), status_code=303)
+    if login(request, redirect, username, password, db):
+        return redirect
     return RedirectResponse(url="/login?error=1", status_code=303)
 
 @app.get("/logout")
 async def logout_route(response: Response):
     logout(response)
-    return RedirectResponse(url="/login")
+    return RedirectResponse(url="/login", status_code=303)
+
 
 @app.get("/calculator", response_class=HTMLResponse)
 async def calculator(request: Request):
     user = get_current_user(request)
     if not user:
-        return RedirectResponse(url="/login")
+        return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse("calculator.html", {"request": request, "user": user})
+
 
 @app.post("/calculate")
 async def calculate(
     request: Request,
     num1: float = Form(...),
     num2: float = Form(...),
-    operation: str = Form(...)
+    operation: str = Form(...),
 ):
     if operation == "add":
         result = num1 + num2
@@ -66,6 +78,7 @@ async def calculate(
         result = "Invalid operation"
 
     return HTMLResponse(f"<div>{result}</div>")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
