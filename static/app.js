@@ -137,17 +137,12 @@ function renderShoppingItem(item) {
     </div>
   `;
 
+  // DOM wird nicht direkt hier verändert, sondern über den WebSocket-Broadcast,
+  // der die gleiche Änderung an alle verbundenen Clients (inkl. diesen) schickt.
   const checkbox = card.querySelector(".list-card-checkbox");
   checkbox.addEventListener("click", async (e) => {
     e.preventDefault();
-    const res = await fetch(`/api/shopping/${item.id}/toggle`, { method: "PATCH" });
-    if (res.ok) {
-      const data = await res.json();
-      item.done = data.done;
-      checkbox.classList.toggle("checked", data.done);
-      card.classList.toggle("done", data.done);
-      updateQuickShoppingCount();
-    }
+    await fetch(`/api/shopping/${item.id}/toggle`, { method: "PATCH" });
   });
 
   card.querySelector(".delete-btn").addEventListener("click", () => {
@@ -158,14 +153,7 @@ function renderShoppingItem(item) {
       submitLabel: "Löschen",
       danger: true,
       onSubmit: async () => {
-        const res = await fetch(`/api/shopping/${item.id}`, { method: "DELETE" });
-        if (res.ok) {
-          card.remove();
-          updateQuickShoppingCount();
-          if (!shoppingListEl.querySelector(".list-card")) {
-            shoppingListEl.innerHTML = `<div class="empty"><p>Einkaufsliste ist noch leer.</p></div>`;
-          }
-        }
+        await fetch(`/api/shopping/${item.id}`, { method: "DELETE" });
         closeModal();
       },
     });
@@ -220,19 +208,69 @@ function openAddShoppingModal() {
         body: JSON.stringify({ name }),
       });
 
-      if (res.ok) {
-        const item = await res.json();
-        const emptyState = shoppingListEl.querySelector(".empty");
-        if (emptyState) emptyState.remove();
-        shoppingListEl.prepend(renderShoppingItem(item));
-        updateQuickShoppingCount();
-        closeModal();
-      }
+      if (res.ok) closeModal();
     },
   });
 }
 
 document.getElementById("addShoppingButton").addEventListener("click", openAddShoppingModal);
+
+/* ---------- Live-Updates (WebSocket) ---------- */
+let shoppingSocket = null;
+let shoppingSocketRetryDelay = 1000;
+
+function handleShoppingEvent(msg) {
+  if (!shoppingListEl) return;
+
+  if (msg.type === "created") {
+    if (shoppingListEl.querySelector(`[data-id="${msg.item.id}"]`)) return;
+    const emptyState = shoppingListEl.querySelector(".empty");
+    if (emptyState) emptyState.remove();
+    shoppingListEl.prepend(renderShoppingItem(msg.item));
+    updateQuickShoppingCount();
+    return;
+  }
+
+  const card = shoppingListEl.querySelector(`[data-id="${msg.item.id}"]`);
+  if (!card) return;
+
+  if (msg.type === "toggled") {
+    card.querySelector(".list-card-checkbox").classList.toggle("checked", msg.item.done);
+    card.classList.toggle("done", msg.item.done);
+    updateQuickShoppingCount();
+  } else if (msg.type === "deleted") {
+    card.remove();
+    updateQuickShoppingCount();
+    if (!shoppingListEl.querySelector(".list-card")) {
+      shoppingListEl.innerHTML = `<div class="empty"><p>Einkaufsliste ist noch leer.</p></div>`;
+    }
+  }
+}
+
+function connectShoppingSocket() {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  shoppingSocket = new WebSocket(`${protocol}//${window.location.host}/ws/shopping`);
+
+  shoppingSocket.addEventListener("open", () => {
+    shoppingSocketRetryDelay = 1000;
+    loadShoppingList(); // Re-Sync, falls während Verbindungsaufbau etwas verpasst wurde
+  });
+
+  shoppingSocket.addEventListener("message", (event) => {
+    try {
+      handleShoppingEvent(JSON.parse(event.data));
+    } catch {
+      // ignore malformed messages
+    }
+  });
+
+  shoppingSocket.addEventListener("close", () => {
+    setTimeout(connectShoppingSocket, shoppingSocketRetryDelay);
+    shoppingSocketRetryDelay = Math.min(shoppingSocketRetryDelay * 2, 15000);
+  });
+
+  shoppingSocket.addEventListener("error", () => shoppingSocket.close());
+}
 
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
@@ -240,4 +278,5 @@ document.addEventListener("DOMContentLoaded", () => {
   updateCountdown();
   setInterval(updateCountdown, 1000);
   loadShoppingList();
+  connectShoppingSocket();
 });

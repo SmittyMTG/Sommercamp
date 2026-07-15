@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Depends, Form
+from fastapi import FastAPI, Request, Depends, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -25,6 +25,48 @@ def static_version(filename: str) -> int:
 
 
 templates.env.globals["static_version"] = static_version
+
+
+# --- Live-Updates Einkaufsliste ---
+class ShoppingConnectionManager:
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active:
+            self.active.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        dead = []
+        for connection in self.active:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                dead.append(connection)
+        for connection in dead:
+            self.disconnect(connection)
+
+
+shopping_manager = ShoppingConnectionManager()
+
+
+@app.websocket("/ws/shopping")
+async def shopping_ws(websocket: WebSocket):
+    user = get_current_user(websocket)
+    if not user:
+        await websocket.close(code=1008)
+        return
+
+    await shopping_manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        shopping_manager.disconnect(websocket)
 
 
 # --- Schemas ---
@@ -106,12 +148,14 @@ async def create_shopping_item(
     db.commit()
     db.refresh(new_item)
 
-    return {
+    payload = {
         "id": new_item.id,
         "name": new_item.name,
         "done": new_item.done,
         "added_by": new_item.added_by,
     }
+    await shopping_manager.broadcast({"type": "created", "item": payload})
+    return payload
 
 
 @app.patch("/api/shopping/{item_id}/toggle")
@@ -126,7 +170,9 @@ async def toggle_shopping_item(item_id: int, request: Request, db: Session = Dep
 
     item.done = not item.done
     db.commit()
-    return {"id": item.id, "done": item.done}
+    payload = {"id": item.id, "done": item.done}
+    await shopping_manager.broadcast({"type": "toggled", "item": payload})
+    return payload
 
 
 @app.delete("/api/shopping/{item_id}")
@@ -139,6 +185,7 @@ async def delete_shopping_item(item_id: int, request: Request, db: Session = Dep
     if item:
         db.delete(item)
         db.commit()
+        await shopping_manager.broadcast({"type": "deleted", "item": {"id": item_id}})
     return {"ok": True}
 
 
