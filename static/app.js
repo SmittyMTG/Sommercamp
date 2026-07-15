@@ -499,14 +499,20 @@ function openConfirmSettleModal(s) {
 function renderSettlementItem(s, isMine) {
   const card = document.createElement("div");
   card.className = "list-card";
+  let actionHtml = "";
+  if (isMine && s.pending) {
+    actionHtml = `<div class="list-card-actions"><span class="pill">Warten auf Bestätigung von ${escapeHtml(s.to)}</span></div>`;
+  } else if (isMine) {
+    actionHtml = `<div class="list-card-actions"><button type="button" class="tiny settle-btn">Als bezahlt markieren</button></div>`;
+  }
   card.innerHTML = `
     <div class="list-card-text">
       <p class="list-card-title">${escapeHtml(s.from)} → ${escapeHtml(s.to)}</p>
       <p class="list-card-meta">${formatEuro(s.amount)}</p>
     </div>
-    ${isMine ? `<div class="list-card-actions"><button type="button" class="tiny settle-btn">Als bezahlt markieren</button></div>` : ""}
+    ${actionHtml}
   `;
-  if (isMine) {
+  if (isMine && !s.pending) {
     card.querySelector(".settle-btn").addEventListener("click", () => openConfirmSettleModal(s));
   }
   return card;
@@ -642,6 +648,18 @@ async function loadLeaderboard() {
   }
 }
 
+/* ---------- Kosten: alles alle 1 Sekunde aktualisieren ---------- */
+// Läuft unabhängig davon, welche Unteransicht gerade sichtbar ist (gleiches
+// Prinzip wie beim Einkaufslisten-Polling) — so ist z. B. sofort sichtbar,
+// wenn jemand anderes eine Zahlung bestätigt, ohne dass neu eingeloggt werden muss.
+function pollCostsViews() {
+  loadBalance();
+  loadExpenses();
+  loadOpenSettlements();
+  loadReceivedPayments();
+  loadLeaderboard();
+}
+
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
@@ -649,6 +667,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(updateCountdown, 1000);
   loadShoppingList();
   setInterval(pollShoppingList, 1000);
-  loadExpenses();
-  loadBalance();
+  pollCostsViews();
+  setInterval(pollCostsViews, 1000);
 });
