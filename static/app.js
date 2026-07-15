@@ -441,6 +441,7 @@ const costsViewSelect = document.getElementById("costsViewSelect");
 const costsViews = {
   entry: document.getElementById("costsViewEntry"),
   open: document.getElementById("costsViewOpen"),
+  received: document.getElementById("costsViewReceived"),
   leaderboard: document.getElementById("costsViewLeaderboard"),
 };
 
@@ -449,6 +450,7 @@ function switchCostsView(view) {
     if (el) el.classList.toggle("hidden", key !== view);
   });
   if (view === "open") loadOpenSettlements();
+  if (view === "received") loadReceivedPayments();
   if (view === "leaderboard") loadLeaderboard();
 }
 
@@ -459,7 +461,42 @@ if (costsViewSelect) {
 /* ---------- Kosten: Offene Zahlungen ---------- */
 const openSettlementsListEl = document.getElementById("openSettlementsList");
 
-function renderSettlementItem(s) {
+function openConfirmSettleModal(s) {
+  openModal({
+    eyebrow: "Offene Zahlung",
+    title: "Als überwiesen markieren?",
+    submitLabel: "Ja, überwiesen",
+    bodyHtml: `
+      <p class="muted">
+        Damit bestätigst du, dass du <strong>${formatEuro(s.amount)}</strong> an <strong>${escapeHtml(s.to)}</strong>
+        überwiesen hast. ${escapeHtml(s.to)} sieht das jetzt hier in der App und muss den Empfang bestätigen —
+        sobald das passiert, siehst auch du es hier und die Schuld gilt als beglichen.
+      </p>
+      <p id="settleModalError" class="error-text hidden"></p>
+    `,
+    onSubmit: async () => {
+      const res = await fetch("/api/expenses/settle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to_id: s.to_id }),
+      });
+      if (res.ok) {
+        closeModal();
+        loadOpenSettlements();
+        loadBalance();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        const errEl = document.getElementById("settleModalError");
+        if (errEl) {
+          errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
+          errEl.classList.remove("hidden");
+        }
+      }
+    },
+  });
+}
+
+function renderSettlementItem(s, isMine) {
   const card = document.createElement("div");
   card.className = "list-card";
   card.innerHTML = `
@@ -467,28 +504,18 @@ function renderSettlementItem(s) {
       <p class="list-card-title">${escapeHtml(s.from)} → ${escapeHtml(s.to)}</p>
       <p class="list-card-meta">${formatEuro(s.amount)}</p>
     </div>
-    <div class="list-card-actions">
-      <button type="button" class="tiny settle-btn">Als bezahlt markieren</button>
-    </div>
+    ${isMine ? `<div class="list-card-actions"><button type="button" class="tiny settle-btn">Als bezahlt markieren</button></div>` : ""}
   `;
-  card.querySelector(".settle-btn").addEventListener("click", async () => {
-    const res = await fetch("/api/expenses/settle", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from_id: s.from_id, to_id: s.to_id }),
-    });
-    if (res.ok) {
-      loadOpenSettlements();
-      loadBalance();
-      loadExpenses();
-    }
-  });
+  if (isMine) {
+    card.querySelector(".settle-btn").addEventListener("click", () => openConfirmSettleModal(s));
+  }
   return card;
 }
 
 async function loadOpenSettlements() {
   if (!openSettlementsListEl) return;
   try {
+    const { me } = await fetchUsersAndMe();
     const res = await fetch("/api/expenses/open");
     if (!res.ok) throw new Error("Fehler beim Laden");
     const settlements = await res.json();
@@ -497,10 +524,81 @@ async function loadOpenSettlements() {
     if (settlements.length === 0) {
       openSettlementsListEl.innerHTML = `<div class="empty"><p>Keine offenen Zahlungen — alles ausgeglichen.</p></div>`;
     } else {
-      settlements.forEach((s) => openSettlementsListEl.appendChild(renderSettlementItem(s)));
+      settlements.forEach((s) =>
+        openSettlementsListEl.appendChild(renderSettlementItem(s, !!me && s.from_id === me.id))
+      );
     }
   } catch (err) {
     openSettlementsListEl.innerHTML = `<div class="empty"><p>Konnte nicht geladen werden.</p></div>`;
+  }
+}
+
+/* ---------- Kosten: Erhaltene Zahlungen ---------- */
+const receivedListEl = document.getElementById("receivedList");
+
+function renderReceivedItem(r) {
+  const card = document.createElement("div");
+  card.className = "list-card";
+  card.innerHTML = `
+    <div class="list-card-text">
+      <p class="list-card-title">${escapeHtml(r.from)} behauptet: ${formatEuro(r.amount)} überwiesen</p>
+      <p class="list-card-meta">${formatDate(r.datum)} · Betrag zur Bestätigung eintippen</p>
+      <div class="form-stack">
+        <input type="number" step="0.01" min="0.01" inputmode="decimal" class="received-amount-input" placeholder="z. B. ${r.amount.toFixed(2)}">
+        <p class="error-text hidden received-error"></p>
+      </div>
+    </div>
+    <div class="list-card-actions">
+      <button type="button" class="tiny confirm-received-btn">Bestätigen</button>
+    </div>
+  `;
+
+  card.querySelector(".confirm-received-btn").addEventListener("click", async () => {
+    const input = card.querySelector(".received-amount-input");
+    const errEl = card.querySelector(".received-error");
+    const amount = parseFloat(input.value);
+    errEl.classList.add("hidden");
+
+    if (!amount || amount <= 0) {
+      errEl.textContent = "Bitte einen Betrag eingeben.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const res = await fetch("/api/expenses/settle/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expense_id: r.id, amount }),
+    });
+
+    if (res.ok) {
+      loadReceivedPayments();
+      loadBalance();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
+      errEl.classList.remove("hidden");
+    }
+  });
+
+  return card;
+}
+
+async function loadReceivedPayments() {
+  if (!receivedListEl) return;
+  try {
+    const res = await fetch("/api/expenses/received");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const received = await res.json();
+
+    receivedListEl.innerHTML = "";
+    if (received.length === 0) {
+      receivedListEl.innerHTML = `<div class="empty"><p>Keine offenen Bestätigungen.</p></div>`;
+    } else {
+      received.forEach((r) => receivedListEl.appendChild(renderReceivedItem(r)));
+    }
+  } catch (err) {
+    receivedListEl.innerHTML = `<div class="empty"><p>Konnte nicht geladen werden.</p></div>`;
   }
 }
 

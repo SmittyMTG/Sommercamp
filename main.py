@@ -43,8 +43,12 @@ class ExpenseCreate(BaseModel):
 
 
 class SettleRequest(BaseModel):
-    from_id: int
     to_id: int
+
+
+class ConfirmReceivedRequest(BaseModel):
+    expense_id: int
+    amount: float
 
 
 # --- Routes ---
@@ -187,8 +191,11 @@ async def list_expenses(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
+    # Tilgungseinträge (Rückzahlungen, status != "offen") sind Buchhaltung, keine
+    # eigenen Einkäufe — die gehören nicht in die "Alle Ausgaben"-Übersicht.
     rows = (
         db.query(Ausgabe)
+        .filter(Ausgabe.status == "offen")
         .order_by(Ausgabe.datum.desc(), Ausgabe.created_at.desc())
         .all()
     )
@@ -201,7 +208,6 @@ async def list_expenses(request: Request, db: Session = Depends(get_db)):
             "cash": float(r.cash),
             "betreff": r.betreff,
             "datum": r.datum.isoformat(),
-            "gezahlt": r.gezahlt,
             "selbst": r.schuldner_id == r.glaubiger_id,
         }
         for r in rows
@@ -218,19 +224,17 @@ async def get_expense_balance(request: Request, db: Session = Depends(get_db)):
     if not me:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
-    # Nur offene (unbezahlte) Fremd-Schulden zählen für den Saldo — Einträge, wo
-    # man sich selbst als Schuldner eingetragen hat, sind keine echte Schuld.
+    # Zählt Ausgaben UND Tilgungseinträge zusammen — ein bestätigter Tilgungseintrag
+    # ist die Umkehrung der ursprünglichen Schuld und gleicht den Saldo dadurch aus,
+    # ganz ohne die ursprünglichen Zeilen zu verändern. Einträge, wo man sich selbst
+    # als Schuldner eingetragen hat, sind keine echte Schuld und zählen nicht mit.
     open_others = Ausgabe.schuldner_id != Ausgabe.glaubiger_id
     owed_to_me = (
-        db.query(func.sum(Ausgabe.cash))
-        .filter(Ausgabe.glaubiger_id == me.id, Ausgabe.gezahlt.is_(False), open_others)
-        .scalar()
+        db.query(func.sum(Ausgabe.cash)).filter(Ausgabe.glaubiger_id == me.id, open_others).scalar()
         or 0
     )
     i_owe = (
-        db.query(func.sum(Ausgabe.cash))
-        .filter(Ausgabe.schuldner_id == me.id, Ausgabe.gezahlt.is_(False), open_others)
-        .scalar()
+        db.query(func.sum(Ausgabe.cash)).filter(Ausgabe.schuldner_id == me.id, open_others).scalar()
         or 0
     )
     return {
@@ -286,7 +290,6 @@ async def create_expense(
             cash=share,
             betreff=betreff,
             datum=expense_date,
-            gezahlt=False,
         )
         db.add(row)
         created.append(row)
@@ -305,11 +308,11 @@ async def get_open_settlements(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
-    rows = (
-        db.query(Ausgabe)
-        .filter(Ausgabe.gezahlt.is_(False), Ausgabe.schuldner_id != Ausgabe.glaubiger_id)
-        .all()
-    )
+    # Ausgaben UND (auch pending) Tilgungseinträge fließen hier ein — ein pending
+    # Tilgungseintrag gleicht den Netto-Saldo schon aus, sobald der Schuldner die
+    # Zahlung als gesendet markiert hat, damit das Paar sofort aus dieser Liste
+    # verschwindet und nicht doppelt zur Zahlung vorgeschlagen wird.
+    rows = db.query(Ausgabe).filter(Ausgabe.schuldner_id != Ausgabe.glaubiger_id).all()
     usernames = {u.id: u.username for u in db.query(User).all()}
 
     net: dict[int, float] = {}
@@ -352,26 +355,130 @@ async def settle_expenses(
     request: Request, payload: SettleRequest, db: Session = Depends(get_db)
 ):
     """
-    Markiert alle offenen Einträge zwischen zwei Personen (in beide Richtungen)
-    als bezahlt. Die Vorschläge aus /api/expenses/open sind bereits Netto-Salden,
-    daher gleicht eine bestätigte Zahlung die komplette Historie der beiden aus.
+    Schritt 1 des Tilgungs-Workflows: der Schuldner (immer der eingeloggte User)
+    bestätigt, dass er das Geld überwiesen hat. Das erzeugt einen neuen Eintrag in
+    derselben Tabelle mit vertauschten Rollen (Schuldner wird zum Gläubiger dieses
+    Eintrags), der den offenen Netto-Saldo zwischen beiden sofort auf 0 bringt —
+    ohne die ursprünglichen Ausgaben-Zeilen zu verändern. status="pending", bis der
+    echte Gläubiger den Empfang über /api/expenses/settle/confirm bestätigt.
     """
-    if not get_current_user(request):
+    username = get_current_user(request)
+    if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
-    updated = (
+    me = db.query(User).filter(User.username == username).first()
+    creditor = db.query(User).filter(User.id == payload.to_id).first()
+    if not me or not creditor:
+        return JSONResponse(status_code=400, content={"error": "Person nicht gefunden"})
+    if creditor.id == me.id:
+        return JSONResponse(status_code=400, content={"error": "Ungültige Auswahl"})
+
+    already_pending = (
+        db.query(Ausgabe)
+        .filter(Ausgabe.status == "pending", Ausgabe.glaubiger_id == me.id, Ausgabe.schuldner_id == creditor.id)
+        .first()
+    )
+    if already_pending:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Diese Zahlung wurde bereits als gesendet markiert und wartet auf Bestätigung"},
+        )
+
+    rows = (
         db.query(Ausgabe)
         .filter(
-            Ausgabe.gezahlt.is_(False),
+            Ausgabe.schuldner_id != Ausgabe.glaubiger_id,
             or_(
-                and_(Ausgabe.glaubiger_id == payload.to_id, Ausgabe.schuldner_id == payload.from_id),
-                and_(Ausgabe.glaubiger_id == payload.from_id, Ausgabe.schuldner_id == payload.to_id),
+                and_(Ausgabe.glaubiger_id == creditor.id, Ausgabe.schuldner_id == me.id),
+                and_(Ausgabe.glaubiger_id == me.id, Ausgabe.schuldner_id == creditor.id),
             ),
         )
-        .update({"gezahlt": True}, synchronize_session=False)
+        .all()
     )
+    net = 0.0
+    for r in rows:
+        cash = float(r.cash)
+        net += cash if r.glaubiger_id == creditor.id else -cash
+    net = round(net, 2)
+    if net <= 0.005:
+        return JSONResponse(status_code=400, content={"error": "Du schuldest dieser Person aktuell nichts"})
+
+    tilgung = Ausgabe(
+        glaubiger_id=me.id,
+        schuldner_id=creditor.id,
+        cash=net,
+        betreff=f"Tilgung an {creditor.username}",
+        datum=date.today(),
+        status="pending",
+    )
+    db.add(tilgung)
     db.commit()
-    return {"updated": updated}
+    return {"created": True, "amount": net, "to": creditor.username}
+
+
+@app.get("/api/expenses/received")
+async def get_pending_received(request: Request, db: Session = Depends(get_db)):
+    """Zahlungen, die laut Schuldner bereits unterwegs sind und auf Bestätigung
+    des Empfängers (dem eingeloggten User) warten."""
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    me = db.query(User).filter(User.username == username).first()
+    if not me:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    rows = (
+        db.query(Ausgabe)
+        .filter(Ausgabe.status == "pending", Ausgabe.schuldner_id == me.id)
+        .order_by(Ausgabe.created_at.desc())
+        .all()
+    )
+    usernames = {u.id: u.username for u in db.query(User).all()}
+    return [
+        {
+            "id": r.id,
+            "from_id": r.glaubiger_id,
+            "from": usernames.get(r.glaubiger_id, "?"),
+            "amount": float(r.cash),
+            "datum": r.datum.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+@app.post("/api/expenses/settle/confirm")
+async def confirm_received_payment(
+    request: Request, payload: ConfirmReceivedRequest, db: Session = Depends(get_db)
+):
+    """Schritt 2: der Gläubiger tippt den erhaltenen Betrag selbst ein. Nur bei
+    exakter Übereinstimmung wird der Tilgungseintrag endgültig auf "getilgt"
+    gesetzt und zählt ab da wie jede normale Zahlung."""
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    me = db.query(User).filter(User.username == username).first()
+    if not me:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    row = (
+        db.query(Ausgabe)
+        .filter(Ausgabe.id == payload.expense_id, Ausgabe.status == "pending", Ausgabe.schuldner_id == me.id)
+        .first()
+    )
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "Zahlung nicht gefunden"})
+
+    if round(payload.amount, 2) != round(float(row.cash), 2):
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Der eingegebene Betrag stimmt nicht mit den gemeldeten {float(row.cash):.2f} € überein"},
+        )
+
+    row.status = "getilgt"
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/expenses/leaderboard")
@@ -379,8 +486,10 @@ async def get_expense_leaderboard(request: Request, db: Session = Depends(get_db
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
+    # Nur echte Ausgaben zählen fürs Leaderboard, keine Tilgungs-Buchungen.
     totals = dict(
         db.query(Ausgabe.schuldner_id, func.sum(Ausgabe.cash))
+        .filter(Ausgabe.status == "offen")
         .group_by(Ausgabe.schuldner_id)
         .all()
     )

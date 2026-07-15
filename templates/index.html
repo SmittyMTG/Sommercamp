@@ -102,6 +102,7 @@
         <select id="costsViewSelect" class="costs-view-select">
           <option value="entry">Ausgaben erfassen</option>
           <option value="open">Offene Zahlungen</option>
+          <option value="received">Erhaltene Zahlungen</option>
           <option value="leaderboard">Leaderboard</option>
         </select>
 
@@ -121,6 +122,14 @@
           <h3>Offene Zahlungen</h3>
           <p class="muted">Minimale Anzahl an Überweisungen, um alle offenen Schulden auszugleichen.</p>
           <div id="openSettlementsList" class="stack">
+            <div class="empty-state"><p>Lädt …</p></div>
+          </div>
+        </div>
+
+        <div id="costsViewReceived" class="costs-view hidden">
+          <h3>Erhaltene Zahlungen</h3>
+          <p class="muted">Andere haben hier gemeldet, dir Geld überwiesen zu haben. Bitte bestätige nur, was du wirklich erhalten hast.</p>
+          <div id="receivedList" class="stack">
             <div class="empty-state"><p>Lädt …</p></div>
           </div>
         </div>

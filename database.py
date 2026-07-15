@@ -45,6 +45,11 @@ class Ausgabe(Base):
     betreff = Column(String(40), nullable=False)
     datum = Column(Date, nullable=False, default=date.today)
     gezahlt = Column(Boolean, nullable=False, default=False)
+    # Normale Ausgaben behalten für immer status="offen" (Default) und werden nie
+    # angefasst. Nur Tilgungseinträge (Rückzahlungen, erzeugt beim Bestätigen einer
+    # offenen Zahlung) durchlaufen "pending" -> "getilgt", sobald der Gläubiger den
+    # Empfang bestätigt hat.
+    status = Column(String(20), nullable=False, default="offen")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -64,6 +69,7 @@ def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str = ""
 
 
 _ensure_column("ausgaben", "gezahlt", "BOOLEAN", "DEFAULT 0")
+_ensure_column("ausgaben", "status", "TEXT", "DEFAULT 'offen'")
 
 # Dependency to get DB session
 def get_db():
