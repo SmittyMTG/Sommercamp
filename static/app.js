@@ -137,12 +137,20 @@ function renderShoppingItem(item) {
     </div>
   `;
 
-  // DOM wird nicht direkt hier verändert, sondern über den WebSocket-Broadcast,
-  // der die gleiche Änderung an alle verbundenen Clients (inkl. diesen) schickt.
+  // Der Klick selbst aktualisiert die eigene Ansicht sofort über die HTTP-Antwort
+  // (funktioniert unabhängig vom WebSocket). Der WebSocket-Broadcast synct
+  // zusätzlich alle anderen Clients; handleShoppingEvent() erkennt bereits
+  // angewendete Änderungen und ist dadurch ein sicheres No-Op für den Absender.
   const checkbox = card.querySelector(".list-card-checkbox");
   checkbox.addEventListener("click", async (e) => {
     e.preventDefault();
-    await fetch(`/api/shopping/${item.id}/toggle`, { method: "PATCH" });
+    const res = await fetch(`/api/shopping/${item.id}/toggle`, { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      checkbox.classList.toggle("checked", data.done);
+      card.classList.toggle("done", data.done);
+      updateQuickShoppingCount();
+    }
   });
 
   card.querySelector(".delete-btn").addEventListener("click", () => {
@@ -153,7 +161,14 @@ function renderShoppingItem(item) {
       submitLabel: "Löschen",
       danger: true,
       onSubmit: async () => {
-        await fetch(`/api/shopping/${item.id}`, { method: "DELETE" });
+        const res = await fetch(`/api/shopping/${item.id}`, { method: "DELETE" });
+        if (res.ok) {
+          card.remove();
+          updateQuickShoppingCount();
+          if (!shoppingListEl.querySelector(".list-card")) {
+            shoppingListEl.innerHTML = `<div class="empty"><p>Einkaufsliste ist noch leer.</p></div>`;
+          }
+        }
         closeModal();
       },
     });
@@ -208,7 +223,16 @@ function openAddShoppingModal() {
         body: JSON.stringify({ name }),
       });
 
-      if (res.ok) closeModal();
+      if (res.ok) {
+        const newItem = await res.json();
+        const emptyState = shoppingListEl.querySelector(".empty");
+        if (emptyState) emptyState.remove();
+        if (!shoppingListEl.querySelector(`[data-id="${newItem.id}"]`)) {
+          shoppingListEl.prepend(renderShoppingItem(newItem));
+          updateQuickShoppingCount();
+        }
+        closeModal();
+      }
     },
   });
 }
