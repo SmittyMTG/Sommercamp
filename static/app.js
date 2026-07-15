@@ -260,6 +260,156 @@ function openAddShoppingModal() {
 
 document.getElementById("addShoppingButton").addEventListener("click", openAddShoppingModal);
 
+/* ---------- Kosten & Schulden ---------- */
+const balanceHeroEl = document.getElementById("balanceHero");
+const expenseListEl = document.getElementById("expenseList");
+
+let cachedUsers = null;
+let cachedMe = null;
+
+async function fetchUsersAndMe() {
+  if (cachedUsers && cachedMe) return { users: cachedUsers, me: cachedMe };
+  const [usersRes, meRes] = await Promise.all([fetch("/api/users"), fetch("/api/me")]);
+  cachedUsers = usersRes.ok ? await usersRes.json() : [];
+  cachedMe = meRes.ok ? await meRes.json() : null;
+  return { users: cachedUsers, me: cachedMe };
+}
+
+function formatEuro(value) {
+  return value.toLocaleString("de-DE", { style: "currency", currency: "EUR" });
+}
+
+function formatDate(isoDate) {
+  const [y, m, d] = isoDate.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+function renderExpenseItem(expense) {
+  const card = document.createElement("div");
+  card.className = "list-card";
+  card.innerHTML = `
+    <div class="list-card-text">
+      <p class="list-card-title">${escapeHtml(expense.betreff)}</p>
+      <p class="list-card-meta">${escapeHtml(expense.schuldner)} schuldet ${escapeHtml(expense.glaubiger)} · ${formatEuro(expense.cash)} · ${formatDate(expense.datum)}</p>
+    </div>
+  `;
+  return card;
+}
+
+async function loadExpenses() {
+  if (!expenseListEl) return;
+  try {
+    const res = await fetch("/api/expenses");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const expenses = await res.json();
+
+    expenseListEl.innerHTML = "";
+    if (expenses.length === 0) {
+      expenseListEl.innerHTML = `<div class="empty"><p>Noch keine Einträge.</p></div>`;
+    } else {
+      expenses.forEach((e) => expenseListEl.appendChild(renderExpenseItem(e)));
+    }
+  } catch (err) {
+    expenseListEl.innerHTML = `<div class="empty"><p>Ausgaben konnten nicht geladen werden.</p></div>`;
+  }
+}
+
+async function loadBalance() {
+  if (!balanceHeroEl) return;
+  try {
+    const res = await fetch("/api/expenses/balance");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const balance = await res.json();
+
+    if (balance.net > 0.005) {
+      balanceHeroEl.innerHTML = `
+        <div class="eyebrow">Dein Saldo</div>
+        <div class="countdown success">+${formatEuro(balance.net)}</div>
+        <div class="muted">Du bekommst insgesamt ${formatEuro(balance.net)} zurück.</div>
+      `;
+    } else if (balance.net < -0.005) {
+      balanceHeroEl.innerHTML = `
+        <div class="eyebrow">Dein Saldo</div>
+        <div class="countdown danger">${formatEuro(balance.net)}</div>
+        <div class="muted">Du schuldest insgesamt ${formatEuro(Math.abs(balance.net))}.</div>
+      `;
+    } else {
+      balanceHeroEl.innerHTML = `<div class="muted">Du bist ausgeglichen.</div>`;
+    }
+  } catch (err) {
+    balanceHeroEl.innerHTML = `<div class="muted">Saldo konnte nicht geladen werden.</div>`;
+  }
+}
+
+async function openAddExpenseModal() {
+  const { users, me } = await fetchUsersAndMe();
+  if (!me || users.length === 0) return;
+
+  const payerOptions = users
+    .map((u) => `<option value="${u.id}"${u.id === me.id ? " selected" : ""}>${escapeHtml(u.username)}</option>`)
+    .join("");
+
+  const beneficiaryOptions = users
+    .map(
+      (u) => `<label class="check-card"><input type="checkbox" value="${u.id}" checked>${escapeHtml(u.username)}</label>`
+    )
+    .join("");
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  openModal({
+    eyebrow: "Kosten",
+    title: "Ausgabe hinzufügen",
+    submitLabel: "Speichern",
+    bodyHtml: `
+      <div class="form-stack">
+        <label>Bezahlt von
+          <select id="expensePayerSelect">${payerOptions}</select>
+        </label>
+        <div class="checkbox-group">
+          <div class="eyebrow">Für wen?</div>
+          <div id="expenseBeneficiaries" class="checkbox-grid">${beneficiaryOptions}</div>
+        </div>
+        <label>Betrag gesamt (€)
+          <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" placeholder="z. B. 24.50" required>
+        </label>
+        <label>Betreff
+          <input type="text" id="expenseBetreffInput" maxlength="40" placeholder="z. B. Rewe Grillkäse" required>
+        </label>
+        <label>Datum
+          <input type="date" id="expenseDatumInput" value="${today}" required>
+        </label>
+      </div>
+    `,
+    onSubmit: async () => {
+      const glaubiger_id = parseInt(document.getElementById("expensePayerSelect").value, 10);
+      const schuldner_ids = Array.from(
+        document.querySelectorAll("#expenseBeneficiaries input[type=checkbox]:checked")
+      ).map((el) => parseInt(el.value, 10));
+      const cash = parseFloat(document.getElementById("expenseCashInput").value);
+      const betreff = document.getElementById("expenseBetreffInput").value.trim();
+      const datum = document.getElementById("expenseDatumInput").value;
+
+      if (!betreff || !cash || cash <= 0 || schuldner_ids.length === 0) return;
+
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ glaubiger_id, schuldner_ids, cash, betreff, datum }),
+      });
+
+      if (res.ok) {
+        closeModal();
+        loadExpenses();
+        loadBalance();
+      }
+    },
+  });
+}
+
+const addExpenseButton = document.getElementById("addExpenseButton");
+if (addExpenseButton) addExpenseButton.addEventListener("click", openAddExpenseModal);
+
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
@@ -267,4 +417,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(updateCountdown, 1000);
   loadShoppingList();
   setInterval(pollShoppingList, 1000);
+  loadExpenses();
+  loadBalance();
 });

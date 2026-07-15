@@ -1,9 +1,9 @@
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Date, Numeric, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from passlib.context import CryptContext
 from fastapi import Depends
-from datetime import datetime
+from datetime import datetime, date
 
 # SQLite DB
 DATABASE_URL = "sqlite:///./users.db"
@@ -30,6 +30,18 @@ class ShoppingItem(Base):
     name = Column(String, nullable=False)
     done = Column(Boolean, default=False)
     added_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
+class Ausgabe(Base):
+    __tablename__ = "ausgaben"
+    id = Column(Integer, primary_key=True, index=True)
+    glaubiger_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    schuldner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    cash = Column(Numeric(10, 2), nullable=False)
+    betreff = Column(String(40), nullable=False)
+    datum = Column(Date, nullable=False, default=date.today)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
