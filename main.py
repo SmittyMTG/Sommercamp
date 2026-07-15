@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from database import SessionLocal, User, ShoppingItem, Ausgabe, get_db
@@ -300,65 +300,98 @@ async def create_expense(
     return {"created": len(created), "share": share, "betreff": betreff}
 
 
+def _compute_net_balances(db: Session) -> dict[int, float]:
+    """Netto-Saldo je Person aus allen Ausgaben + bereits getilgten Tilgungen.
+    "pending" Tilgungen zählen bewusst nicht mit — die würden sonst die Zahlen
+    verschieben, bevor der Gläubiger überhaupt bestätigt hat."""
+    rows = (
+        db.query(Ausgabe)
+        .filter(Ausgabe.schuldner_id != Ausgabe.glaubiger_id, Ausgabe.status != "pending")
+        .all()
+    )
+    net: dict[int, float] = {}
+    for r in rows:
+        cash = float(r.cash)
+        net[r.glaubiger_id] = net.get(r.glaubiger_id, 0.0) + cash
+        net[r.schuldner_id] = net.get(r.schuldner_id, 0.0) - cash
+    return net
+
+
+def _compute_min_settlements(net: dict[int, float]) -> list[tuple[int, int, float]]:
+    """Greedy-Minimierung: größter Schuldner tilgt größten Gläubiger, bis alle
+    Salden ~0 sind. Stabil sortiert (Betrag, dann User-ID), damit das Ergebnis bei
+    unveränderten Netto-Salden IMMER identisch ausfällt — sonst würde das
+    Bestätigen einer Zahlung die Vorschläge für alle anderen verschieben."""
+    creditors = sorted(
+        ([uid, amt] for uid, amt in net.items() if amt > 0.005), key=lambda x: (-x[1], x[0])
+    )
+    debtors = sorted(
+        ([uid, -amt] for uid, amt in net.items() if amt < -0.005), key=lambda x: (-x[1], x[0])
+    )
+
+    result: list[tuple[int, int, float]] = []
+    i = j = 0
+    while i < len(creditors) and j < len(debtors):
+        cred_id, cred_amt = creditors[i]
+        deb_id, deb_amt = debtors[j]
+        amount = round(min(cred_amt, deb_amt), 2)
+        if amount > 0.005:
+            result.append((deb_id, cred_id, amount))
+        creditors[i][1] -= amount
+        debtors[j][1] -= amount
+        if creditors[i][1] <= 0.005:
+            i += 1
+        if debtors[j][1] <= 0.005:
+            j += 1
+    return result
+
+
 @app.get("/api/expenses/open")
 async def get_open_settlements(request: Request, db: Session = Depends(get_db)):
     """
-    Zeigt den echten, paarweisen offenen Saldo zwischen je zwei Personen (nicht
-    global über alle Personen hinweg minimiert) — jede Kachel entspricht einer
-    tatsächlichen Historie zwischen genau diesen beiden, ist unabhängig von allen
-    anderen Kacheln und lässt sich einzeln bestätigen, egal wie viele Personen
-    jemand gleichzeitig etwas schuldet.
+    Schlägt die minimale Anzahl an Überweisungen vor, um alle offenen Schulden
+    auszugleichen (Greedy-Minimierung über alle Netto-Salden, siehe
+    _compute_min_settlements). Die Berechnung ist deterministisch, solange sich
+    die zugrunde liegenden (nicht-pending) Salden nicht ändern — das Bestätigen
+    einer einzelnen Zahlung verschiebt die Vorschläge für andere Personen daher
+    nie, egal wie viele Zahlungen gleichzeitig unterwegs sind.
 
-    "pending" Tilgungseinträge zählen bewusst NICHT in den Saldo hinein (sonst
-    würde die Kachel sofort verschwinden, bevor der Gläubiger bestätigt hat) —
-    stattdessen wird die Kachel per "pending"-Flag markiert, damit das Frontend
-    sie ausgegraut mit "Wartet auf Bestätigung" statt mit Button anzeigt.
+    "pending" Tilgungseinträge zählen bewusst NICHT in die Berechnung hinein
+    (sonst würde die Kachel sofort verschwinden, bevor der Gläubiger bestätigt
+    hat) — stattdessen wird die Kachel per "pending"-Flag markiert, damit das
+    Frontend sie ausgegraut mit "Wartet auf Bestätigung" statt mit Button zeigt.
     """
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     usernames = {u.id: u.username for u in db.query(User).all()}
-
-    settled_rows = (
-        db.query(Ausgabe)
-        .filter(Ausgabe.schuldner_id != Ausgabe.glaubiger_id, Ausgabe.status != "pending")
-        .all()
-    )
-    pair_net: dict[tuple[int, int], float] = {}
-    for r in settled_rows:
-        cash = float(r.cash)
-        a, b = r.glaubiger_id, r.schuldner_id  # b schuldet a
-        key = tuple(sorted((a, b)))
-        sign = 1.0 if key[0] == a else -1.0
-        pair_net[key] = pair_net.get(key, 0.0) + sign * cash
+    net = _compute_net_balances(db)
+    min_settlements = _compute_min_settlements(net)
 
     pending_by_pair = {
-        (r.glaubiger_id, r.schuldner_id): {"amount": float(r.cash)}
+        (r.glaubiger_id, r.schuldner_id): float(r.cash)
         for r in db.query(Ausgabe).filter(Ausgabe.status == "pending").all()
     }
 
     settlements = []
     seen_pairs = set()
-    for (u1, u2), net in pair_net.items():
-        net = round(net, 2)
-        if abs(net) <= 0.005:
-            continue
-        from_id, to_id = (u2, u1) if net > 0 else (u1, u2)
-        seen_pairs.add((from_id, to_id))
+    for deb_id, cred_id, amount in min_settlements:
+        seen_pairs.add((deb_id, cred_id))
         settlements.append(
             {
-                "from_id": from_id,
-                "from": usernames.get(from_id, "?"),
-                "to_id": to_id,
-                "to": usernames.get(to_id, "?"),
-                "amount": abs(net),
-                "pending": (from_id, to_id) in pending_by_pair,
+                "from_id": deb_id,
+                "from": usernames.get(deb_id, "?"),
+                "to_id": cred_id,
+                "to": usernames.get(cred_id, "?"),
+                "amount": amount,
+                "pending": (deb_id, cred_id) in pending_by_pair,
             }
         )
 
-    # Pending Tilgungen, deren Paar oben nicht (mehr) auftaucht (z. B. weil sich
-    # der offene Betrag exakt deckt), trotzdem als wartende Kachel zeigen.
-    for (from_id, to_id), info in pending_by_pair.items():
+    # Pending Tilgungen, die im aktuellen Vorschlag nicht (mehr) vorkommen (z. B.
+    # weil sich der offene Betrag inzwischen exakt deckt), trotzdem als wartende
+    # Kachel zeigen, bis der Gläubiger bestätigt.
+    for (from_id, to_id), amount in pending_by_pair.items():
         if (from_id, to_id) in seen_pairs:
             continue
         settlements.append(
@@ -367,7 +400,7 @@ async def get_open_settlements(request: Request, db: Session = Depends(get_db)):
                 "from": usernames.get(from_id, "?"),
                 "to_id": to_id,
                 "to": usernames.get(to_id, "?"),
-                "amount": info["amount"],
+                "amount": amount,
                 "pending": True,
             }
         )
@@ -388,6 +421,11 @@ async def settle_expenses(
     bis der echte Gläubiger den Empfang über /api/expenses/settle/confirm bestätigt —
     bis dahin bleibt der offene Betrag sichtbar, nur als "wartend" markiert (siehe
     /api/expenses/open), damit man parallel an mehrere Personen etwas schicken kann.
+
+    Der Betrag wird über dieselbe Minimierungs-Berechnung wie /api/expenses/open
+    ermittelt (nicht aus der direkten Historie zwischen den beiden), damit auch
+    global optimierte Zahlungsvorschläge bestätigt werden können, die keine
+    direkte gemeinsame Ausgabe haben.
     """
     username = get_current_user(request)
     if not username:
@@ -411,37 +449,29 @@ async def settle_expenses(
             content={"error": "Diese Zahlung wurde bereits als gesendet markiert und wartet auf Bestätigung"},
         )
 
-    rows = (
-        db.query(Ausgabe)
-        .filter(
-            Ausgabe.schuldner_id != Ausgabe.glaubiger_id,
-            Ausgabe.status != "pending",
-            or_(
-                and_(Ausgabe.glaubiger_id == creditor.id, Ausgabe.schuldner_id == me.id),
-                and_(Ausgabe.glaubiger_id == me.id, Ausgabe.schuldner_id == creditor.id),
-            ),
-        )
-        .all()
+    net = _compute_net_balances(db)
+    min_settlements = _compute_min_settlements(net)
+    match = next(
+        (amount for deb_id, cred_id, amount in min_settlements if deb_id == me.id and cred_id == creditor.id),
+        None,
     )
-    net = 0.0
-    for r in rows:
-        cash = float(r.cash)
-        net += cash if r.glaubiger_id == creditor.id else -cash
-    net = round(net, 2)
-    if net <= 0.005:
-        return JSONResponse(status_code=400, content={"error": "Du schuldest dieser Person aktuell nichts"})
+    if match is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Diese Zahlung ist aktuell nicht mehr offen — bitte Ansicht neu laden"},
+        )
 
     tilgung = Ausgabe(
         glaubiger_id=me.id,
         schuldner_id=creditor.id,
-        cash=net,
+        cash=match,
         betreff=f"Tilgung an {creditor.username}",
         datum=date.today(),
         status="pending",
     )
     db.add(tilgung)
     db.commit()
-    return {"created": True, "amount": net, "to": creditor.username}
+    return {"created": True, "amount": match, "to": creditor.username}
 
 
 @app.get("/api/expenses/received")
@@ -501,7 +531,9 @@ async def confirm_received_payment(
     if round(payload.amount, 2) != round(float(row.cash), 2):
         return JSONResponse(
             status_code=400,
-            content={"error": f"Der eingegebene Betrag stimmt nicht mit den gemeldeten {float(row.cash):.2f} € überein"},
+            content={
+                "error": f"Der eingegebene Betrag stimmt nicht mit den gemeldeten {float(row.cash):.2f} € überein".replace(".", ",")
+            },
         )
 
     row.status = "getilgt"

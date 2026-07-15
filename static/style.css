@@ -15,7 +15,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .hero-card,.card{background:linear-gradient(145deg,#212127,#141418);border:1px solid var(--line);border-radius:24px;padding:20px;box-shadow:var(--shadow)}
 .hero-card{padding:24px}.mini-hero{margin-bottom:18px}
 .eyebrow{text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-size:11px;font-weight:850}
-.countdown{font-size:34px;line-height:1.05;font-weight:1000;margin:10px 0 8px}.muted{color:var(--muted);font-size:13px}
+.countdown{font-size:34px;line-height:1.05;font-weight:1000;margin:10px 0 8px}.countdown small{font-size:.4em;font-weight:800;color:var(--muted);letter-spacing:.02em;margin-right:.35em}.muted{color:var(--muted);font-size:13px}
 .progress{height:10px;background:#303038;border-radius:999px;overflow:hidden;margin-top:18px}.progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--yellow),var(--yellow2))}
 .section-heading{display:flex;justify-content:space-between;align-items:end;gap:12px;margin:24px 0 12px}.section-heading h2{margin:2px 0 0;font-size:21px}
 .sticky-heading{position:sticky;top:0;background:linear-gradient(var(--bg) 76%,transparent);padding:12px 0;z-index:5}

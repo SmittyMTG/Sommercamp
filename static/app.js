@@ -50,9 +50,8 @@ function updateCountdown() {
   const days = Math.floor(diffMs / 86400000);
   const hours = Math.floor((diffMs % 86400000) / 3600000);
   const minutes = Math.floor((diffMs % 3600000) / 60000);
-  const seconds = Math.floor((diffMs % 60000) / 1000);
 
-  el.innerHTML = `${days}<small>T</small> ${hours}<small>Std</small> ${minutes}<small>Min</small> ${seconds}<small>Sek</small>`;
+  el.innerHTML = `${days} <small>T</small> ${hours} <small>Std</small> ${minutes} <small>Min</small>`;
 
   if (progressEl) {
     // Fortschritt seit "heute - 60 Tage" als grobe Annäherung, rein optisch
@@ -322,12 +321,20 @@ function renderExpenseGroup(group) {
   return card;
 }
 
+let lastExpensesSignature = null;
+
 async function loadExpenses() {
   if (!expenseListEl) return;
   try {
     const res = await fetch("/api/expenses");
     if (!res.ok) throw new Error("Fehler beim Laden");
     const expenses = await res.json();
+
+    // Nur bei echter Änderung neu rendern — sonst würde jedes Poll-Tick (1s)
+    // z. B. offene Eingaben in dieser Ansicht unnötig zerstören.
+    const signature = JSON.stringify(expenses);
+    if (signature === lastExpensesSignature) return;
+    lastExpensesSignature = signature;
 
     expenseListEl.innerHTML = "";
     if (expenses.length === 0) {
@@ -340,12 +347,18 @@ async function loadExpenses() {
   }
 }
 
+let lastBalanceSignature = null;
+
 async function loadBalance() {
   if (!balanceHeroEl) return;
   try {
     const res = await fetch("/api/expenses/balance");
     if (!res.ok) throw new Error("Fehler beim Laden");
     const balance = await res.json();
+
+    const signature = JSON.stringify(balance);
+    if (signature === lastBalanceSignature) return;
+    lastBalanceSignature = signature;
 
     if (balance.net > 0.005) {
       balanceHeroEl.innerHTML = `
@@ -518,6 +531,8 @@ function renderSettlementItem(s, isMine) {
   return card;
 }
 
+let lastOpenSettlementsSignature = null;
+
 async function loadOpenSettlements() {
   if (!openSettlementsListEl) return;
   try {
@@ -525,6 +540,10 @@ async function loadOpenSettlements() {
     const res = await fetch("/api/expenses/open");
     if (!res.ok) throw new Error("Fehler beim Laden");
     const settlements = await res.json();
+
+    const signature = JSON.stringify(settlements);
+    if (signature === lastOpenSettlementsSignature) return;
+    lastOpenSettlementsSignature = signature;
 
     openSettlementsListEl.innerHTML = "";
     if (settlements.length === 0) {
@@ -550,7 +569,7 @@ function renderReceivedItem(r) {
       <p class="list-card-title">${escapeHtml(r.from)} behauptet: ${formatEuro(r.amount)} überwiesen</p>
       <p class="list-card-meta">${formatDate(r.datum)} · Betrag zur Bestätigung eintippen</p>
       <div class="form-stack">
-        <input type="number" step="0.01" min="0.01" inputmode="decimal" class="received-amount-input" placeholder="z. B. ${r.amount.toFixed(2)}">
+        <input type="number" step="0.01" min="0.01" inputmode="decimal" class="received-amount-input" placeholder="z. B. ${r.amount.toFixed(2).replace(".", ",")}">
         <p class="error-text hidden received-error"></p>
       </div>
     </div>
@@ -590,12 +609,21 @@ function renderReceivedItem(r) {
   return card;
 }
 
+let lastReceivedSignature = null;
+
 async function loadReceivedPayments() {
   if (!receivedListEl) return;
   try {
     const res = await fetch("/api/expenses/received");
     if (!res.ok) throw new Error("Fehler beim Laden");
     const received = await res.json();
+
+    // Wichtig: ohne diesen Vergleich würde das 1-Sekunden-Polling das Eingabefeld
+    // hier bei jedem Tick neu aufbauen und man könnte nie eine Zahl eintippen,
+    // obwohl sich an den Daten gar nichts geändert hat.
+    const signature = JSON.stringify(received);
+    if (signature === lastReceivedSignature) return;
+    lastReceivedSignature = signature;
 
     receivedListEl.innerHTML = "";
     if (received.length === 0) {
@@ -627,12 +655,18 @@ function renderLeaderboardItem(entry, rank, isLast) {
   return card;
 }
 
+let lastLeaderboardSignature = null;
+
 async function loadLeaderboard() {
   if (!leaderboardListEl) return;
   try {
     const res = await fetch("/api/expenses/leaderboard");
     if (!res.ok) throw new Error("Fehler beim Laden");
     const ranking = await res.json();
+
+    const signature = JSON.stringify(ranking);
+    if (signature === lastLeaderboardSignature) return;
+    lastLeaderboardSignature = signature;
 
     leaderboardListEl.innerHTML = "";
     if (ranking.length === 0) {
@@ -664,7 +698,7 @@ function pollCostsViews() {
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
   updateCountdown();
-  setInterval(updateCountdown, 1000);
+  setInterval(updateCountdown, 30000); // keine Sekundenanzeige mehr, reicht alle 30s
   loadShoppingList();
   setInterval(pollShoppingList, 1000);
   pollCostsViews();
