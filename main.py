@@ -260,11 +260,11 @@ async def create_expense(
     # Anteil pro ausgewählter Person; der eigene Anteil des Zahlers ist durch
     # die Zahlung selbst gedeckt und erzeugt keinen Schulden-Eintrag.
     share = round(payload.cash / len(beneficiary_ids), 2)
-    debtor_ids = [uid for uid in beneficiary_ids if uid != payload.glaubiger_id]
+    debtor_ids = [uid for uid in beneficiary_ids]
     if not debtor_ids:
         return JSONResponse(
             status_code=400,
-            content={"error": "Wähle mindestens eine weitere Person aus, die mitbezahlen soll"},
+            content={"error": "Wähle mindestens eine Person aus"},
         )
 
     created = []
