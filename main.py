@@ -1,3 +1,4 @@
+import re
 from datetime import date
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from database import SessionLocal, User, ShoppingItem, Ausgabe, get_db
+from database import SessionLocal, User, ShoppingItem, ShoppingSource, Ausgabe, get_db
 from auth import login, logout, get_current_user
 import uvicorn
 
@@ -32,6 +33,12 @@ templates.env.globals["static_version"] = static_version
 # --- Schemas ---
 class ShoppingItemCreate(BaseModel):
     name: str
+    woher_id: int | None = None
+
+
+class ShoppingSourceCreate(BaseModel):
+    farbe: str
+    bezeichnung: str
 
 
 class ExpenseCreate(BaseModel):
@@ -92,17 +99,23 @@ async def get_shopping_items(request: Request, db: Session = Depends(get_db)):
     if not user:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
-    items = (
-        db.query(ShoppingItem)
-        .order_by(ShoppingItem.done.asc(), ShoppingItem.created_at.desc())
-        .all()
-    )
+    # Statische Sortierung: rein nach Erstellzeit, unabhängig vom "erledigt"-Status.
+    # Sonst springt ein Item beim Abhaken sofort ans Listenende, was beim schnellen
+    # Abhaken mehrerer Dinge nervig ist. Umsortieren nach Name/Woher/Status passiert
+    # nur clientseitig, wenn gewünscht.
+    items = db.query(ShoppingItem).order_by(ShoppingItem.created_at.desc()).all()
+    sources = {s.id: s for s in db.query(ShoppingSource).all()}
     return [
         {
             "id": i.id,
             "name": i.name,
             "done": i.done,
             "added_by": i.added_by,
+            "woher": (
+                {"id": sources[i.woher_id].id, "farbe": sources[i.woher_id].farbe, "bezeichnung": sources[i.woher_id].bezeichnung}
+                if i.woher_id and i.woher_id in sources
+                else None
+            ),
         }
         for i in items
     ]
@@ -120,7 +133,13 @@ async def create_shopping_item(
     if not name:
         return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
 
-    new_item = ShoppingItem(name=name, added_by=user)
+    woher = None
+    if item.woher_id is not None:
+        woher = db.query(ShoppingSource).filter(ShoppingSource.id == item.woher_id).first()
+        if not woher:
+            return JSONResponse(status_code=400, content={"error": "Unbekannte Quelle"})
+
+    new_item = ShoppingItem(name=name, added_by=user, woher_id=woher.id if woher else None)
     db.add(new_item)
     db.commit()
     db.refresh(new_item)
@@ -130,7 +149,47 @@ async def create_shopping_item(
         "name": new_item.name,
         "done": new_item.done,
         "added_by": new_item.added_by,
+        "woher": {"id": woher.id, "farbe": woher.farbe, "bezeichnung": woher.bezeichnung} if woher else None,
     }
+
+
+# --- Woher-Quellen für die Einkaufsliste ---
+
+@app.get("/api/shopping-sources")
+async def list_shopping_sources(request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    sources = db.query(ShoppingSource).order_by(ShoppingSource.bezeichnung.asc()).all()
+    return [{"id": s.id, "farbe": s.farbe, "bezeichnung": s.bezeichnung} for s in sources]
+
+
+@app.post("/api/shopping-sources")
+async def create_shopping_source(
+    request: Request, payload: ShoppingSourceCreate, db: Session = Depends(get_db)
+):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    bezeichnung = payload.bezeichnung.strip()
+    if not bezeichnung:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
+    if len(bezeichnung) > 16:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 16 Zeichen haben"})
+
+    farbe = payload.farbe.strip().lower()
+    if not re.fullmatch(r"#[0-9a-f]{6}", farbe):
+        return JSONResponse(status_code=400, content={"error": "Farbe muss ein Hex-Code sein, z. B. #ffd400"})
+
+    existing = db.query(ShoppingSource).filter(ShoppingSource.bezeichnung == bezeichnung).first()
+    if existing:
+        return JSONResponse(status_code=400, content={"error": "Diese Bezeichnung gibt es schon"})
+
+    source = ShoppingSource(farbe=farbe, bezeichnung=bezeichnung)
+    db.add(source)
+    db.commit()
+    db.refresh(source)
+    return {"id": source.id, "farbe": source.farbe, "bezeichnung": source.bezeichnung}
 
 
 @app.patch("/api/shopping/{item_id}/toggle")
@@ -193,10 +252,13 @@ async def list_expenses(request: Request, db: Session = Depends(get_db)):
 
     # Tilgungseinträge (Rückzahlungen, status != "offen") sind Buchhaltung, keine
     # eigenen Einkäufe — die gehören nicht in die "Alle Ausgaben"-Übersicht.
+    # Sortierung nach created_at (echter Zeitstempel), nicht nach "datum" — das
+    # Feld ist frei editierbar (z. B. beim Nacherfassen älterer Ausgaben) und
+    # eignet sich daher nicht als verlässliche Sortiergrundlage.
     rows = (
         db.query(Ausgabe)
         .filter(Ausgabe.status == "offen")
-        .order_by(Ausgabe.datum.desc(), Ausgabe.created_at.desc())
+        .order_by(Ausgabe.created_at.desc())
         .all()
     )
     usernames = {u.id: u.username for u in db.query(User).all()}

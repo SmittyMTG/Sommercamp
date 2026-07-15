@@ -40,7 +40,8 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .bottom-nav button{border:none;background:none;color:var(--muted);font-size:11px;padding:6px 2px}.bottom-nav button span{display:block;font-size:19px;margin-bottom:3px}.bottom-nav button.active{color:var(--yellow);font-weight:900}
 .screen{display:none}.screen.active{display:block}.setup-screen{padding-top:30px}.setup-card h1{margin:8px 0}.setup-card p{color:var(--muted);line-height:1.5}
 .form-stack{display:grid;gap:12px}.form-stack label{display:grid;gap:6px;color:var(--muted);font-size:13px;font-weight:700}.checkbox-group{display:grid;gap:6px}
-.costs-view-select{margin-bottom:16px}.costs-view{display:grid;gap:2px}
+.costs-view-select,.sort-select{margin-bottom:16px}.costs-view{display:grid;gap:2px}
+.source-tag{display:inline-block;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;color:#111;margin-top:5px}
 .rank-badge{width:28px;height:28px;border-radius:999px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0}.rank-badge.top{background:var(--yellow);color:#111}.rank-badge.bottom{background:var(--surface2);color:var(--muted)}
 .settle-btn{white-space:nowrap}
 .list-card-value{font-weight:900;flex-shrink:0}

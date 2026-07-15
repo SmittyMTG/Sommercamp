@@ -23,6 +23,15 @@ class User(Base):
     role = Column(String)
 
 
+# Woher-Tag für Einkaufslisten-Items: erweiterbare Liste aus Farbe + Kurzname
+# (z. B. "Rewe", "Aldi", "Bau"), wird direkt beim Anlegen eines Items mit erstellt.
+class ShoppingSource(Base):
+    __tablename__ = "shopping_sources"
+    id = Column(Integer, primary_key=True, index=True)
+    farbe = Column(String(20), nullable=False)
+    bezeichnung = Column(String(16), nullable=False, unique=True)
+
+
 # NEU: Einkaufslisten-Eintrag
 class ShoppingItem(Base):
     __tablename__ = "shopping_items"
@@ -30,6 +39,7 @@ class ShoppingItem(Base):
     name = Column(String, nullable=False)
     done = Column(Boolean, default=False)
     added_by = Column(String, nullable=True)
+    woher_id = Column(Integer, ForeignKey("shopping_sources.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -70,6 +80,7 @@ def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str = ""
 
 _ensure_column("ausgaben", "gezahlt", "BOOLEAN", "DEFAULT 0")
 _ensure_column("ausgaben", "status", "TEXT", "DEFAULT 'offen'")
+_ensure_column("shopping_items", "woher_id", "INTEGER")
 
 # Dependency to get DB session
 def get_db():

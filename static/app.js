@@ -123,12 +123,17 @@ function renderShoppingItem(item) {
   const card = document.createElement("div");
   card.className = "list-card" + (item.done ? " done" : "");
   card.dataset.id = item.id;
-  
+
+  const sourceTag = item.woher
+    ? `<span class="source-tag" style="background:${escapeHtml(item.woher.farbe)}">${escapeHtml(item.woher.bezeichnung)}</span>`
+    : "";
+
   card.innerHTML = `
     <div class="list-card-content">
       <button type="button" class="list-card-checkbox${item.done ? " checked" : ""}" aria-label="Erledigt"></button>
       <div class="list-card-text">
         <p class="list-card-title">${escapeHtml(item.name)}</p>
+        ${sourceTag}
       </div>
     </div>
     <div class="list-card-actions">
@@ -180,6 +185,28 @@ function updateQuickShoppingCount() {
   quickShoppingEl.textContent = `${open} offen`;
 }
 
+// Die DB liefert immer dieselbe statische Reihenfolge (Erstellzeit). Sortieren
+// nach Name/Woher/Status ist rein clientseitig und ändert nichts an der
+// zugrunde liegenden, stabilen Basis-Reihenfolge.
+let lastShoppingItems = [];
+let shoppingSortMode = "neu";
+
+function sortShoppingItems(items, mode) {
+  const arr = [...items];
+  if (mode === "name") {
+    arr.sort((a, b) => a.name.localeCompare(b.name, "de"));
+  } else if (mode === "woher") {
+    arr.sort((a, b) => {
+      const an = a.woher ? a.woher.bezeichnung : "￿"; // ohne Woher ans Ende
+      const bn = b.woher ? b.woher.bezeichnung : "￿";
+      return an.localeCompare(bn, "de");
+    });
+  } else if (mode === "status") {
+    arr.sort((a, b) => Number(a.done) - Number(b.done));
+  }
+  return arr;
+}
+
 function renderShoppingListItems(items) {
   shoppingListEl.innerHTML = "";
   if (items.length === 0) {
@@ -190,6 +217,18 @@ function renderShoppingListItems(items) {
   updateQuickShoppingCount();
 }
 
+function renderSortedShoppingList() {
+  renderShoppingListItems(sortShoppingItems(lastShoppingItems, shoppingSortMode));
+}
+
+const shoppingSortSelect = document.getElementById("shoppingSortSelect");
+if (shoppingSortSelect) {
+  shoppingSortSelect.addEventListener("change", () => {
+    shoppingSortMode = shoppingSortSelect.value;
+    renderSortedShoppingList();
+  });
+}
+
 let lastShoppingSignature = null;
 
 async function loadShoppingList() {
@@ -198,7 +237,8 @@ async function loadShoppingList() {
     if (!res.ok) throw new Error("Fehler beim Laden");
     const items = await res.json();
     lastShoppingSignature = JSON.stringify(items);
-    renderShoppingListItems(items);
+    lastShoppingItems = items;
+    renderSortedShoppingList();
   } catch (err) {
     shoppingListEl.innerHTML = `<div class="empty"><p>Liste konnte nicht geladen werden.</p></div>`;
   }
@@ -215,13 +255,34 @@ async function pollShoppingList() {
     const signature = JSON.stringify(items);
     if (signature === lastShoppingSignature) return;
     lastShoppingSignature = signature;
-    renderShoppingListItems(items);
+    lastShoppingItems = items;
+    renderSortedShoppingList();
   } catch (err) {
     // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
   }
 }
 
-function openAddShoppingModal() {
+let cachedShoppingSources = null;
+
+async function fetchShoppingSources(forceRefresh) {
+  if (cachedShoppingSources && !forceRefresh) return cachedShoppingSources;
+  const res = await fetch("/api/shopping-sources");
+  cachedShoppingSources = res.ok ? await res.json() : [];
+  return cachedShoppingSources;
+}
+
+function shoppingSourceOptionsHtml(sources, selectedId) {
+  return sources
+    .map(
+      (s) =>
+        `<option value="${s.id}"${s.id === selectedId ? " selected" : ""}>${escapeHtml(s.bezeichnung)}</option>`
+    )
+    .join("");
+}
+
+async function openAddShoppingModal() {
+  const sources = await fetchShoppingSources();
+
   openModal({
     eyebrow: "Einkauf",
     title: "Artikel hinzufügen",
@@ -230,6 +291,23 @@ function openAddShoppingModal() {
         <label>Produktname
           <input type="text" id="shoppingNameInput" placeholder="z. B. Kohle für den Grill" required>
         </label>
+        <label>Woher (optional)
+          <select id="shoppingWoherSelect">
+            <option value="">— keine Angabe —</option>
+            ${shoppingSourceOptionsHtml(sources)}
+            <option value="__new__">+ Neue Quelle anlegen…</option>
+          </select>
+        </label>
+        <div id="newSourceFields" class="form-stack hidden">
+          <label>Farbe
+            <input type="color" id="newSourceColor" value="#ffd400">
+          </label>
+          <label>Bezeichnung
+            <input type="text" id="newSourceLabel" maxlength="16" placeholder="z. B. Rewe">
+          </label>
+          <button type="button" id="createSourceBtn" class="secondary compact">Quelle anlegen</button>
+          <p class="error-text hidden new-source-error"></p>
+        </div>
       </div>
     `,
     onSubmit: async () => {
@@ -237,23 +315,66 @@ function openAddShoppingModal() {
       const name = input.value.trim();
       if (!name) return;
 
+      const woherSelect = document.getElementById("shoppingWoherSelect");
+      const woherValue = woherSelect.value;
+      if (woherValue === "__new__") return; // erst Quelle anlegen, dann erneut speichern
+      const woher_id = woherValue ? parseInt(woherValue, 10) : null;
+
       const res = await fetch("/api/shopping", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, woher_id }),
       });
 
       if (res.ok) {
         const newItem = await res.json();
-        const emptyState = shoppingListEl.querySelector(".empty");
-        if (emptyState) emptyState.remove();
-        if (!shoppingListEl.querySelector(`[data-id="${newItem.id}"]`)) {
-          shoppingListEl.prepend(renderShoppingItem(newItem));
-          updateQuickShoppingCount();
-        }
+        lastShoppingItems = [newItem, ...lastShoppingItems];
+        lastShoppingSignature = JSON.stringify(lastShoppingItems);
+        renderSortedShoppingList();
         closeModal();
       }
     },
+  });
+
+  const woherSelect = document.getElementById("shoppingWoherSelect");
+  const newSourceFields = document.getElementById("newSourceFields");
+  woherSelect.addEventListener("change", () => {
+    newSourceFields.classList.toggle("hidden", woherSelect.value !== "__new__");
+  });
+
+  document.getElementById("createSourceBtn").addEventListener("click", async () => {
+    const colorInput = document.getElementById("newSourceColor");
+    const labelInput = document.getElementById("newSourceLabel");
+    const errEl = document.querySelector(".new-source-error");
+    const bezeichnung = labelInput.value.trim();
+    errEl.classList.add("hidden");
+
+    if (!bezeichnung) {
+      errEl.textContent = "Bitte eine Bezeichnung eingeben.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const res = await fetch("/api/shopping-sources", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ farbe: colorInput.value, bezeichnung }),
+    });
+
+    if (res.ok) {
+      const created = await res.json();
+      const sources = await fetchShoppingSources(true);
+      woherSelect.innerHTML = `
+        <option value="">— keine Angabe —</option>
+        ${shoppingSourceOptionsHtml(sources, created.id)}
+        <option value="__new__">+ Neue Quelle anlegen…</option>
+      `;
+      newSourceFields.classList.add("hidden");
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errEl.textContent = data.error || "Konnte nicht angelegt werden.";
+      errEl.classList.remove("hidden");
+    }
   });
 }
 
