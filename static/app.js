@@ -284,13 +284,39 @@ function formatDate(isoDate) {
   return `${d}.${m}.${y}`;
 }
 
-function renderExpenseItem(expense) {
+// Gruppiert die granularen DB-Zeilen (ein Eintrag pro Schuldner) rein für die
+// Darstellung nach Datum + Betreff zu einer Kachel pro Ausgabe-Vorgang. Die DB
+// selbst bleibt granular, hier wird nur zusammengefasst, was zusammengehört.
+function groupExpenses(expenses) {
+  const groups = new Map();
+  for (const e of expenses) {
+    const key = `${e.datum}|${e.betreff}`;
+    if (!groups.has(key)) {
+      groups.set(key, { datum: e.datum, betreff: e.betreff, glaeubiger: new Set(), total: 0, entries: [] });
+    }
+    const g = groups.get(key);
+    g.glaeubiger.add(e.glaubiger);
+    g.total += e.cash;
+    g.entries.push(e);
+  }
+  return Array.from(groups.values());
+}
+
+function renderExpenseGroup(group) {
   const card = document.createElement("div");
   card.className = "list-card";
+  const payer = Array.from(group.glaeubiger).map(escapeHtml).join(", ");
+  const breakdown = group.entries
+    .map((e) => {
+      const label = e.selbst ? `${e.schuldner} (eigen)` : e.schuldner;
+      return `${escapeHtml(label)}: ${formatEuro(e.cash)}${e.gezahlt ? " ✓" : ""}`;
+    })
+    .join(" · ");
   card.innerHTML = `
     <div class="list-card-text">
-      <p class="list-card-title">${escapeHtml(expense.betreff)}</p>
-      <p class="list-card-meta">${escapeHtml(expense.schuldner)} schuldet ${escapeHtml(expense.glaubiger)} · ${formatEuro(expense.cash)} · ${formatDate(expense.datum)}</p>
+      <p class="list-card-title">${escapeHtml(group.betreff)}</p>
+      <p class="list-card-meta">${formatDate(group.datum)} · bezahlt von ${payer} · ${formatEuro(group.total)} gesamt</p>
+      <p class="list-card-meta">${breakdown}</p>
     </div>
   `;
   return card;
@@ -307,7 +333,7 @@ async function loadExpenses() {
     if (expenses.length === 0) {
       expenseListEl.innerHTML = `<div class="empty"><p>Noch keine Einträge.</p></div>`;
     } else {
-      expenses.forEach((e) => expenseListEl.appendChild(renderExpenseItem(e)));
+      groupExpenses(expenses).forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g)));
     }
   } catch (err) {
     expenseListEl.innerHTML = `<div class="empty"><p>Ausgaben konnten nicht geladen werden.</p></div>`;
@@ -409,6 +435,114 @@ async function openAddExpenseModal() {
 
 const addExpenseButton = document.getElementById("addExpenseButton");
 if (addExpenseButton) addExpenseButton.addEventListener("click", openAddExpenseModal);
+
+/* ---------- Kosten: Ansicht wechseln ---------- */
+const costsViewSelect = document.getElementById("costsViewSelect");
+const costsViews = {
+  entry: document.getElementById("costsViewEntry"),
+  open: document.getElementById("costsViewOpen"),
+  leaderboard: document.getElementById("costsViewLeaderboard"),
+};
+
+function switchCostsView(view) {
+  Object.entries(costsViews).forEach(([key, el]) => {
+    if (el) el.classList.toggle("hidden", key !== view);
+  });
+  if (view === "open") loadOpenSettlements();
+  if (view === "leaderboard") loadLeaderboard();
+}
+
+if (costsViewSelect) {
+  costsViewSelect.addEventListener("change", () => switchCostsView(costsViewSelect.value));
+}
+
+/* ---------- Kosten: Offene Zahlungen ---------- */
+const openSettlementsListEl = document.getElementById("openSettlementsList");
+
+function renderSettlementItem(s) {
+  const card = document.createElement("div");
+  card.className = "list-card";
+  card.innerHTML = `
+    <div class="list-card-text">
+      <p class="list-card-title">${escapeHtml(s.from)} → ${escapeHtml(s.to)}</p>
+      <p class="list-card-meta">${formatEuro(s.amount)}</p>
+    </div>
+    <div class="list-card-actions">
+      <button type="button" class="tiny settle-btn">Als bezahlt markieren</button>
+    </div>
+  `;
+  card.querySelector(".settle-btn").addEventListener("click", async () => {
+    const res = await fetch("/api/expenses/settle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from_id: s.from_id, to_id: s.to_id }),
+    });
+    if (res.ok) {
+      loadOpenSettlements();
+      loadBalance();
+      loadExpenses();
+    }
+  });
+  return card;
+}
+
+async function loadOpenSettlements() {
+  if (!openSettlementsListEl) return;
+  try {
+    const res = await fetch("/api/expenses/open");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const settlements = await res.json();
+
+    openSettlementsListEl.innerHTML = "";
+    if (settlements.length === 0) {
+      openSettlementsListEl.innerHTML = `<div class="empty"><p>Keine offenen Zahlungen — alles ausgeglichen.</p></div>`;
+    } else {
+      settlements.forEach((s) => openSettlementsListEl.appendChild(renderSettlementItem(s)));
+    }
+  } catch (err) {
+    openSettlementsListEl.innerHTML = `<div class="empty"><p>Konnte nicht geladen werden.</p></div>`;
+  }
+}
+
+/* ---------- Kosten: Leaderboard ---------- */
+const leaderboardListEl = document.getElementById("leaderboardList");
+
+function renderLeaderboardItem(entry, rank, isLast) {
+  const card = document.createElement("div");
+  card.className = "list-card";
+  const badgeClass = rank === 1 ? "top" : isLast ? "bottom" : "";
+  card.innerHTML = `
+    <div class="list-card-content">
+      <div class="rank-badge ${badgeClass}">${rank}</div>
+      <div class="list-card-text">
+        <p class="list-card-title">${escapeHtml(entry.username)}</p>
+      </div>
+    </div>
+    <p class="list-card-value">${formatEuro(entry.total)}</p>
+  `;
+  return card;
+}
+
+async function loadLeaderboard() {
+  if (!leaderboardListEl) return;
+  try {
+    const res = await fetch("/api/expenses/leaderboard");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const ranking = await res.json();
+
+    leaderboardListEl.innerHTML = "";
+    if (ranking.length === 0) {
+      leaderboardListEl.innerHTML = `<div class="empty"><p>Noch keine Daten.</p></div>`;
+    } else {
+      ranking.forEach((entry, idx) => {
+        const isLast = idx === ranking.length - 1 && ranking.length > 1;
+        leaderboardListEl.appendChild(renderLeaderboardItem(entry, idx + 1, isLast));
+      });
+    }
+  } catch (err) {
+    leaderboardListEl.innerHTML = `<div class="empty"><p>Leaderboard konnte nicht geladen werden.</p></div>`;
+  }
+}
 
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {

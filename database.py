@@ -34,6 +34,8 @@ class ShoppingItem(Base):
 
 
 # Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
+# (schuldner_id == glaubiger_id ist erlaubt: Eintrag für sich selbst, z. B. eigener
+# Snackkauf ohne Beteiligte — zählt fürs Leaderboard, ist aber keine echte Schuld.)
 class Ausgabe(Base):
     __tablename__ = "ausgaben"
     id = Column(Integer, primary_key=True, index=True)
@@ -42,11 +44,26 @@ class Ausgabe(Base):
     cash = Column(Numeric(10, 2), nullable=False)
     betreff = Column(String(40), nullable=False)
     datum = Column(Date, nullable=False, default=date.today)
+    gezahlt = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
 # Create tables
 Base.metadata.create_all(bind=engine)
+
+
+# create_all legt nur fehlende TABELLEN an, keine fehlenden SPALTEN auf bereits
+# bestehenden Tabellen. Diese kleine Selbst-Migration holt neue Spalten nach,
+# damit weder hier noch auf dem Server manuell ALTER TABLE gefahren werden muss.
+def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str = ""):
+    with engine.connect() as conn:
+        existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type} {default_sql}")
+            conn.commit()
+
+
+_ensure_column("ausgaben", "gezahlt", "BOOLEAN", "DEFAULT 0")
 
 # Dependency to get DB session
 def get_db():

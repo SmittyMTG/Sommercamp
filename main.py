@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func
+from sqlalchemy import func, and_, or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from database import SessionLocal, User, ShoppingItem, Ausgabe, get_db
@@ -40,6 +40,11 @@ class ExpenseCreate(BaseModel):
     cash: float
     betreff: str
     datum: str | None = None
+
+
+class SettleRequest(BaseModel):
+    from_id: int
+    to_id: int
 
 
 # --- Routes ---
@@ -196,6 +201,8 @@ async def list_expenses(request: Request, db: Session = Depends(get_db)):
             "cash": float(r.cash),
             "betreff": r.betreff,
             "datum": r.datum.isoformat(),
+            "gezahlt": r.gezahlt,
+            "selbst": r.schuldner_id == r.glaubiger_id,
         }
         for r in rows
     ]
@@ -211,11 +218,20 @@ async def get_expense_balance(request: Request, db: Session = Depends(get_db)):
     if not me:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
+    # Nur offene (unbezahlte) Fremd-Schulden zählen für den Saldo — Einträge, wo
+    # man sich selbst als Schuldner eingetragen hat, sind keine echte Schuld.
+    open_others = Ausgabe.schuldner_id != Ausgabe.glaubiger_id
     owed_to_me = (
-        db.query(func.sum(Ausgabe.cash)).filter(Ausgabe.glaubiger_id == me.id).scalar() or 0
+        db.query(func.sum(Ausgabe.cash))
+        .filter(Ausgabe.glaubiger_id == me.id, Ausgabe.gezahlt.is_(False), open_others)
+        .scalar()
+        or 0
     )
     i_owe = (
-        db.query(func.sum(Ausgabe.cash)).filter(Ausgabe.schuldner_id == me.id).scalar() or 0
+        db.query(func.sum(Ausgabe.cash))
+        .filter(Ausgabe.schuldner_id == me.id, Ausgabe.gezahlt.is_(False), open_others)
+        .scalar()
+        or 0
     )
     return {
         "owed_to_me": float(owed_to_me),
@@ -257,30 +273,126 @@ async def create_expense(
     else:
         expense_date = date.today()
 
-    # Anteil pro ausgewählter Person; der eigene Anteil des Zahlers ist durch
-    # die Zahlung selbst gedeckt und erzeugt keinen Schulden-Eintrag.
+    # Ein Eintrag pro ausgewählter Person, auch für den Zahler selbst (z. B. eigener
+    # Snackkauf ohne Beteiligte). schuldner_id == glaubiger_id ist keine echte Schuld,
+    # zählt aber fürs Leaderboard mit und wird in Saldo/Offene-Zahlungen ausgeblendet.
     share = round(payload.cash / len(beneficiary_ids), 2)
-    debtor_ids = [uid for uid in beneficiary_ids]
-    if not debtor_ids:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "Wähle mindestens eine Person aus"},
-        )
 
     created = []
-    for uid in debtor_ids:
+    for uid in beneficiary_ids:
         row = Ausgabe(
             glaubiger_id=payload.glaubiger_id,
             schuldner_id=uid,
             cash=share,
             betreff=betreff,
             datum=expense_date,
+            gezahlt=False,
         )
         db.add(row)
         created.append(row)
     db.commit()
 
     return {"created": len(created), "share": share, "betreff": betreff}
+
+
+@app.get("/api/expenses/open")
+async def get_open_settlements(request: Request, db: Session = Depends(get_db)):
+    """
+    Fasst alle offenen (unbezahlten) Schulden zu Netto-Salden pro Person zusammen
+    und schlägt die minimale Anzahl an Überweisungen vor, um alle auszugleichen
+    (klassischer Greedy-Algorithmus: größter Gläubiger tilgt größten Schuldner).
+    """
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    rows = (
+        db.query(Ausgabe)
+        .filter(Ausgabe.gezahlt.is_(False), Ausgabe.schuldner_id != Ausgabe.glaubiger_id)
+        .all()
+    )
+    usernames = {u.id: u.username for u in db.query(User).all()}
+
+    net: dict[int, float] = {}
+    for r in rows:
+        cash = float(r.cash)
+        net[r.glaubiger_id] = net.get(r.glaubiger_id, 0.0) + cash
+        net[r.schuldner_id] = net.get(r.schuldner_id, 0.0) - cash
+
+    creditors = sorted(([uid, amt] for uid, amt in net.items() if amt > 0.005), key=lambda x: -x[1])
+    debtors = sorted(([uid, -amt] for uid, amt in net.items() if amt < -0.005), key=lambda x: -x[1])
+
+    settlements = []
+    i = j = 0
+    while i < len(creditors) and j < len(debtors):
+        cred_id, cred_amt = creditors[i]
+        deb_id, deb_amt = debtors[j]
+        amount = round(min(cred_amt, deb_amt), 2)
+        if amount > 0.005:
+            settlements.append(
+                {
+                    "from_id": deb_id,
+                    "from": usernames.get(deb_id, "?"),
+                    "to_id": cred_id,
+                    "to": usernames.get(cred_id, "?"),
+                    "amount": amount,
+                }
+            )
+        creditors[i][1] -= amount
+        debtors[j][1] -= amount
+        if creditors[i][1] <= 0.005:
+            i += 1
+        if debtors[j][1] <= 0.005:
+            j += 1
+
+    return settlements
+
+
+@app.post("/api/expenses/settle")
+async def settle_expenses(
+    request: Request, payload: SettleRequest, db: Session = Depends(get_db)
+):
+    """
+    Markiert alle offenen Einträge zwischen zwei Personen (in beide Richtungen)
+    als bezahlt. Die Vorschläge aus /api/expenses/open sind bereits Netto-Salden,
+    daher gleicht eine bestätigte Zahlung die komplette Historie der beiden aus.
+    """
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    updated = (
+        db.query(Ausgabe)
+        .filter(
+            Ausgabe.gezahlt.is_(False),
+            or_(
+                and_(Ausgabe.glaubiger_id == payload.to_id, Ausgabe.schuldner_id == payload.from_id),
+                and_(Ausgabe.glaubiger_id == payload.from_id, Ausgabe.schuldner_id == payload.to_id),
+            ),
+        )
+        .update({"gezahlt": True}, synchronize_session=False)
+    )
+    db.commit()
+    return {"updated": updated}
+
+
+@app.get("/api/expenses/leaderboard")
+async def get_expense_leaderboard(request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    totals = dict(
+        db.query(Ausgabe.schuldner_id, func.sum(Ausgabe.cash))
+        .group_by(Ausgabe.schuldner_id)
+        .all()
+    )
+    users = db.query(User).all()
+    ranking = sorted(
+        (
+            {"user_id": u.id, "username": u.username, "total": float(totals.get(u.id, 0) or 0)}
+            for u in users
+        ),
+        key=lambda x: -x["total"],
+    )
+    return ranking
 
 
 if __name__ == "__main__":
