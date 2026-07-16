@@ -311,7 +311,7 @@ async def delete_pack_item(item_id: int, request: Request, db: Session = Depends
 
 def _require_admin(db: Session, username: str) -> User | None:
     user = db.query(User).filter(User.username == username).first()
-    if not user or user.role != "admin":
+    if not user or not user.role or user.role.strip().lower() != "admin":
         return None
     return user
 

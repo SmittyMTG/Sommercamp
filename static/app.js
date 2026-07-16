@@ -69,6 +69,10 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function isAdminRole(role) {
+  return typeof role === "string" && role.trim().toLowerCase() === "admin";
+}
+
 /* ---------- Generic modal ---------- */
 const modal = document.getElementById("modal");
 const modalForm = document.getElementById("modalForm");
@@ -575,7 +579,7 @@ async function loadPlanList(force) {
     lastPlanSignature = signature;
 
     const { me } = await fetchUsersAndMe();
-    const isAdmin = !!me && me.role === "admin";
+    const isAdmin = !!me && isAdminRole(me.role);
 
     planListEl.innerHTML = "";
     if (events.length === 0) {
@@ -657,7 +661,7 @@ if (addPlanButton) {
   // Button ist standardmäßig ausgeblendet (siehe index.html), damit er für
   // Nicht-Admins nie kurz aufblitzt, bis die Rolle bekannt ist.
   fetchUsersAndMe().then(({ me }) => {
-    if (me && me.role === "admin") addPlanButton.classList.remove("hidden");
+    if (me && isAdminRole(me.role)) addPlanButton.classList.remove("hidden");
   });
 }
 
