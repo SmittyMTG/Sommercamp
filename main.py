@@ -1,5 +1,5 @@
 import re
-from datetime import date
+from datetime import date, datetime as dt
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Depends, Form
@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from database import SessionLocal, User, ShoppingItem, ShoppingSource, PackItem, Ausgabe, get_db
+from database import SessionLocal, User, ShoppingItem, ShoppingSource, PackItem, PlanEvent, Ausgabe, get_db
 from auth import login, logout, get_current_user
 import uvicorn
 
@@ -43,6 +43,14 @@ class ShoppingSourceCreate(BaseModel):
 
 class PackItemCreate(BaseModel):
     name: str
+
+
+class PlanEventCreate(BaseModel):
+    datum: str
+    uhrzeit: str
+    bezeichnung: str
+    location: str | None = None
+    beschreibung: str | None = None
 
 
 class ExpenseCreate(BaseModel):
@@ -299,6 +307,101 @@ async def delete_pack_item(item_id: int, request: Request, db: Session = Depends
     return {"ok": True}
 
 
+# --- Camp-Plan (Termine, nur Admins legen an) ---
+
+def _require_admin(db: Session, username: str) -> User | None:
+    user = db.query(User).filter(User.username == username).first()
+    if not user or user.role != "admin":
+        return None
+    return user
+
+
+@app.get("/api/plan")
+async def list_plan_events(request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    events = db.query(PlanEvent).order_by(PlanEvent.datum.asc(), PlanEvent.uhrzeit.asc()).all()
+    return [
+        {
+            "id": e.id,
+            "datum": e.datum.isoformat(),
+            "uhrzeit": e.uhrzeit.strftime("%H:%M"),
+            "bezeichnung": e.bezeichnung,
+            "location": e.location,
+            "beschreibung": e.beschreibung,
+        }
+        for e in events
+    ]
+
+
+@app.post("/api/plan")
+async def create_plan_event(
+    request: Request, payload: PlanEventCreate, db: Session = Depends(get_db)
+):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine anlegen"})
+
+    bezeichnung = payload.bezeichnung.strip()
+    if not bezeichnung:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
+    if len(bezeichnung) > 60:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 60 Zeichen haben"})
+
+    location = (payload.location or "").strip() or None
+    if location and len(location) > 120:
+        return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
+
+    try:
+        event_date = date.fromisoformat(payload.datum)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
+
+    try:
+        event_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
+
+    new_event = PlanEvent(
+        datum=event_date,
+        uhrzeit=event_time,
+        bezeichnung=bezeichnung,
+        location=location,
+        beschreibung=(payload.beschreibung or "").strip() or None,
+        created_by=username,
+    )
+    db.add(new_event)
+    db.commit()
+    db.refresh(new_event)
+
+    return {
+        "id": new_event.id,
+        "datum": new_event.datum.isoformat(),
+        "uhrzeit": new_event.uhrzeit.strftime("%H:%M"),
+        "bezeichnung": new_event.bezeichnung,
+        "location": new_event.location,
+        "beschreibung": new_event.beschreibung,
+    }
+
+
+@app.delete("/api/plan/{event_id}")
+async def delete_plan_event(event_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine löschen"})
+
+    event = db.query(PlanEvent).filter(PlanEvent.id == event_id).first()
+    if event:
+        db.delete(event)
+        db.commit()
+    return {"ok": True}
+
+
 # --- User-Übersicht (für die Auswahl in der Ausgaben-Maske) ---
 
 @app.get("/api/me")
@@ -310,7 +413,7 @@ async def get_me(request: Request, db: Session = Depends(get_db)):
     me = db.query(User).filter(User.username == username).first()
     if not me:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    return {"id": me.id, "username": me.username}
+    return {"id": me.id, "username": me.username, "role": me.role}
 
 
 @app.get("/api/users")

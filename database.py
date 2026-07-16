@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Date, Numeric, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Date, Time, Numeric, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from passlib.context import CryptContext
@@ -52,6 +52,19 @@ class PackItem(Base):
     name = Column(String, nullable=False)
     done = Column(Boolean, default=False)
     owner_username = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Camp-Plan-Termin: nur Admins legen Termine an, sichtbar für alle.
+class PlanEvent(Base):
+    __tablename__ = "plan_events"
+    id = Column(Integer, primary_key=True, index=True)
+    datum = Column(Date, nullable=False)
+    uhrzeit = Column(Time, nullable=False)
+    bezeichnung = Column(String(60), nullable=False)
+    location = Column(String(120), nullable=True)
+    beschreibung = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

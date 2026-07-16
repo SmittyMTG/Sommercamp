@@ -496,6 +496,171 @@ function openAddPackModal() {
 const addPackButton = document.getElementById("addPackButton");
 if (addPackButton) addPackButton.addEventListener("click", openAddPackModal);
 
+/* ---------- Camp-Plan (Termine, nur Admins legen an) ---------- */
+const planListEl = document.getElementById("planList");
+const addPlanButton = document.getElementById("addPlanButton");
+
+function formatWeekdayDate(isoDate) {
+  const d = new Date(`${isoDate}T00:00:00`);
+  const formatted = d.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long" });
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+
+function mapsUrl(location) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+}
+
+function groupPlanEvents(events) {
+  const groups = new Map();
+  for (const e of events) {
+    if (!groups.has(e.datum)) groups.set(e.datum, []);
+    groups.get(e.datum).push(e);
+  }
+  return Array.from(groups.entries()).map(([datum, items]) => ({ datum, items }));
+}
+
+function renderPlanEvent(event, isAdmin) {
+  const card = document.createElement("div");
+  card.className = "plan-card";
+
+  const detailsParts = [];
+  if (event.location) {
+    detailsParts.push(
+      `📍 <a href="${mapsUrl(event.location)}" target="_blank" rel="noopener">${escapeHtml(event.location)}</a>`
+    );
+  }
+  if (event.beschreibung) {
+    detailsParts.push(escapeHtml(event.beschreibung));
+  }
+
+  card.innerHTML = `
+    <div class="time">${escapeHtml(event.uhrzeit)}</div>
+    <div>
+      <div class="title">${escapeHtml(event.bezeichnung)}</div>
+      ${detailsParts.length ? `<div class="details">${detailsParts.join("<br>")}</div>` : ""}
+    </div>
+    ${isAdmin ? `<button type="button" class="icon-button delete-plan-btn" aria-label="Löschen">🗑️</button>` : "<div></div>"}
+  `;
+
+  if (isAdmin) {
+    card.querySelector(".delete-plan-btn").addEventListener("click", () => {
+      openModal({
+        eyebrow: "Camp-Plan",
+        title: `„${event.bezeichnung}" löschen?`,
+        bodyHtml: `<p class="muted warning-text">Der Termin wird für alle aus dem Plan entfernt. Das lässt sich nicht rückgängig machen.</p>`,
+        submitLabel: "Löschen",
+        danger: true,
+        onSubmit: async () => {
+          const res = await fetch(`/api/plan/${event.id}`, { method: "DELETE" });
+          if (res.ok) loadPlanList(true);
+          closeModal();
+        },
+      });
+    });
+  }
+
+  return card;
+}
+
+let lastPlanSignature = null;
+
+async function loadPlanList(force) {
+  if (!planListEl) return;
+  try {
+    const res = await fetch("/api/plan");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const events = await res.json();
+    const signature = JSON.stringify(events);
+    if (!force && signature === lastPlanSignature) return;
+    lastPlanSignature = signature;
+
+    const { me } = await fetchUsersAndMe();
+    const isAdmin = !!me && me.role === "admin";
+
+    planListEl.innerHTML = "";
+    if (events.length === 0) {
+      planListEl.innerHTML = `<div class="empty-state"><p>Hier entsteht der Camp-Plan.</p></div>`;
+    } else {
+      groupPlanEvents(events).forEach((group) => {
+        const block = document.createElement("div");
+        block.className = "date-block";
+        block.innerHTML = `<h3>${formatWeekdayDate(group.datum)}</h3>`;
+        const stack = document.createElement("div");
+        stack.className = "stack";
+        group.items.forEach((event) => stack.appendChild(renderPlanEvent(event, isAdmin)));
+        block.appendChild(stack);
+        planListEl.appendChild(block);
+      });
+    }
+  } catch (err) {
+    planListEl.innerHTML = `<div class="empty-state"><p>Plan konnte nicht geladen werden.</p></div>`;
+  }
+}
+
+function openAddPlanModal() {
+  const today = new Date().toISOString().slice(0, 10);
+  openModal({
+    eyebrow: "Camp-Plan",
+    title: "Termin hinzufügen",
+    bodyHtml: `
+      <div class="form-stack">
+        <label>Datum
+          <input type="date" id="planDatumInput" value="${today}" required>
+        </label>
+        <label>Uhrzeit
+          <input type="time" id="planUhrzeitInput" required>
+        </label>
+        <label>Bezeichnung
+          <input type="text" id="planBezeichnungInput" maxlength="60" placeholder="z. B. Lagerfeuer-Abend" required>
+        </label>
+        <label>Location (Adresse)
+          <input type="text" id="planLocationInput" maxlength="120" placeholder="z. B. Wiese am See, Musterweg 5">
+        </label>
+        <label>Beschreibung
+          <textarea id="planBeschreibungInput" placeholder="Was ist geplant?"></textarea>
+        </label>
+        <p class="error-text hidden plan-modal-error"></p>
+      </div>
+    `,
+    onSubmit: async () => {
+      const datum = document.getElementById("planDatumInput").value;
+      const uhrzeit = document.getElementById("planUhrzeitInput").value;
+      const bezeichnung = document.getElementById("planBezeichnungInput").value.trim();
+      const location = document.getElementById("planLocationInput").value.trim();
+      const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
+
+      if (!datum || !uhrzeit || !bezeichnung) return;
+
+      const res = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ datum, uhrzeit, bezeichnung, location, beschreibung }),
+      });
+
+      if (res.ok) {
+        closeModal();
+        loadPlanList(true);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        const errEl = document.querySelector(".plan-modal-error");
+        if (errEl) {
+          errEl.textContent = data.error || "Konnte nicht gespeichert werden.";
+          errEl.classList.remove("hidden");
+        }
+      }
+    },
+  });
+}
+
+if (addPlanButton) {
+  addPlanButton.addEventListener("click", openAddPlanModal);
+  // Button ist standardmäßig ausgeblendet (siehe index.html), damit er für
+  // Nicht-Admins nie kurz aufblitzt, bis die Rolle bekannt ist.
+  fetchUsersAndMe().then(({ me }) => {
+    if (me && me.role === "admin") addPlanButton.classList.remove("hidden");
+  });
+}
+
 /* ---------- Kosten & Schulden ---------- */
 const balanceHeroEl = document.getElementById("balanceHero");
 const expenseListEl = document.getElementById("expenseList");
@@ -940,6 +1105,8 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(pollShoppingList, 1000);
   loadPackList();
   setInterval(loadPackList, 1000);
+  loadPlanList();
+  setInterval(loadPlanList, 1000);
   pollCostsViews();
   setInterval(pollCostsViews, 1000);
 });
