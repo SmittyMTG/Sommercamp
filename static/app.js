@@ -380,6 +380,122 @@ async function openAddShoppingModal() {
 
 document.getElementById("addShoppingButton").addEventListener("click", openAddShoppingModal);
 
+/* ---------- Packliste (privat pro User) ---------- */
+const packListEl = document.getElementById("packList");
+
+function renderPackItem(item) {
+  const card = document.createElement("div");
+  card.className = "list-card" + (item.done ? " done" : "");
+  card.dataset.id = item.id;
+
+  card.innerHTML = `
+    <div class="list-card-content">
+      <button type="button" class="list-card-checkbox${item.done ? " checked" : ""}" aria-label="Erledigt"></button>
+      <div class="list-card-text">
+        <p class="list-card-title">${escapeHtml(item.name)}</p>
+      </div>
+    </div>
+    <div class="list-card-actions">
+      <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
+    </div>
+  `;
+
+  const checkbox = card.querySelector(".list-card-checkbox");
+  checkbox.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const res = await fetch(`/api/pack/${item.id}/toggle`, { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      checkbox.classList.toggle("checked", data.done);
+      card.classList.toggle("done", data.done);
+    }
+  });
+
+  card.querySelector(".delete-btn").addEventListener("click", () => {
+    openModal({
+      eyebrow: "Packliste",
+      title: `„${item.name}" löschen?`,
+      bodyHtml: `<p class="muted warning-text">Der Eintrag wird aus deiner privaten Packliste entfernt. Das lässt sich nicht rückgängig machen.</p>`,
+      submitLabel: "Löschen",
+      danger: true,
+      onSubmit: async () => {
+        const res = await fetch(`/api/pack/${item.id}`, { method: "DELETE" });
+        if (res.ok) {
+          card.remove();
+          if (!packListEl.querySelector(".list-card")) {
+            packListEl.innerHTML = `<div class="empty-state"><p>Packliste ist leer.</p></div>`;
+          }
+        }
+        closeModal();
+      },
+    });
+  });
+
+  return card;
+}
+
+function renderPackListItems(items) {
+  packListEl.innerHTML = "";
+  if (items.length === 0) {
+    packListEl.innerHTML = `<div class="empty-state"><p>Packliste ist leer.</p></div>`;
+  } else {
+    items.forEach((item) => packListEl.appendChild(renderPackItem(item)));
+  }
+}
+
+let lastPackSignature = null;
+
+async function loadPackList() {
+  if (!packListEl) return;
+  try {
+    const res = await fetch("/api/pack");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const items = await res.json();
+    const signature = JSON.stringify(items);
+    if (signature === lastPackSignature) return;
+    lastPackSignature = signature;
+    renderPackListItems(items);
+  } catch (err) {
+    packListEl.innerHTML = `<div class="empty-state"><p>Liste konnte nicht geladen werden.</p></div>`;
+  }
+}
+
+function openAddPackModal() {
+  openModal({
+    eyebrow: "Packliste",
+    title: "Eintrag hinzufügen",
+    bodyHtml: `
+      <div class="form-stack">
+        <label>Was fehlt noch?
+          <input type="text" id="packNameInput" placeholder="z. B. Zahnbürste" required>
+        </label>
+      </div>
+    `,
+    onSubmit: async () => {
+      const input = document.getElementById("packNameInput");
+      const name = input.value.trim();
+      if (!name) return;
+
+      const res = await fetch("/api/pack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      if (res.ok) {
+        const newItem = await res.json();
+        const emptyState = packListEl.querySelector(".empty-state");
+        if (emptyState) emptyState.remove();
+        packListEl.prepend(renderPackItem(newItem));
+        closeModal();
+      }
+    },
+  });
+}
+
+const addPackButton = document.getElementById("addPackButton");
+if (addPackButton) addPackButton.addEventListener("click", openAddPackModal);
+
 /* ---------- Kosten & Schulden ---------- */
 const balanceHeroEl = document.getElementById("balanceHero");
 const expenseListEl = document.getElementById("expenseList");
@@ -822,6 +938,8 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(updateCountdown, 30000); // keine Sekundenanzeige mehr, reicht alle 30s
   loadShoppingList();
   setInterval(pollShoppingList, 1000);
+  loadPackList();
+  setInterval(loadPackList, 1000);
   pollCostsViews();
   setInterval(pollCostsViews, 1000);
 });

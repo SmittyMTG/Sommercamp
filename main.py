@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from database import SessionLocal, User, ShoppingItem, ShoppingSource, Ausgabe, get_db
+from database import SessionLocal, User, ShoppingItem, ShoppingSource, PackItem, Ausgabe, get_db
 from auth import login, logout, get_current_user
 import uvicorn
 
@@ -39,6 +39,10 @@ class ShoppingItemCreate(BaseModel):
 class ShoppingSourceCreate(BaseModel):
     farbe: str
     bezeichnung: str
+
+
+class PackItemCreate(BaseModel):
+    name: str
 
 
 class ExpenseCreate(BaseModel):
@@ -214,6 +218,81 @@ async def delete_shopping_item(item_id: int, request: Request, db: Session = Dep
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     item = db.query(ShoppingItem).filter(ShoppingItem.id == item_id).first()
+    if item:
+        db.delete(item)
+        db.commit()
+    return {"ok": True}
+
+
+# --- Packliste (privat pro User) ---
+
+@app.get("/api/pack")
+async def get_pack_items(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    items = (
+        db.query(PackItem)
+        .filter(PackItem.owner_username == username)
+        .order_by(PackItem.created_at.desc())
+        .all()
+    )
+    return [{"id": i.id, "name": i.name, "done": i.done} for i in items]
+
+
+@app.post("/api/pack")
+async def create_pack_item(
+    request: Request, item: PackItemCreate, db: Session = Depends(get_db)
+):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    name = item.name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+
+    new_item = PackItem(name=name, owner_username=username)
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+
+    return {"id": new_item.id, "name": new_item.name, "done": new_item.done}
+
+
+@app.patch("/api/pack/{item_id}/toggle")
+async def toggle_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    # owner_username ist Teil des Filters, nicht nur eine Anzeige-Info — so kann
+    # niemand über eine erratene ID ein fremdes privates Item toggeln.
+    item = (
+        db.query(PackItem)
+        .filter(PackItem.id == item_id, PackItem.owner_username == username)
+        .first()
+    )
+    if not item:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    item.done = not item.done
+    db.commit()
+    return {"id": item.id, "done": item.done}
+
+
+@app.delete("/api/pack/{item_id}")
+async def delete_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    item = (
+        db.query(PackItem)
+        .filter(PackItem.id == item_id, PackItem.owner_username == username)
+        .first()
+    )
     if item:
         db.delete(item)
         db.commit()

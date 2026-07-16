@@ -43,6 +43,18 @@ class ShoppingItem(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+# Packliste: privat pro User — owner_username entscheidet, wer die Zeile sehen
+# und ändern darf. Anders als bei ShoppingItem.added_by (nur Info) ist das hier
+# eine echte Zugriffskontrolle.
+class PackItem(Base):
+    __tablename__ = "pack_items"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    done = Column(Boolean, default=False)
+    owner_username = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
 # (schuldner_id == glaubiger_id ist erlaubt: Eintrag für sich selbst, z. B. eigener
 # Snackkauf ohne Beteiligte — zählt fürs Leaderboard, ist aber keine echte Schuld.)
