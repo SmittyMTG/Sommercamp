@@ -165,6 +165,40 @@ async def create_shopping_item(
     }
 
 
+@app.patch("/api/shopping/{item_id}")
+async def update_shopping_item(
+    item_id: int, request: Request, item: ShoppingItemCreate, db: Session = Depends(get_db)
+):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    existing = db.query(ShoppingItem).filter(ShoppingItem.id == item_id).first()
+    if not existing:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    name = item.name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+
+    woher = None
+    if item.woher_id is not None:
+        woher = db.query(ShoppingSource).filter(ShoppingSource.id == item.woher_id).first()
+        if not woher:
+            return JSONResponse(status_code=400, content={"error": "Unbekannte Quelle"})
+
+    existing.name = name
+    existing.woher_id = woher.id if woher else None
+    db.commit()
+
+    return {
+        "id": existing.id,
+        "name": existing.name,
+        "done": existing.done,
+        "added_by": existing.added_by,
+        "woher": {"id": woher.id, "farbe": woher.farbe, "bezeichnung": woher.bezeichnung} if woher else None,
+    }
+
+
 # --- Woher-Quellen für die Einkaufsliste ---
 
 @app.get("/api/shopping-sources")
@@ -269,6 +303,31 @@ async def create_pack_item(
     return {"id": new_item.id, "name": new_item.name, "done": new_item.done}
 
 
+@app.patch("/api/pack/{item_id}")
+async def update_pack_item(
+    item_id: int, request: Request, item: PackItemCreate, db: Session = Depends(get_db)
+):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    existing = (
+        db.query(PackItem)
+        .filter(PackItem.id == item_id, PackItem.owner_username == username)
+        .first()
+    )
+    if not existing:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    name = item.name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+
+    existing.name = name
+    db.commit()
+    return {"id": existing.id, "name": existing.name, "done": existing.done}
+
+
 @app.patch("/api/pack/{item_id}/toggle")
 async def toggle_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
@@ -316,6 +375,34 @@ def _require_admin(db: Session, username: str) -> User | None:
     return user
 
 
+def _validate_plan_payload(payload: PlanEventCreate):
+    """Validiert Termin-Felder für Anlegen UND Bearbeiten. Gibt entweder ein
+    Tupel (datum, uhrzeit, bezeichnung, location, beschreibung) oder eine
+    fertige JSONResponse mit Fehlermeldung zurück."""
+    bezeichnung = payload.bezeichnung.strip()
+    if not bezeichnung:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
+    if len(bezeichnung) > 60:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 60 Zeichen haben"})
+
+    location = (payload.location or "").strip() or None
+    if location and len(location) > 120:
+        return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
+
+    try:
+        event_date = date.fromisoformat(payload.datum)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
+
+    try:
+        event_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
+
+    beschreibung = (payload.beschreibung or "").strip() or None
+    return event_date, event_time, bezeichnung, location, beschreibung
+
+
 @app.get("/api/plan")
 async def list_plan_events(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
@@ -345,32 +432,17 @@ async def create_plan_event(
     if not _require_admin(db, username):
         return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine anlegen"})
 
-    bezeichnung = payload.bezeichnung.strip()
-    if not bezeichnung:
-        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
-    if len(bezeichnung) > 60:
-        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 60 Zeichen haben"})
-
-    location = (payload.location or "").strip() or None
-    if location and len(location) > 120:
-        return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
-
-    try:
-        event_date = date.fromisoformat(payload.datum)
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
-
-    try:
-        event_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
+    validated = _validate_plan_payload(payload)
+    if isinstance(validated, JSONResponse):
+        return validated
+    event_date, event_time, bezeichnung, location, beschreibung = validated
 
     new_event = PlanEvent(
         datum=event_date,
         uhrzeit=event_time,
         bezeichnung=bezeichnung,
         location=location,
-        beschreibung=(payload.beschreibung or "").strip() or None,
+        beschreibung=beschreibung,
         created_by=username,
     )
     db.add(new_event)
@@ -384,6 +456,42 @@ async def create_plan_event(
         "bezeichnung": new_event.bezeichnung,
         "location": new_event.location,
         "beschreibung": new_event.beschreibung,
+    }
+
+
+@app.patch("/api/plan/{event_id}")
+async def update_plan_event(
+    event_id: int, request: Request, payload: PlanEventCreate, db: Session = Depends(get_db)
+):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine bearbeiten"})
+
+    existing = db.query(PlanEvent).filter(PlanEvent.id == event_id).first()
+    if not existing:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    validated = _validate_plan_payload(payload)
+    if isinstance(validated, JSONResponse):
+        return validated
+    event_date, event_time, bezeichnung, location, beschreibung = validated
+
+    existing.datum = event_date
+    existing.uhrzeit = event_time
+    existing.bezeichnung = bezeichnung
+    existing.location = location
+    existing.beschreibung = beschreibung
+    db.commit()
+
+    return {
+        "id": existing.id,
+        "datum": existing.datum.isoformat(),
+        "uhrzeit": existing.uhrzeit.strftime("%H:%M"),
+        "bezeichnung": existing.bezeichnung,
+        "location": existing.location,
+        "beschreibung": existing.beschreibung,
     }
 
 

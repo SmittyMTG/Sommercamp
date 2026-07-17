@@ -148,6 +148,7 @@ function renderShoppingItem(item) {
       </div>
     </div>
     <div class="list-card-actions">
+      <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
       <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
     </div>
   `;
@@ -165,6 +166,8 @@ function renderShoppingItem(item) {
       updateQuickShoppingCount();
     }
   });
+
+  card.querySelector(".edit-btn").addEventListener("click", () => openEditShoppingModal(item));
 
   card.querySelector(".delete-btn").addEventListener("click", () => {
     openModal({
@@ -291,62 +294,36 @@ function shoppingSourceOptionsHtml(sources, selectedId) {
     .join("");
 }
 
-async function openAddShoppingModal() {
-  const sources = await fetchShoppingSources();
-
-  openModal({
-    eyebrow: "Einkauf",
-    title: "Artikel hinzufügen",
-    bodyHtml: `
-      <div class="form-stack">
-        <label>Produktname
-          <input type="text" id="shoppingNameInput" placeholder="z. B. Kohle für den Grill" required>
+function shoppingModalBodyHtml(sources, prefill = {}) {
+  const selectedWoherId = prefill.woher ? prefill.woher.id : null;
+  return `
+    <div class="form-stack">
+      <label>Produktname
+        <input type="text" id="shoppingNameInput" value="${escapeHtml(prefill.name || "")}" placeholder="z. B. Kohle für den Grill" required>
+      </label>
+      <label>Woher (optional)
+        <select id="shoppingWoherSelect">
+          <option value="">— keine Angabe —</option>
+          ${shoppingSourceOptionsHtml(sources, selectedWoherId)}
+          <option value="__new__">+ Neue Quelle anlegen…</option>
+        </select>
+      </label>
+      <div id="newSourceFields" class="form-stack hidden">
+        <label>Farbe
+          <input type="color" id="newSourceColor" value="#ffd400">
         </label>
-        <label>Woher (optional)
-          <select id="shoppingWoherSelect">
-            <option value="">— keine Angabe —</option>
-            ${shoppingSourceOptionsHtml(sources)}
-            <option value="__new__">+ Neue Quelle anlegen…</option>
-          </select>
+        <label>Bezeichnung
+          <input type="text" id="newSourceLabel" maxlength="16" placeholder="z. B. Rewe">
         </label>
-        <div id="newSourceFields" class="form-stack hidden">
-          <label>Farbe
-            <input type="color" id="newSourceColor" value="#ffd400">
-          </label>
-          <label>Bezeichnung
-            <input type="text" id="newSourceLabel" maxlength="16" placeholder="z. B. Rewe">
-          </label>
-          <button type="button" id="createSourceBtn" class="secondary compact">Quelle anlegen</button>
-          <p class="error-text hidden new-source-error"></p>
-        </div>
+        <button type="button" id="createSourceBtn" class="secondary compact">Quelle anlegen</button>
+        <p class="error-text hidden new-source-error"></p>
       </div>
-    `,
-    onSubmit: async () => {
-      const input = document.getElementById("shoppingNameInput");
-      const name = input.value.trim();
-      if (!name) return;
+    </div>
+  `;
+}
 
-      const woherSelect = document.getElementById("shoppingWoherSelect");
-      const woherValue = woherSelect.value;
-      if (woherValue === "__new__") return; // erst Quelle anlegen, dann erneut speichern
-      const woher_id = woherValue ? parseInt(woherValue, 10) : null;
-
-      const res = await fetch("/api/shopping", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, woher_id }),
-      });
-
-      if (res.ok) {
-        const newItem = await res.json();
-        lastShoppingItems = [newItem, ...lastShoppingItems];
-        lastShoppingSignature = JSON.stringify(lastShoppingItems);
-        renderSortedShoppingList();
-        closeModal();
-      }
-    },
-  });
-
+// Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten Felder im DOM).
+function wireShoppingSourcePicker() {
   const woherSelect = document.getElementById("shoppingWoherSelect");
   const newSourceFields = document.getElementById("newSourceFields");
   woherSelect.addEventListener("change", () => {
@@ -389,6 +366,76 @@ async function openAddShoppingModal() {
   });
 }
 
+function readShoppingForm() {
+  const name = document.getElementById("shoppingNameInput").value.trim();
+  const woherSelect = document.getElementById("shoppingWoherSelect");
+  if (woherSelect.value === "__new__") return null; // erst Quelle anlegen, dann erneut speichern
+  const woher_id = woherSelect.value ? parseInt(woherSelect.value, 10) : null;
+  if (!name) return null;
+  return { name, woher_id };
+}
+
+async function openAddShoppingModal() {
+  const sources = await fetchShoppingSources();
+
+  openModal({
+    eyebrow: "Einkauf",
+    title: "Artikel hinzufügen",
+    bodyHtml: shoppingModalBodyHtml(sources),
+    onSubmit: async () => {
+      const form = readShoppingForm();
+      if (!form) return;
+
+      const res = await fetch("/api/shopping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (res.ok) {
+        const newItem = await res.json();
+        lastShoppingItems = [newItem, ...lastShoppingItems];
+        lastShoppingSignature = JSON.stringify(lastShoppingItems);
+        renderSortedShoppingList();
+        closeModal();
+      }
+    },
+  });
+
+  wireShoppingSourcePicker();
+}
+
+async function openEditShoppingModal(item) {
+  const sources = await fetchShoppingSources();
+
+  openModal({
+    eyebrow: "Einkauf",
+    title: "Artikel bearbeiten",
+    submitLabel: "Speichern",
+    bodyHtml: shoppingModalBodyHtml(sources, item),
+    onSubmit: async () => {
+      const form = readShoppingForm();
+      if (!form) return;
+
+      const res = await fetch(`/api/shopping/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (res.ok) {
+        const updated = await res.json();
+        lastShoppingItems = lastShoppingItems.map((i) => (i.id === updated.id ? updated : i));
+        lastShoppingSignature = JSON.stringify(lastShoppingItems);
+        renderSortedShoppingList();
+        closeModal();
+      }
+    },
+  });
+
+  wireShoppingSourcePicker();
+}
+
 document.getElementById("addShoppingButton").addEventListener("click", openAddShoppingModal);
 
 /* ---------- Packliste (privat pro User) ---------- */
@@ -407,6 +454,7 @@ function renderPackItem(item) {
       </div>
     </div>
     <div class="list-card-actions">
+      <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
       <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
     </div>
   `;
@@ -421,6 +469,8 @@ function renderPackItem(item) {
       card.classList.toggle("done", data.done);
     }
   });
+
+  card.querySelector(".edit-btn").addEventListener("click", () => openEditPackModal(item, card));
 
   card.querySelector(".delete-btn").addEventListener("click", () => {
     openModal({
@@ -504,6 +554,39 @@ function openAddPackModal() {
   });
 }
 
+function openEditPackModal(item, card) {
+  openModal({
+    eyebrow: "Packliste",
+    title: "Eintrag bearbeiten",
+    submitLabel: "Speichern",
+    bodyHtml: `
+      <div class="form-stack">
+        <label>Was fehlt noch?
+          <input type="text" id="packNameInput" value="${escapeHtml(item.name)}" required>
+        </label>
+      </div>
+    `,
+    onSubmit: async () => {
+      const name = document.getElementById("packNameInput").value.trim();
+      if (!name) return;
+
+      const res = await fetch(`/api/pack/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      if (res.ok) {
+        const updated = await res.json();
+        item.name = updated.name;
+        const titleEl = card.querySelector(".list-card-title");
+        if (titleEl) titleEl.textContent = updated.name;
+        closeModal();
+      }
+    },
+  });
+}
+
 const addPackButton = document.getElementById("addPackButton");
 if (addPackButton) addPackButton.addEventListener("click", openAddPackModal);
 
@@ -550,10 +633,19 @@ function renderPlanEvent(event, isAdmin) {
       <div class="title">${escapeHtml(event.bezeichnung)}</div>
       ${detailsParts.length ? `<div class="details">${detailsParts.join("<br>")}</div>` : ""}
     </div>
-    ${isAdmin ? `<button type="button" class="icon-button delete-plan-btn" aria-label="Löschen">🗑️</button>` : "<div></div>"}
+    ${
+      isAdmin
+        ? `<div class="list-card-actions">
+             <button type="button" class="icon-button edit-plan-btn" aria-label="Bearbeiten">✏️</button>
+             <button type="button" class="icon-button delete-plan-btn" aria-label="Löschen">🗑️</button>
+           </div>`
+        : "<div></div>"
+    }
   `;
 
   if (isAdmin) {
+    card.querySelector(".edit-plan-btn").addEventListener("click", () => openEditPlanModal(event));
+
     card.querySelector(".delete-plan-btn").addEventListener("click", () => {
       openModal({
         eyebrow: "Camp-Plan",
@@ -608,58 +700,74 @@ async function loadPlanList(force) {
   }
 }
 
-function openAddPlanModal() {
+function planModalBodyHtml(prefill = {}) {
   const today = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="form-stack">
+      <label>Datum
+        <input type="date" id="planDatumInput" value="${prefill.datum || today}" required>
+      </label>
+      <label>Uhrzeit
+        <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || ""}" required>
+      </label>
+      <label>Bezeichnung
+        <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" placeholder="z. B. Lagerfeuer-Abend" required>
+      </label>
+      <label>Location (Adresse)
+        <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}" placeholder="z. B. Wiese am See, Musterweg 5">
+      </label>
+      <label>Beschreibung
+        <textarea id="planBeschreibungInput" placeholder="Was ist geplant?">${escapeHtml(prefill.beschreibung || "")}</textarea>
+      </label>
+      <p class="error-text hidden plan-modal-error"></p>
+    </div>
+  `;
+}
+
+async function submitPlanForm(url, method) {
+  const datum = document.getElementById("planDatumInput").value;
+  const uhrzeit = document.getElementById("planUhrzeitInput").value;
+  const bezeichnung = document.getElementById("planBezeichnungInput").value.trim();
+  const location = document.getElementById("planLocationInput").value.trim();
+  const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
+
+  if (!datum || !uhrzeit || !bezeichnung) return;
+
+  const res = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ datum, uhrzeit, bezeichnung, location, beschreibung }),
+  });
+
+  if (res.ok) {
+    closeModal();
+    loadPlanList(true);
+  } else {
+    const data = await res.json().catch(() => ({}));
+    const errEl = document.querySelector(".plan-modal-error");
+    if (errEl) {
+      errEl.textContent = data.error || "Konnte nicht gespeichert werden.";
+      errEl.classList.remove("hidden");
+    }
+  }
+}
+
+function openAddPlanModal() {
   openModal({
     eyebrow: "Camp-Plan",
     title: "Termin hinzufügen",
-    bodyHtml: `
-      <div class="form-stack">
-        <label>Datum
-          <input type="date" id="planDatumInput" value="${today}" required>
-        </label>
-        <label>Uhrzeit
-          <input type="time" id="planUhrzeitInput" required>
-        </label>
-        <label>Bezeichnung
-          <input type="text" id="planBezeichnungInput" maxlength="60" placeholder="z. B. Lagerfeuer-Abend" required>
-        </label>
-        <label>Location (Adresse)
-          <input type="text" id="planLocationInput" maxlength="120" placeholder="z. B. Wiese am See, Musterweg 5">
-        </label>
-        <label>Beschreibung
-          <textarea id="planBeschreibungInput" placeholder="Was ist geplant?"></textarea>
-        </label>
-        <p class="error-text hidden plan-modal-error"></p>
-      </div>
-    `,
-    onSubmit: async () => {
-      const datum = document.getElementById("planDatumInput").value;
-      const uhrzeit = document.getElementById("planUhrzeitInput").value;
-      const bezeichnung = document.getElementById("planBezeichnungInput").value.trim();
-      const location = document.getElementById("planLocationInput").value.trim();
-      const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
+    bodyHtml: planModalBodyHtml(),
+    onSubmit: () => submitPlanForm("/api/plan", "POST"),
+  });
+}
 
-      if (!datum || !uhrzeit || !bezeichnung) return;
-
-      const res = await fetch("/api/plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ datum, uhrzeit, bezeichnung, location, beschreibung }),
-      });
-
-      if (res.ok) {
-        closeModal();
-        loadPlanList(true);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        const errEl = document.querySelector(".plan-modal-error");
-        if (errEl) {
-          errEl.textContent = data.error || "Konnte nicht gespeichert werden.";
-          errEl.classList.remove("hidden");
-        }
-      }
-    },
+function openEditPlanModal(event) {
+  openModal({
+    eyebrow: "Camp-Plan",
+    title: "Termin bearbeiten",
+    submitLabel: "Speichern",
+    bodyHtml: planModalBodyHtml(event),
+    onSubmit: () => submitPlanForm(`/api/plan/${event.id}`, "PATCH"),
   });
 }
 
