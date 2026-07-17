@@ -6,6 +6,13 @@
 const CAMP_START = new Date("2026-08-04T00:00:00");
 const CAMP_END = new Date("2026-08-16T23:59:59");
 
+// Ganz oben deklariert (nicht erst im Kosten-Abschnitt), damit fetchUsersAndMe()
+// von JEDER Stelle im Skript aus sicher aufgerufen werden kann, auch von Code,
+// der weiter oben in der Datei steht — sonst greift die "temporal dead zone"
+// von let/const und ein zu früher Aufruf wirft einen ReferenceError.
+let cachedUsers = null;
+let cachedMe = null;
+
 /* ---------- Screen switching ---------- */
 function goToScreen(name) {
   document.querySelectorAll(".screen").forEach((el) => {
@@ -668,9 +675,6 @@ if (addPlanButton) {
 /* ---------- Kosten & Schulden ---------- */
 const balanceHeroEl = document.getElementById("balanceHero");
 const expenseListEl = document.getElementById("expenseList");
-
-let cachedUsers = null;
-let cachedMe = null;
 
 async function fetchUsersAndMe() {
   if (cachedUsers && cachedMe) return { users: cachedUsers, me: cachedMe };
