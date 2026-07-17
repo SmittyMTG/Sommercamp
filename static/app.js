@@ -802,40 +802,84 @@ function formatDate(isoDate) {
 }
 
 // Gruppiert die granularen DB-Zeilen (ein Eintrag pro Schuldner) rein für die
-// Darstellung nach Datum + Betreff zu einer Kachel pro Ausgabe-Vorgang. Die DB
-// selbst bleibt granular, hier wird nur zusammengefasst, was zusammengehört.
+// Darstellung nach batch_id zu einer Kachel pro Ausgabe-Vorgang. Die DB selbst
+// bleibt granular, hier wird nur zusammengefasst, was zusammengehört. batch_id
+// (statt Datum+Betreff) verhindert, dass zwei verschiedene Personen mit
+// zufällig gleichem Datum+Betreff fälschlich zusammengruppiert werden.
 function groupExpenses(expenses) {
   const groups = new Map();
   for (const e of expenses) {
-    const key = `${e.datum}|${e.betreff}`;
+    const key = e.batch_id || `row-${e.id}`;
     if (!groups.has(key)) {
-      groups.set(key, { datum: e.datum, betreff: e.betreff, glaeubiger: new Set(), total: 0, entries: [] });
+      groups.set(key, {
+        batchId: e.batch_id,
+        datum: e.datum,
+        betreff: e.betreff,
+        glaeubiger: new Set(),
+        glaubigerId: e.glaubiger_id,
+        beneficiaryIds: new Set(),
+        total: 0,
+        entries: [],
+      });
     }
     const g = groups.get(key);
     g.glaeubiger.add(e.glaubiger);
+    g.beneficiaryIds.add(e.schuldner_id);
     g.total += e.cash;
     g.entries.push(e);
   }
   return Array.from(groups.values());
 }
 
-function renderExpenseGroup(group) {
+function renderExpenseGroup(group, isAdmin) {
   const card = document.createElement("div");
   card.className = "list-card";
   const payer = Array.from(group.glaeubiger).map(escapeHtml).join(", ");
   const breakdown = group.entries
     .map((e) => {
       const label = e.selbst ? `${e.schuldner} (eigen)` : e.schuldner;
-      return `${escapeHtml(label)}: ${formatEuro(e.cash)}${e.gezahlt ? " ✓" : ""}`;
+      return `${escapeHtml(label)}: ${formatEuro(e.cash)}`;
     })
     .join(" · ");
+  const canManage = isAdmin && group.batchId;
+
   card.innerHTML = `
     <div class="list-card-text">
       <p class="list-card-title">${escapeHtml(group.betreff)}</p>
       <p class="list-card-meta">${formatDate(group.datum)} · bezahlt von ${payer} · ${formatEuro(group.total)} gesamt</p>
       <p class="list-card-meta">${breakdown}</p>
     </div>
+    ${
+      canManage
+        ? `<div class="list-card-actions">
+             <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
+             <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
+           </div>`
+        : ""
+    }
   `;
+
+  if (canManage) {
+    card.querySelector(".edit-btn").addEventListener("click", () => openEditExpenseModal(group));
+    card.querySelector(".delete-btn").addEventListener("click", () => {
+      openModal({
+        eyebrow: "Kosten",
+        title: `„${group.betreff}" löschen?`,
+        bodyHtml: `<p class="muted warning-text">Die Ausgabe wird für alle Beteiligten entfernt. Das lässt sich nicht rückgängig machen.</p>`,
+        submitLabel: "Löschen",
+        danger: true,
+        onSubmit: async () => {
+          const res = await fetch(`/api/expenses/batch/${group.batchId}`, { method: "DELETE" });
+          if (res.ok) {
+            loadExpenses();
+            loadBalance();
+          }
+          closeModal();
+        },
+      });
+    });
+  }
+
   return card;
 }
 
@@ -854,11 +898,14 @@ async function loadExpenses() {
     if (signature === lastExpensesSignature) return;
     lastExpensesSignature = signature;
 
+    const { me } = await fetchUsersAndMe();
+    const isAdmin = !!me && isAdminRole(me.role);
+
     expenseListEl.innerHTML = "";
     if (expenses.length === 0) {
       expenseListEl.innerHTML = `<div class="empty"><p>Noch keine Einträge.</p></div>`;
     } else {
-      groupExpenses(expenses).forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g)));
+      groupExpenses(expenses).forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, isAdmin)));
     }
   } catch (err) {
     expenseListEl.innerHTML = `<div class="empty"><p>Ausgaben konnten nicht geladen werden.</p></div>`;
@@ -898,61 +945,108 @@ async function loadBalance() {
   }
 }
 
-async function openAddExpenseModal() {
-  const { users, me } = await fetchUsersAndMe();
-  if (!me || users.length === 0) return;
+function expenseModalBodyHtml(users, me, prefill = {}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const payerId = prefill.glaubigerId != null ? prefill.glaubigerId : me.id;
+  const beneficiaryIds = prefill.beneficiaryIds || null;
 
   const payerOptions = users
-    .map((u) => `<option value="${u.id}"${u.id === me.id ? " selected" : ""}>${escapeHtml(u.username)}</option>`)
+    .map((u) => `<option value="${u.id}"${u.id === payerId ? " selected" : ""}>${escapeHtml(u.username)}</option>`)
     .join("");
 
   const beneficiaryOptions = users
-    .map(
-      (u) => `<label class="check-card"><input type="checkbox" value="${u.id}" checked>${escapeHtml(u.username)}</label>`
-    )
+    .map((u) => {
+      const checked = beneficiaryIds ? beneficiaryIds.has(u.id) : true;
+      return `<label class="check-card"><input type="checkbox" value="${u.id}"${checked ? " checked" : ""}>${escapeHtml(u.username)}</label>`;
+    })
     .join("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="form-stack">
+      <label>Bezahlt von
+        <select id="expensePayerSelect">${payerOptions}</select>
+      </label>
+      <div class="checkbox-group">
+        <div class="eyebrow">Für wen?</div>
+        <div id="expenseBeneficiaries" class="checkbox-grid">${beneficiaryOptions}</div>
+      </div>
+      <label>Betrag gesamt (€)
+        <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" placeholder="z. B. 24.50" required>
+      </label>
+      <label>Betreff
+        <input type="text" id="expenseBetreffInput" maxlength="40" value="${escapeHtml(prefill.betreff || "")}" placeholder="z. B. Rewe Grillkäse" required>
+      </label>
+      <label>Datum
+        <input type="date" id="expenseDatumInput" value="${prefill.datum || today}" required>
+      </label>
+    </div>
+  `;
+}
+
+function readExpenseForm() {
+  const glaubiger_id = parseInt(document.getElementById("expensePayerSelect").value, 10);
+  const schuldner_ids = Array.from(
+    document.querySelectorAll("#expenseBeneficiaries input[type=checkbox]:checked")
+  ).map((el) => parseInt(el.value, 10));
+  const cash = parseFloat(document.getElementById("expenseCashInput").value);
+  const betreff = document.getElementById("expenseBetreffInput").value.trim();
+  const datum = document.getElementById("expenseDatumInput").value;
+
+  if (!betreff || !cash || cash <= 0 || schuldner_ids.length === 0) return null;
+  return { glaubiger_id, schuldner_ids, cash, betreff, datum };
+}
+
+async function openAddExpenseModal() {
+  const { users, me } = await fetchUsersAndMe();
+  if (!me || users.length === 0) return;
 
   openModal({
     eyebrow: "Kosten",
     title: "Ausgabe hinzufügen",
     submitLabel: "Speichern",
-    bodyHtml: `
-      <div class="form-stack">
-        <label>Bezahlt von
-          <select id="expensePayerSelect">${payerOptions}</select>
-        </label>
-        <div class="checkbox-group">
-          <div class="eyebrow">Für wen?</div>
-          <div id="expenseBeneficiaries" class="checkbox-grid">${beneficiaryOptions}</div>
-        </div>
-        <label>Betrag gesamt (€)
-          <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" placeholder="z. B. 24.50" required>
-        </label>
-        <label>Betreff
-          <input type="text" id="expenseBetreffInput" maxlength="40" placeholder="z. B. Rewe Grillkäse" required>
-        </label>
-        <label>Datum
-          <input type="date" id="expenseDatumInput" value="${today}" required>
-        </label>
-      </div>
-    `,
+    bodyHtml: expenseModalBodyHtml(users, me),
     onSubmit: async () => {
-      const glaubiger_id = parseInt(document.getElementById("expensePayerSelect").value, 10);
-      const schuldner_ids = Array.from(
-        document.querySelectorAll("#expenseBeneficiaries input[type=checkbox]:checked")
-      ).map((el) => parseInt(el.value, 10));
-      const cash = parseFloat(document.getElementById("expenseCashInput").value);
-      const betreff = document.getElementById("expenseBetreffInput").value.trim();
-      const datum = document.getElementById("expenseDatumInput").value;
-
-      if (!betreff || !cash || cash <= 0 || schuldner_ids.length === 0) return;
+      const form = readExpenseForm();
+      if (!form) return;
 
       const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ glaubiger_id, schuldner_ids, cash, betreff, datum }),
+        body: JSON.stringify(form),
+      });
+
+      if (res.ok) {
+        closeModal();
+        loadExpenses();
+        loadBalance();
+      }
+    },
+  });
+}
+
+async function openEditExpenseModal(group) {
+  const { users, me } = await fetchUsersAndMe();
+  if (!me || users.length === 0) return;
+
+  openModal({
+    eyebrow: "Kosten",
+    title: "Ausgabe bearbeiten",
+    submitLabel: "Speichern",
+    bodyHtml: expenseModalBodyHtml(users, me, {
+      glaubigerId: group.glaubigerId,
+      beneficiaryIds: group.beneficiaryIds,
+      total: group.total,
+      betreff: group.betreff,
+      datum: group.datum,
+    }),
+    onSubmit: async () => {
+      const form = readExpenseForm();
+      if (!form) return;
+
+      const res = await fetch(`/api/expenses/batch/${group.batchId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
       });
 
       if (res.ok) {

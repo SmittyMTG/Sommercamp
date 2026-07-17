@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from passlib.context import CryptContext
 from fastapi import Depends
 from datetime import datetime, date
+import uuid
 
 # SQLite DB
 DATABASE_URL = "sqlite:///./users.db"
@@ -85,6 +86,10 @@ class Ausgabe(Base):
     # offenen Zahlung) durchlaufen "pending" -> "getilgt", sobald der Gläubiger den
     # Empfang bestätigt hat.
     status = Column(String(20), nullable=False, default="offen")
+    # Verbindet alle Zeilen, die in einem einzigen "Ausgabe hinzufügen"-Vorgang
+    # entstanden sind (ein Eintrag pro betroffener Person). Ermöglicht Bearbeiten/
+    # Löschen der ganzen Ausgabe statt nur einer einzelnen Schuldner-Zeile.
+    batch_id = Column(String(36), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -105,7 +110,38 @@ def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str = ""
 
 _ensure_column("ausgaben", "gezahlt", "BOOLEAN", "DEFAULT 0")
 _ensure_column("ausgaben", "status", "TEXT", "DEFAULT 'offen'")
+_ensure_column("ausgaben", "batch_id", "TEXT")
 _ensure_column("shopping_items", "woher_id", "INTEGER")
+
+
+def _backfill_expense_batch_ids():
+    """Einmaliger Nachtrag für Ausgaben, die vor Einführung von batch_id angelegt
+    wurden: gruppiert anhand (glaubiger_id, datum, betreff) — exakt so, wie sie
+    beim Anlegen ursprünglich zusammengehörten — und vergibt je Gruppe eine
+    gemeinsame batch_id. Läuft nur für Zeilen mit batch_id IS NULL, ist also bei
+    jedem Start ungefährlich erneut ausführbar (No-Op nach dem ersten Mal).
+    """
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Ausgabe)
+            .filter(Ausgabe.batch_id.is_(None), Ausgabe.status == "offen")
+            .all()
+        )
+        groups = {}
+        for r in rows:
+            groups.setdefault((r.glaubiger_id, r.datum, r.betreff), []).append(r)
+        for group_rows in groups.values():
+            batch_id = uuid.uuid4().hex
+            for r in group_rows:
+                r.batch_id = batch_id
+        if groups:
+            db.commit()
+    finally:
+        db.close()
+
+
+_backfill_expense_batch_ids()
 
 # Dependency to get DB session
 def get_db():

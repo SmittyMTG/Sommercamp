@@ -1,4 +1,5 @@
 import re
+import uuid
 from datetime import date, datetime as dt
 from pathlib import Path
 
@@ -555,7 +556,10 @@ async def list_expenses(request: Request, db: Session = Depends(get_db)):
     return [
         {
             "id": r.id,
+            "batch_id": r.batch_id,
+            "glaubiger_id": r.glaubiger_id,
             "glaubiger": usernames.get(r.glaubiger_id, "?"),
+            "schuldner_id": r.schuldner_id,
             "schuldner": usernames.get(r.schuldner_id, "?"),
             "cash": float(r.cash),
             "betreff": r.betreff,
@@ -598,13 +602,10 @@ async def get_expense_balance(request: Request, db: Session = Depends(get_db)):
     }
 
 
-@app.post("/api/expenses")
-async def create_expense(
-    request: Request, payload: ExpenseCreate, db: Session = Depends(get_db)
-):
-    if not get_current_user(request):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
+def _validate_expense_payload(payload: ExpenseCreate, db: Session):
+    """Validiert eine Ausgabe für Anlegen UND Bearbeiten. Gibt entweder ein Tupel
+    (glaubiger_id, beneficiary_ids, betreff, expense_date, share) oder eine
+    fertige JSONResponse mit Fehlermeldung zurück."""
     betreff = payload.betreff.strip()
     if not betreff:
         return JSONResponse(status_code=400, content={"error": "Betreff darf nicht leer sein"})
@@ -635,21 +636,97 @@ async def create_expense(
     # Snackkauf ohne Beteiligte). schuldner_id == glaubiger_id ist keine echte Schuld,
     # zählt aber fürs Leaderboard mit und wird in Saldo/Offene-Zahlungen ausgeblendet.
     share = round(payload.cash / len(beneficiary_ids), 2)
+    return payload.glaubiger_id, beneficiary_ids, betreff, expense_date, share
 
+
+@app.post("/api/expenses")
+async def create_expense(
+    request: Request, payload: ExpenseCreate, db: Session = Depends(get_db)
+):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    validated = _validate_expense_payload(payload, db)
+    if isinstance(validated, JSONResponse):
+        return validated
+    glaubiger_id, beneficiary_ids, betreff, expense_date, share = validated
+
+    batch_id = uuid.uuid4().hex
     created = []
     for uid in beneficiary_ids:
         row = Ausgabe(
-            glaubiger_id=payload.glaubiger_id,
+            glaubiger_id=glaubiger_id,
             schuldner_id=uid,
             cash=share,
             betreff=betreff,
             datum=expense_date,
+            batch_id=batch_id,
         )
         db.add(row)
         created.append(row)
     db.commit()
 
-    return {"created": len(created), "share": share, "betreff": betreff}
+    return {"created": len(created), "share": share, "betreff": betreff, "batch_id": batch_id}
+
+
+@app.patch("/api/expenses/batch/{batch_id}")
+async def update_expense_batch(
+    batch_id: str, request: Request, payload: ExpenseCreate, db: Session = Depends(get_db)
+):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Ausgaben bearbeiten"})
+
+    existing_rows = (
+        db.query(Ausgabe).filter(Ausgabe.batch_id == batch_id, Ausgabe.status == "offen").all()
+    )
+    if not existing_rows:
+        return JSONResponse(status_code=404, content={"error": "Ausgabe nicht gefunden"})
+
+    validated = _validate_expense_payload(payload, db)
+    if isinstance(validated, JSONResponse):
+        return validated
+    glaubiger_id, beneficiary_ids, betreff, expense_date, share = validated
+
+    # Alte Zeilen des Vorgangs ersetzen statt anzupassen — einfacher und robuster
+    # als ein Zeilen-für-Zeilen-Diff, gleiche batch_id bleibt für Kontinuität erhalten.
+    for r in existing_rows:
+        db.delete(r)
+    for uid in beneficiary_ids:
+        db.add(
+            Ausgabe(
+                glaubiger_id=glaubiger_id,
+                schuldner_id=uid,
+                cash=share,
+                betreff=betreff,
+                datum=expense_date,
+                batch_id=batch_id,
+            )
+        )
+    db.commit()
+
+    return {"batch_id": batch_id, "created": len(beneficiary_ids), "share": share, "betreff": betreff}
+
+
+@app.delete("/api/expenses/batch/{batch_id}")
+async def delete_expense_batch(batch_id: str, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Ausgaben löschen"})
+
+    deleted = (
+        db.query(Ausgabe)
+        .filter(Ausgabe.batch_id == batch_id, Ausgabe.status == "offen")
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    if deleted == 0:
+        return JSONResponse(status_code=404, content={"error": "Ausgabe nicht gefunden"})
+    return {"ok": True, "deleted": deleted}
 
 
 def _compute_net_balances(db: Session) -> dict[int, float]:
