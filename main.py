@@ -694,8 +694,7 @@ async def list_expenses(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
-    # Tilgungseinträge (Rückzahlungen, status != "offen") sind Buchhaltung, keine
-    # eigenen Einkäufe — die gehören nicht in die "Alle Ausgaben"-Übersicht.
+    # Tilgungseinträge (Rückzahlungen, status != "offen") sind Buchhaltung, keine eigenen Einkäufe
     # Sortierung nach created_at (echter Zeitstempel), nicht nach "datum" — das
     # Feld ist frei editierbar (z. B. beim Nacherfassen älterer Ausgaben) und
     # eignet sich daher nicht als verlässliche Sortiergrundlage.
@@ -819,6 +818,22 @@ async def create_expense(
     db.commit()
 
     return {"created": len(created), "share": share, "betreff": betreff, "batch_id": batch_id}
+
+
+@app.post("/api/expenses/reset")
+async def reset_expenses(request: Request, db: Session = Depends(get_db)):
+    """Löscht ALLE Zeilen der ausgaben-Tabelle (Ausgaben, Salden-Historie UND
+    Tilgungseinträge) für ALLE Camper unwiderruflich. Nur für Admins, zusätzlich
+    im Frontend mit einer Tipp-zum-Bestätigen-Sperre abgesichert."""
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können die Kostendatenbank zurücksetzen"})
+
+    deleted = db.query(Ausgabe).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True, "deleted": deleted}
 
 
 @app.patch("/api/expenses/batch/{batch_id}")

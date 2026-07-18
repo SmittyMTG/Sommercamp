@@ -1328,6 +1328,64 @@ async function openEditExpenseModal(group) {
 const addExpenseButton = document.getElementById("addExpenseButton");
 if (addExpenseButton) addExpenseButton.addEventListener("click", openAddExpenseModal);
 
+/* ---------- Kosten: Reset (nur Admins) ---------- */
+const resetExpensesButton = document.getElementById("resetExpensesButton");
+
+function openResetExpensesModal() {
+  openModal({
+    eyebrow: "Kosten",
+    title: "Kostendatenbank wirklich zurücksetzen?",
+    submitLabel: "Alles löschen",
+    danger: true,
+    bodyHtml: `
+      <div class="form-stack">
+        <p class="muted warning-text">
+          Das löscht ALLE Ausgaben, Salden und die komplette Tilgungs-Historie für
+          ALLE Camper unwiderruflich. Das lässt sich nicht rückgängig machen.
+        </p>
+        <label>Tippe <strong>RESET</strong> zur Bestätigung
+          <input type="text" id="resetConfirmInput" placeholder="RESET" autocomplete="off">
+        </label>
+        <p class="error-text hidden reset-modal-error"></p>
+      </div>
+    `,
+    onSubmit: async () => {
+      const confirmInput = document.getElementById("resetConfirmInput");
+      const errEl = document.querySelector(".reset-modal-error");
+      errEl.classList.add("hidden");
+
+      if (confirmInput.value.trim().toUpperCase() !== "RESET") {
+        errEl.textContent = "Bitte RESET eintippen, um zu bestätigen.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+
+      const res = await fetch("/api/expenses/reset", { method: "POST" });
+      if (res.ok) {
+        closeModal();
+        loadExpenses();
+        loadBalance();
+        loadOpenSettlements();
+        loadReceivedPayments();
+        loadLeaderboard();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        errEl.textContent = data.error || "Konnte nicht zurückgesetzt werden.";
+        errEl.classList.remove("hidden");
+      }
+    },
+  });
+}
+
+if (resetExpensesButton) {
+  resetExpensesButton.addEventListener("click", openResetExpensesModal);
+  // Button ist standardmäßig ausgeblendet (siehe index.html), damit er für
+  // Nicht-Admins nie kurz aufblitzt, bis die Rolle bekannt ist.
+  fetchUsersAndMe().then(({ me }) => {
+    if (me && isAdminRole(me.role)) resetExpensesButton.classList.remove("hidden");
+  });
+}
+
 /* ---------- Kosten: Ansicht wechseln ---------- */
 const costsViewSelect = document.getElementById("costsViewSelect");
 const costsViews = {
