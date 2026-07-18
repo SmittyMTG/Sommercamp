@@ -52,31 +52,6 @@
           </div>
         </div>
 
-        <div class="section-heading">
-          <h2>Schnellzugriff</h2>
-        </div>
-        <div class="quick-grid">
-          <button data-go="costs" class="quick-card">
-            <span class="quick-icon">€</span>
-            <strong>Ausgabe</strong>
-            <small>In Sekunden eintragen</small>
-          </button>
-          <button data-go="shopping" class="quick-card">
-            <span class="quick-icon">✓</span>
-            <strong>Einkauf</strong>
-            <small id="quickShopping">0 offen</small>
-          </button>
-          <button data-go="plan" class="quick-card">
-            <span class="quick-icon">▣</span>
-            <strong>Gesamtplan</strong>
-            <small>Alle Camp-Tage</small>
-          </button>
-          <button data-go="more" class="quick-card">
-            <span class="quick-icon">•••</span>
-            <strong>Mehr</strong>
-            <small>Aufgaben & Infos</small>
-          </button>
-        </div>
       </section>
 
       <!-- ============ PLAN ============ -->
@@ -190,19 +165,8 @@
           <div class="empty-state"><p>Packliste ist leer.</p></div>
         </div>
 
-        <div class="section-heading">
-          <h2>Wichtige Infos</h2>
-        </div>
-        <div id="infoList" class="stack">
-          <div class="empty-state"><p>Noch keine Infos hinterlegt.</p></div>
-        </div>
-
-        <div class="section-heading">
-          <h2>Profil</h2>
-        </div>
         <div class="card">
           <p>Angemeldet als <strong>{{ user.username if user else "?" }}</strong></p>
-          <a href="/logout" class="secondary link-button">Ausloggen</a>
         </div>
       </section>
     </section>
