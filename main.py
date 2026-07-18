@@ -10,7 +10,18 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from database import SessionLocal, User, ShoppingItem, ShoppingSource, PackItem, PlanEvent, Ausgabe, get_db
+from database import (
+    SessionLocal,
+    User,
+    ShoppingItem,
+    ShoppingSource,
+    PackItem,
+    PlanEvent,
+    Task,
+    TaskAssignee,
+    Ausgabe,
+    get_db,
+)
 from auth import login, logout, get_current_user
 import uvicorn
 
@@ -44,6 +55,13 @@ class ShoppingSourceCreate(BaseModel):
 
 class PackItemCreate(BaseModel):
     name: str
+
+
+class TaskCreate(BaseModel):
+    titel: str
+    beschreibung: str | None = None
+    deadline: str | None = None
+    assignee_ids: list[int] = []
 
 
 class PlanEventCreate(BaseModel):
@@ -263,6 +281,141 @@ async def delete_shopping_item(item_id: int, request: Request, db: Session = Dep
     item = db.query(ShoppingItem).filter(ShoppingItem.id == item_id).first()
     if item:
         db.delete(item)
+        db.commit()
+    return {"ok": True}
+
+
+# --- Aufgaben (geteilt, mehrere Personen zuweisbar, mit Deadline) ---
+
+def _validate_task_payload(payload: TaskCreate, db: Session):
+    """Gibt entweder (titel, beschreibung, deadline, assignee_ids) oder eine
+    fertige JSONResponse mit Fehlermeldung zurück."""
+    titel = payload.titel.strip()
+    if not titel:
+        return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
+    if len(titel) > 80:
+        return JSONResponse(status_code=400, content={"error": "Titel darf maximal 80 Zeichen haben"})
+
+    beschreibung = (payload.beschreibung or "").strip() or None
+
+    deadline = None
+    if payload.deadline:
+        try:
+            deadline = dt.fromisoformat(payload.deadline)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültige Deadline"})
+
+    assignee_ids = sorted(set(payload.assignee_ids))
+    if assignee_ids:
+        valid_ids = {u.id for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
+        if not set(assignee_ids).issubset(valid_ids):
+            return JSONResponse(status_code=400, content={"error": "Unbekannte Person ausgewählt"})
+
+    return titel, beschreibung, deadline, assignee_ids
+
+
+def _serialize_task(task: Task, assignee_ids: list[int], usernames: dict[int, str]) -> dict:
+    return {
+        "id": task.id,
+        "titel": task.titel,
+        "beschreibung": task.beschreibung,
+        "done": task.done,
+        "deadline": task.deadline.isoformat() if task.deadline else None,
+        "created_by": task.created_by,
+        "assignees": [
+            {"id": uid, "username": usernames.get(uid, "?")} for uid in assignee_ids
+        ],
+    }
+
+
+@app.get("/api/tasks")
+async def list_tasks(request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    tasks = db.query(Task).order_by(Task.created_at.desc()).all()
+    usernames = {u.id: u.username for u in db.query(User).all()}
+
+    assignees_by_task: dict[int, list[int]] = {}
+    for a in db.query(TaskAssignee).all():
+        assignees_by_task.setdefault(a.task_id, []).append(a.user_id)
+
+    return [_serialize_task(t, assignees_by_task.get(t.id, []), usernames) for t in tasks]
+
+
+@app.post("/api/tasks")
+async def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    validated = _validate_task_payload(payload, db)
+    if isinstance(validated, JSONResponse):
+        return validated
+    titel, beschreibung, deadline, assignee_ids = validated
+
+    task = Task(titel=titel, beschreibung=beschreibung, deadline=deadline, created_by=username)
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    for uid in assignee_ids:
+        db.add(TaskAssignee(task_id=task.id, user_id=uid))
+    db.commit()
+
+    usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
+    return _serialize_task(task, assignee_ids, usernames)
+
+
+@app.patch("/api/tasks/{task_id}")
+async def update_task(task_id: int, request: Request, payload: TaskCreate, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    validated = _validate_task_payload(payload, db)
+    if isinstance(validated, JSONResponse):
+        return validated
+    titel, beschreibung, deadline, assignee_ids = validated
+
+    task.titel = titel
+    task.beschreibung = beschreibung
+    task.deadline = deadline
+    db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).delete(synchronize_session=False)
+    for uid in assignee_ids:
+        db.add(TaskAssignee(task_id=task.id, user_id=uid))
+    db.commit()
+
+    usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
+    return _serialize_task(task, assignee_ids, usernames)
+
+
+@app.patch("/api/tasks/{task_id}/toggle")
+async def toggle_task(task_id: int, request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    task.done = not task.done
+    db.commit()
+    return {"id": task.id, "done": task.done}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if task:
+        db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).delete(synchronize_session=False)
+        db.delete(task)
         db.commit()
     return {"ok": True}
 

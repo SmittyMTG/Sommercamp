@@ -438,6 +438,273 @@ async function openEditShoppingModal(item) {
 
 document.getElementById("addShoppingButton").addEventListener("click", openAddShoppingModal);
 
+/* ---------- Aufgaben (geteilt, mehrere Personen zuweisbar, mit Deadline) ---------- */
+const taskListEl = document.getElementById("taskList");
+const taskSortSelect = document.getElementById("taskSortSelect");
+const taskFilterRow = document.getElementById("taskFilterRow");
+
+let lastTaskItems = [];
+let taskSortMode = "deadline";
+let taskFilterMode = "alle";
+
+function isTaskOverdue(task) {
+  return !task.done && !!task.deadline && new Date(task.deadline) < new Date();
+}
+
+function formatDeadline(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function filterTasks(items, mode, meId) {
+  if (mode === "meine") return items.filter((t) => t.assignees.some((a) => a.id === meId));
+  if (mode === "offen") return items.filter((t) => !t.done);
+  if (mode === "ueberfaellig") return items.filter((t) => isTaskOverdue(t));
+  return items;
+}
+
+function sortTasks(items, mode) {
+  const arr = [...items];
+  if (mode === "titel") {
+    arr.sort((a, b) => a.titel.localeCompare(b.titel, "de"));
+  } else if (mode === "status") {
+    arr.sort((a, b) => Number(a.done) - Number(b.done));
+  } else if (mode === "deadline") {
+    arr.sort((a, b) => {
+      if (!a.deadline && !b.deadline) return 0;
+      if (!a.deadline) return 1;
+      if (!b.deadline) return -1;
+      return new Date(a.deadline) - new Date(b.deadline);
+    });
+  }
+  // "neu" = Server-Reihenfolge (created_at absteigend), keine Änderung nötig
+  return arr;
+}
+
+function renderTaskItem(task) {
+  const card = document.createElement("div");
+  card.className = "list-card" + (task.done ? " done" : "");
+  card.dataset.id = task.id;
+
+  const overdue = isTaskOverdue(task);
+  const metaParts = [];
+  if (task.deadline) {
+    const label = `📅 ${formatDeadline(task.deadline)}`;
+    metaParts.push(overdue ? `<span class="danger">⚠️ ${label}</span>` : label);
+  }
+  if (task.assignees.length) {
+    metaParts.push(`Zugewiesen: ${task.assignees.map((a) => escapeHtml(a.username)).join(", ")}`);
+  }
+
+  const descHtml = task.beschreibung
+    ? `<p class="list-card-meta">${escapeHtml(task.beschreibung)}</p>`
+    : "";
+  // Ersteller dezent, in derselben gedämpften Meta-Zeilen-Optik wie alles andere hier.
+  const creatorHtml = task.created_by
+    ? `<p class="list-card-meta">von ${escapeHtml(task.created_by)}</p>`
+    : "";
+
+  card.innerHTML = `
+    <div class="list-card-content">
+      <button type="button" class="list-card-checkbox${task.done ? " checked" : ""}" aria-label="Erledigt"></button>
+      <div class="list-card-text">
+        <p class="list-card-title">${escapeHtml(task.titel)}</p>
+        ${metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : ""}
+        ${descHtml}
+        ${creatorHtml}
+      </div>
+    </div>
+    <div class="list-card-actions">
+      <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
+      <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
+    </div>
+  `;
+
+  const checkbox = card.querySelector(".list-card-checkbox");
+  checkbox.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const res = await fetch(`/api/tasks/${task.id}/toggle`, { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      checkbox.classList.toggle("checked", data.done);
+      card.classList.toggle("done", data.done);
+      task.done = data.done;
+    }
+  });
+
+  card.querySelector(".edit-btn").addEventListener("click", () => openEditTaskModal(task));
+
+  card.querySelector(".delete-btn").addEventListener("click", () => {
+    openModal({
+      eyebrow: "Aufgabe",
+      title: `„${task.titel}" löschen?`,
+      bodyHtml: `<p class="muted warning-text">Die Aufgabe wird für alle entfernt. Das lässt sich nicht rückgängig machen.</p>`,
+      submitLabel: "Löschen",
+      danger: true,
+      onSubmit: async () => {
+        const res = await fetch(`/api/tasks/${task.id}`, { method: "DELETE" });
+        if (res.ok) loadTasks(true);
+        closeModal();
+      },
+    });
+  });
+
+  return card;
+}
+
+async function renderFilteredSortedTasks() {
+  if (!taskListEl) return;
+  const { me } = await fetchUsersAndMe();
+  const filtered = filterTasks(lastTaskItems, taskFilterMode, me ? me.id : null);
+  const sorted = sortTasks(filtered, taskSortMode);
+
+  taskListEl.innerHTML = "";
+  if (sorted.length === 0) {
+    taskListEl.innerHTML = `<div class="empty-state"><p>Keine Aufgaben.</p></div>`;
+  } else {
+    sorted.forEach((t) => taskListEl.appendChild(renderTaskItem(t)));
+  }
+}
+
+let lastTaskSignature = null;
+
+async function loadTasks(force) {
+  if (!taskListEl) return;
+  try {
+    const res = await fetch("/api/tasks");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const items = await res.json();
+    const signature = JSON.stringify(items);
+    if (!force && signature === lastTaskSignature) return;
+    lastTaskSignature = signature;
+    lastTaskItems = items;
+    renderFilteredSortedTasks();
+  } catch (err) {
+    taskListEl.innerHTML = `<div class="empty-state"><p>Aufgaben konnten nicht geladen werden.</p></div>`;
+  }
+}
+
+if (taskSortSelect) {
+  taskSortSelect.addEventListener("change", () => {
+    taskSortMode = taskSortSelect.value;
+    renderFilteredSortedTasks();
+  });
+}
+
+if (taskFilterRow) {
+  taskFilterRow.querySelectorAll(".filter").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      taskFilterRow.querySelectorAll(".filter").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      taskFilterMode = btn.dataset.filter;
+      renderFilteredSortedTasks();
+    });
+  });
+}
+
+function taskModalBodyHtml(users, prefill = {}) {
+  const assigneeIds = prefill.assignees ? new Set(prefill.assignees.map((a) => a.id)) : new Set();
+  const assigneeOptions = users
+    .map(
+      (u) =>
+        `<label class="check-card"><input type="checkbox" value="${u.id}"${assigneeIds.has(u.id) ? " checked" : ""}>${escapeHtml(u.username)}</label>`
+    )
+    .join("");
+
+  // datetime-local erwartet "YYYY-MM-DDTHH:MM", der Server liefert ein volles ISO-Format zurück.
+  const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 16) : "";
+
+  return `
+    <div class="form-stack">
+      <label>Titel
+        <input type="text" id="taskTitelInput" maxlength="80" value="${escapeHtml(prefill.titel || "")}" placeholder="z. B. Zelte aufbauen" required>
+      </label>
+      <label>Beschreibung (optional)
+        <textarea id="taskBeschreibungInput" placeholder="Details …">${escapeHtml(prefill.beschreibung || "")}</textarea>
+      </label>
+      <div class="checkbox-group">
+        <div class="eyebrow">Wer soll das machen? (optional)</div>
+        <div id="taskAssignees" class="checkbox-grid">${assigneeOptions}</div>
+      </div>
+      <label>Deadline (optional)
+        <input type="datetime-local" id="taskDeadlineInput" value="${deadlineValue}">
+      </label>
+    </div>
+  `;
+}
+
+function readTaskForm() {
+  const titel = document.getElementById("taskTitelInput").value.trim();
+  if (!titel) return null;
+  const beschreibung = document.getElementById("taskBeschreibungInput").value.trim();
+  const assignee_ids = Array.from(
+    document.querySelectorAll("#taskAssignees input[type=checkbox]:checked")
+  ).map((el) => parseInt(el.value, 10));
+  const deadline = document.getElementById("taskDeadlineInput").value || null;
+  return { titel, beschreibung, assignee_ids, deadline };
+}
+
+async function openAddTaskModal() {
+  const { users } = await fetchUsersAndMe();
+
+  openModal({
+    eyebrow: "Aufgabe",
+    title: "Aufgabe hinzufügen",
+    submitLabel: "Speichern",
+    bodyHtml: taskModalBodyHtml(users),
+    onSubmit: async () => {
+      const form = readTaskForm();
+      if (!form) return;
+
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (res.ok) {
+        closeModal();
+        loadTasks(true);
+      }
+    },
+  });
+}
+
+async function openEditTaskModal(task) {
+  const { users } = await fetchUsersAndMe();
+
+  openModal({
+    eyebrow: "Aufgabe",
+    title: "Aufgabe bearbeiten",
+    submitLabel: "Speichern",
+    bodyHtml: taskModalBodyHtml(users, task),
+    onSubmit: async () => {
+      const form = readTaskForm();
+      if (!form) return;
+
+      const res = await fetch(`/api/tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (res.ok) {
+        closeModal();
+        loadTasks(true);
+      }
+    },
+  });
+}
+
+const addTaskButton = document.getElementById("addTaskButton");
+if (addTaskButton) addTaskButton.addEventListener("click", openAddTaskModal);
+
 /* ---------- Packliste (privat pro User) ---------- */
 const packListEl = document.getElementById("packList");
 
@@ -1313,6 +1580,8 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(updateCountdown, 30000); // keine Sekundenanzeige mehr, reicht alle 30s
   loadShoppingList();
   setInterval(pollShoppingList, 1000);
+  loadTasks();
+  setInterval(loadTasks, 1000);
   loadPackList();
   setInterval(loadPackList, 1000);
   loadPlanList();

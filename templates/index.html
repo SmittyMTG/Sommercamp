@@ -166,6 +166,18 @@
           <div><div class="eyebrow">Organisation</div><h2>Aufgaben</h2></div>
           <button id="addTaskButton" class="primary compact">＋ Aufgabe</button>
         </div>
+        <div class="filter-row" id="taskFilterRow">
+          <button type="button" class="filter active" data-filter="alle">Alle</button>
+          <button type="button" class="filter" data-filter="meine">Meine</button>
+          <button type="button" class="filter" data-filter="offen">Offen</button>
+          <button type="button" class="filter" data-filter="ueberfaellig">Überfällig</button>
+        </div>
+        <select id="taskSortSelect" class="sort-select">
+          <option value="deadline">Sortieren nach: Deadline</option>
+          <option value="neu">Sortieren nach: Neu zuerst</option>
+          <option value="titel">Sortieren nach: Titel (A–Z)</option>
+          <option value="status">Sortieren nach: Status (offen zuerst)</option>
+        </select>
         <div id="taskList" class="stack">
           <div class="empty-state"><p>Keine Aufgaben.</p></div>
         </div>

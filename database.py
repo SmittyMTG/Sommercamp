@@ -56,6 +56,27 @@ class PackItem(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+# Aufgaben: geteilte Todo-Liste (nicht privat wie PackItem) — jeder darf anlegen,
+# bearbeiten, abhaken und löschen. Mehrere Personen können zugewiesen werden
+# (daher eigene Zuordnungstabelle statt einer einzelnen Spalte).
+class Task(Base):
+    __tablename__ = "tasks"
+    id = Column(Integer, primary_key=True, index=True)
+    titel = Column(String(80), nullable=False)
+    beschreibung = Column(Text, nullable=True)
+    done = Column(Boolean, nullable=False, default=False)
+    deadline = Column(DateTime, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TaskAssignee(Base):
+    __tablename__ = "task_assignees"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+
 # Camp-Plan-Termin: nur Admins legen Termine an, sichtbar für alle.
 class PlanEvent(Base):
     __tablename__ = "plan_events"
