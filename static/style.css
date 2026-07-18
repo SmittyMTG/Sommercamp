@@ -5,10 +5,15 @@
   --green:#4bd58d;--red:#ff6262;--blue:#72a7ff;--shadow:0 18px 50px rgba(0,0,0,.3);
   color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
 }
-*{box-sizing:border-box}html,body{overflow-x:hidden}body{margin:0;background:var(--bg);color:var(--text);min-height:100vh;min-height:100dvh}
+*{box-sizing:border-box}
+html,body{height:100%;overflow:hidden;overscroll-behavior:none}
+body{margin:0;background:var(--bg);color:var(--text)}
 button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:none!important}
 .offline{position:fixed;top:0;left:0;right:0;z-index:99;background:var(--red);color:white;text-align:center;padding:8px;font-size:13px;font-weight:800}
-.app-shell{max-width:760px;margin:auto;padding:18px 16px 110px}
+/* body scrollt bewusst NICHT mehr (siehe oben) — stattdessen scrollt nur dieser
+   Bereich intern. Die fixierte Bottom-Nav liegt außerhalb und kann sich dadurch
+   beim iOS-Bounce-Scrolling nicht mehr sichtbar mitbewegen. */
+.app-shell{max-width:760px;margin:auto;padding:18px 16px 110px;height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
 .topbar{display:flex;justify-content:space-between;align-items:center;margin:4px 0 16px}
 .brand{font-weight:1000;font-size:26px;letter-spacing:.12em}.subtitle{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em}
 .avatar-button{width:42px;height:42px;border-radius:14px;border:1px solid var(--line);background:var(--surface);color:var(--yellow);font-weight:900}

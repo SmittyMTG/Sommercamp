@@ -21,7 +21,10 @@ function goToScreen(name) {
   document.querySelectorAll(".bottom-nav button").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.screen === name);
   });
-  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  // Nicht mehr window.scrollTo: body scrollt bewusst nicht mehr (siehe CSS),
+  // .app-shell ist jetzt der eigentliche Scroll-Container.
+  const shell = document.querySelector(".app-shell");
+  if (shell) shell.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
 }
 
 function initNavigation() {
