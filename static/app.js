@@ -970,6 +970,46 @@ async function loadPlanList(force) {
   }
 }
 
+/* ---------- Heute geplant (Startseite) ---------- */
+const todayPlanEl = document.getElementById("todayPlan");
+let lastTodayPlanSignature = null;
+
+function todayIsoDate() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+async function loadTodayPlan() {
+  if (!todayPlanEl) return;
+  try {
+    const res = await fetch("/api/plan");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const events = await res.json();
+    const today = todayIsoDate();
+    const todaysEvents = events
+      .filter((e) => e.datum === today)
+      .sort((a, b) => a.uhrzeit.localeCompare(b.uhrzeit));
+
+    const signature = JSON.stringify(todaysEvents);
+    if (signature === lastTodayPlanSignature) return;
+    lastTodayPlanSignature = signature;
+
+    todayPlanEl.innerHTML = "";
+    if (todaysEvents.length === 0) {
+      todayPlanEl.innerHTML = `<div class="empty-state"><p>Noch nichts geplant für heute.</p></div>`;
+    } else {
+      // isAdmin=false: die Startseite ist eine schlanke Übersicht, Bearbeiten/
+      // Löschen bleibt der vollen Camp-Plan-Seite vorbehalten.
+      todaysEvents.forEach((event) => todayPlanEl.appendChild(renderPlanEvent(event, false)));
+    }
+  } catch (err) {
+    todayPlanEl.innerHTML = `<div class="empty-state"><p>Plan konnte nicht geladen werden.</p></div>`;
+  }
+}
+
 function planModalBodyHtml(prefill = {}) {
   const today = new Date().toISOString().slice(0, 10);
   return `
@@ -1647,6 +1687,8 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(loadPackList, 1000);
   loadPlanList();
   setInterval(loadPlanList, 1000);
+  loadTodayPlan();
+  setInterval(loadTodayPlan, 1000);
   pollCostsViews();
   setInterval(pollCostsViews, 1000);
 });
