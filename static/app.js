@@ -72,6 +72,25 @@ function updateCountdown() {
   }
 }
 
+// Countdown bis Camp-Ende (Abschlussparty) für die gesperrte Leaderboard-Ansicht.
+function updateLeaderboardCountdown() {
+  const el = document.getElementById("leaderboardCountdown");
+  if (!el) return;
+
+  const now = new Date();
+  if (now > CAMP_END) {
+    el.innerHTML = `Jetzt <small>🎉</small>`;
+    return;
+  }
+
+  const diffMs = CAMP_END - now;
+  const days = Math.floor(diffMs / 86400000);
+  const hours = Math.floor((diffMs % 86400000) / 3600000);
+  const minutes = Math.floor((diffMs % 3600000) / 60000);
+
+  el.innerHTML = `${days} <small>T</small> ${hours} <small>Std</small> ${minutes} <small>Min</small>`;
+}
+
 /* ---------- Helpers ---------- */
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -208,20 +227,25 @@ function updateQuickShoppingCount() {
 let lastShoppingItems = [];
 let shoppingSortMode = "neu";
 
+// Offene Einträge stehen immer vor erledigten; die gewählte Sortierung
+// (Name/Woher/Neu) gilt jeweils nur innerhalb dieser beiden Gruppen.
 function sortShoppingItems(items, mode) {
-  const arr = [...items];
-  if (mode === "name") {
-    arr.sort((a, b) => a.name.localeCompare(b.name, "de"));
-  } else if (mode === "woher") {
-    arr.sort((a, b) => {
-      const an = a.woher ? a.woher.bezeichnung : "￿"; // ohne Woher ans Ende
-      const bn = b.woher ? b.woher.bezeichnung : "￿";
-      return an.localeCompare(bn, "de");
-    });
-  } else if (mode === "status") {
-    arr.sort((a, b) => Number(a.done) - Number(b.done));
-  }
-  return arr;
+  const sortWithin = (arr) => {
+    const out = [...arr];
+    if (mode === "name") {
+      out.sort((a, b) => a.name.localeCompare(b.name, "de"));
+    } else if (mode === "woher") {
+      out.sort((a, b) => {
+        const an = a.woher ? a.woher.bezeichnung : "￿"; // ohne Woher ans Ende
+        const bn = b.woher ? b.woher.bezeichnung : "￿";
+        return an.localeCompare(bn, "de");
+      });
+    }
+    return out;
+  };
+  const open = items.filter((i) => !i.done);
+  const done = items.filter((i) => i.done);
+  return [...sortWithin(open), ...sortWithin(done)];
 }
 
 function renderShoppingListItems(items) {
@@ -472,22 +496,27 @@ function filterTasks(items, mode, meId) {
   return items;
 }
 
+// Offene Aufgaben stehen immer vor erledigten; die gewählte Sortierung gilt
+// jeweils nur innerhalb dieser beiden Gruppen.
 function sortTasks(items, mode) {
-  const arr = [...items];
-  if (mode === "titel") {
-    arr.sort((a, b) => a.titel.localeCompare(b.titel, "de"));
-  } else if (mode === "status") {
-    arr.sort((a, b) => Number(a.done) - Number(b.done));
-  } else if (mode === "deadline") {
-    arr.sort((a, b) => {
-      if (!a.deadline && !b.deadline) return 0;
-      if (!a.deadline) return 1;
-      if (!b.deadline) return -1;
-      return new Date(a.deadline) - new Date(b.deadline);
-    });
-  }
-  // "neu" = Server-Reihenfolge (created_at absteigend), keine Änderung nötig
-  return arr;
+  const sortWithin = (arr) => {
+    const out = [...arr];
+    if (mode === "titel") {
+      out.sort((a, b) => a.titel.localeCompare(b.titel, "de"));
+    } else if (mode === "deadline") {
+      out.sort((a, b) => {
+        if (!a.deadline && !b.deadline) return 0;
+        if (!a.deadline) return 1;
+        if (!b.deadline) return -1;
+        return new Date(a.deadline) - new Date(b.deadline);
+      });
+    }
+    // "neu" = Server-Reihenfolge (created_at absteigend), keine Änderung nötig
+    return out;
+  };
+  const open = items.filter((t) => !t.done);
+  const done = items.filter((t) => t.done);
+  return [...sortWithin(open), ...sortWithin(done)];
 }
 
 function renderTaskItem(task) {
@@ -765,12 +794,19 @@ function renderPackItem(item) {
   return card;
 }
 
+// Offene Einträge stehen immer vor erledigten (sonst bleibt die Server-Reihenfolge erhalten).
+function sortPackItems(items) {
+  const open = items.filter((i) => !i.done);
+  const done = items.filter((i) => i.done);
+  return [...open, ...done];
+}
+
 function renderPackListItems(items) {
   packListEl.innerHTML = "";
   if (items.length === 0) {
     packListEl.innerHTML = `<div class="empty-state"><p>Packliste ist leer.</p></div>`;
   } else {
-    items.forEach((item) => packListEl.appendChild(renderPackItem(item)));
+    sortPackItems(items).forEach((item) => packListEl.appendChild(renderPackItem(item)));
   }
 }
 
@@ -1092,6 +1128,7 @@ if (addPlanButton) {
 
 /* ---------- Kosten & Schulden ---------- */
 const balanceHeroEl = document.getElementById("balanceHero");
+const myExpensesHeroEl = document.getElementById("myExpensesHero");
 const expenseListEl = document.getElementById("expenseList");
 
 async function fetchUsersAndMe() {
@@ -1250,8 +1287,19 @@ async function loadBalance() {
     } else {
       balanceHeroEl.innerHTML = `<div class="muted">Du bist ausgeglichen.</div>`;
     }
+
+    if (myExpensesHeroEl) {
+      myExpensesHeroEl.innerHTML = `
+        <div class="eyebrow">Deine Ausgaben</div>
+        <div class="countdown">${formatEuro(balance.my_total)}</div>
+        <div class="muted">Insgesamt für dich angefallene Kosten.</div>
+      `;
+    }
   } catch (err) {
     balanceHeroEl.innerHTML = `<div class="muted">Saldo konnte nicht geladen werden.</div>`;
+    if (myExpensesHeroEl) {
+      myExpensesHeroEl.innerHTML = `<div class="muted">Ausgaben konnten nicht geladen werden.</div>`;
+    }
   }
 }
 
@@ -1619,18 +1667,19 @@ async function loadReceivedPayments() {
 /* ---------- Kosten: Leaderboard ---------- */
 const leaderboardListEl = document.getElementById("leaderboardList");
 
-function renderLeaderboardItem(entry, rank, isLast) {
+function renderLeaderboardOwnRank(data) {
   const card = document.createElement("div");
   card.className = "list-card";
-  const badgeClass = rank === 1 ? "top" : isLast ? "bottom" : "";
+  const badgeClass = data.rank === 1 ? "top" : "";
   card.innerHTML = `
     <div class="list-card-content">
-      <div class="rank-badge ${badgeClass}">${rank}</div>
+      <div class="rank-badge ${badgeClass}">${data.rank}</div>
       <div class="list-card-text">
-        <p class="list-card-title">${escapeHtml(entry.username)}</p>
+        <p class="list-card-title">Dein Platz</p>
+        <p class="list-card-meta">von ${data.total_participants}</p>
       </div>
     </div>
-    <p class="list-card-value">${formatEuro(entry.total)}</p>
+    <p class="list-card-value">${formatEuro(data.your_total)}</p>
   `;
   return card;
 }
@@ -1642,20 +1691,15 @@ async function loadLeaderboard() {
   try {
     const res = await fetch("/api/expenses/leaderboard");
     if (!res.ok) throw new Error("Fehler beim Laden");
-    const ranking = await res.json();
+    const data = await res.json();
 
-    const signature = JSON.stringify(ranking);
+    const signature = JSON.stringify(data);
     if (signature === lastLeaderboardSignature) return;
     lastLeaderboardSignature = signature;
 
     leaderboardListEl.innerHTML = "";
-    if (ranking.length === 0) {
-      leaderboardListEl.innerHTML = `<div class="empty"><p>Noch keine Daten.</p></div>`;
-    } else {
-      ranking.forEach((entry, idx) => {
-        const isLast = idx === ranking.length - 1 && ranking.length > 1;
-        leaderboardListEl.appendChild(renderLeaderboardItem(entry, idx + 1, isLast));
-      });
+    if (data.rank) {
+      leaderboardListEl.appendChild(renderLeaderboardOwnRank(data));
     }
   } catch (err) {
     leaderboardListEl.innerHTML = `<div class="empty"><p>Leaderboard konnte nicht geladen werden.</p></div>`;
@@ -1678,7 +1722,11 @@ function pollCostsViews() {
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
   updateCountdown();
-  setInterval(updateCountdown, 30000); // keine Sekundenanzeige mehr, reicht alle 30s
+  updateLeaderboardCountdown();
+  setInterval(() => {
+    updateCountdown();
+    updateLeaderboardCountdown();
+  }, 30000); // keine Sekundenanzeige mehr, reicht alle 30s
   loadShoppingList();
   setInterval(pollShoppingList, 1000);
   loadTasks();

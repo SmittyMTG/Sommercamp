@@ -22,7 +22,6 @@
         <div class="brand">Sommercamp<span class="brand-accent">26</span></div>
         <div class="subtitle">Final Chapter · 04.–16. August</div>
       </div>
-      <button id="profileButton" class="avatar-button" aria-label="Profil">{{ user.username[0]|upper if user and user.username else "?" }}</button>
     </header>
 
     <section id="appContent">
@@ -77,6 +76,14 @@
           </div>
         </div>
 
+        <div id="balanceHero" class="hero-card mini-hero">
+          <div class="muted">Noch keine Ausgaben erfasst.</div>
+        </div>
+
+        <div id="myExpensesHero" class="hero-card mini-hero">
+          <div class="muted">Noch keine Ausgaben erfasst.</div>
+        </div>
+
         <select id="costsViewSelect" class="costs-view-select">
           <option value="entry">Ausgaben und Saldo</option>
           <option value="open">Offene Zahlungen</option>
@@ -85,9 +92,6 @@
         </select>
 
         <div id="costsViewEntry" class="costs-view">
-          <div id="balanceHero" class="hero-card mini-hero">
-            <div class="muted">Noch keine Ausgaben erfasst.</div>
-          </div>
           <h3>Alle Ausgaben</h3>
           <div id="expenseList" class="stack">
             <div class="empty-state">
@@ -115,6 +119,11 @@
         <div id="costsViewLeaderboard" class="costs-view hidden">
           <h3>Leaderboard</h3>
           <p class="muted">Wer hat für sich am meisten Geld ausgegeben?</p>
+          <div id="leaderboardLockHero" class="hero-card mini-hero">
+            <div class="eyebrow">🔒 Gesperrt bis zur Abschlussparty</div>
+            <div id="leaderboardCountdown" class="countdown">-- <small>T</small> -- <small>Std</small> -- <small>Min</small></div>
+            <div class="muted">Das vollständige Leaderboard wird bei der Abschlussparty freigeschaltet.</div>
+          </div>
           <div id="leaderboardList" class="stack">
             <div class="empty-state"><p>Lädt …</p></div>
           </div>
@@ -131,7 +140,6 @@
           <option value="neu">Sortieren nach: Neu zuerst</option>
           <option value="name">Sortieren nach: Bezeichnung (A–Z)</option>
           <option value="woher">Sortieren nach: Woher (Markt)</option>
-          <option value="status">Sortieren nach: Status (offen zuerst)</option>
         </select>
         <div id="shoppingList" class="stack">
           <div class="empty-state">Lädt …</div>
@@ -154,7 +162,6 @@
           <option value="deadline">Sortieren nach: Deadline</option>
           <option value="neu">Sortieren nach: Neu zuerst</option>
           <option value="titel">Sortieren nach: Titel (A–Z)</option>
-          <option value="status">Sortieren nach: Status (offen zuerst)</option>
         </select>
         <div id="taskList" class="stack">
           <div class="empty-state"><p>Keine Aufgaben.</p></div>

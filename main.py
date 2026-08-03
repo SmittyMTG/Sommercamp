@@ -746,10 +746,20 @@ async def get_expense_balance(request: Request, db: Session = Depends(get_db)):
         db.query(func.sum(Ausgabe.cash)).filter(Ausgabe.schuldner_id == me.id, open_others).scalar()
         or 0
     )
+    # Eigene Ausgaben insgesamt (auch selbst bezahlte, ohne Schuldverhältnis) —
+    # unabhängig vom Saldo, rein informativ für "was habe ich insgesamt an
+    # Kosten verursacht". Gleiche Grundlage wie im Leaderboard.
+    my_total = (
+        db.query(func.sum(Ausgabe.cash))
+        .filter(Ausgabe.schuldner_id == me.id, Ausgabe.status == "offen")
+        .scalar()
+        or 0
+    )
     return {
         "owed_to_me": float(owed_to_me),
         "i_owe": float(i_owe),
         "net": float(owed_to_me) - float(i_owe),
+        "my_total": float(my_total),
     }
 
 
@@ -1139,7 +1149,8 @@ async def confirm_received_payment(
 
 @app.get("/api/expenses/leaderboard")
 async def get_expense_leaderboard(request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request):
+    username = get_current_user(request)
+    if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     # Nur echte Ausgaben zählen fürs Leaderboard, keine Tilgungs-Buchungen.
@@ -1151,13 +1162,21 @@ async def get_expense_leaderboard(request: Request, db: Session = Depends(get_db
     )
     users = db.query(User).all()
     ranking = sorted(
-        (
-            {"user_id": u.id, "username": u.username, "total": float(totals.get(u.id, 0) or 0)}
-            for u in users
-        ),
+        ({"user_id": u.id, "total": float(totals.get(u.id, 0) or 0)} for u in users),
         key=lambda x: -x["total"],
     )
-    return ranking
+
+    # Das volle Ranking bleibt bis zum Ende des Camps geheim (siehe Frontend-
+    # Hinweis) — hier wird deshalb nur der eigene Platz zurückgegeben, nie die
+    # Beträge der anderen.
+    me = next((u for u in users if u.username == username), None)
+    rank = next((i + 1 for i, r in enumerate(ranking) if me and r["user_id"] == me.id), None)
+
+    return {
+        "rank": rank,
+        "total_participants": len(ranking),
+        "your_total": float(totals.get(me.id, 0) or 0) if me else 0,
+    }
 
 
 if __name__ == "__main__":
