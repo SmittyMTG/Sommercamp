@@ -5,6 +5,7 @@
 
 const CAMP_START = new Date("2026-08-04T00:00:00");
 const CAMP_END = new Date("2026-08-16T23:59:59");
+const PARTY_TIME = new Date("2026-08-15T17:00:00"); // Abschlussfeier — Leaderboard schaltet dann frei
 
 // Ganz oben deklariert (nicht erst im Kosten-Abschnitt), damit fetchUsersAndMe()
 // von JEDER Stelle im Skript aus sicher aufgerufen werden kann, auch von Code,
@@ -72,18 +73,18 @@ function updateCountdown() {
   }
 }
 
-// Countdown bis Camp-Ende (Abschlussparty) für die gesperrte Leaderboard-Ansicht.
+// Countdown bis zur Abschlussfeier für die gesperrte Leaderboard-Ansicht.
 function updateLeaderboardCountdown() {
   const el = document.getElementById("leaderboardCountdown");
   if (!el) return;
 
   const now = new Date();
-  if (now > CAMP_END) {
+  if (now > PARTY_TIME) {
     el.innerHTML = `Jetzt <small>🎉</small>`;
     return;
   }
 
-  const diffMs = CAMP_END - now;
+  const diffMs = PARTY_TIME - now;
   const days = Math.floor(diffMs / 86400000);
   const hours = Math.floor((diffMs % 86400000) / 3600000);
   const minutes = Math.floor((diffMs % 3600000) / 60000);
@@ -285,7 +286,7 @@ async function loadShoppingList() {
   }
 }
 
-// Fragt die Einkaufsliste jede Sekunde ab und rendert nur neu, wenn sich
+// Fragt die Einkaufsliste regelmäßig ab und rendert nur neu, wenn sich
 // wirklich etwas geändert hat — so sehen alle Geräte Änderungen anderer
 // Nutzer nahezu live, ohne WebSocket/Reverse-Proxy-Abhängigkeit.
 async function pollShoppingList() {
@@ -1239,7 +1240,7 @@ async function loadExpenses() {
     if (!res.ok) throw new Error("Fehler beim Laden");
     const expenses = await res.json();
 
-    // Nur bei echter Änderung neu rendern — sonst würde jedes Poll-Tick (1s)
+    // Nur bei echter Änderung neu rendern — sonst würde jedes Poll-Tick
     // z. B. offene Eingaben in dieser Ansicht unnötig zerstören.
     const signature = JSON.stringify(expenses);
     if (signature === lastExpensesSignature) return;
@@ -1509,17 +1510,31 @@ function openConfirmSettleModal(s) {
     submitLabel: "Ja, überwiesen",
     bodyHtml: `
       <p class="muted">
-        Damit bestätigst du, dass du <strong>${formatEuro(s.amount)}</strong> an <strong>${escapeHtml(s.to)}</strong>
-        überwiesen hast. ${escapeHtml(s.to)} sieht das jetzt hier in der App und muss den Empfang bestätigen —
-        sobald das passiert, siehst auch du es hier und die Schuld gilt als beglichen.
+        An <strong>${escapeHtml(s.to)}</strong>. Offen sind insgesamt ${formatEuro(s.amount)} — du kannst auch nur
+        einen Teilbetrag als überwiesen markieren, der Rest bleibt dann offen.
       </p>
+      <label>Überwiesener Betrag
+        <input type="number" step="0.01" min="0.01" max="${s.amount}" inputmode="decimal" id="settleAmountInput" value="${s.amount.toFixed(2)}" required>
+      </label>
+      <p class="muted">${escapeHtml(s.to)} sieht das jetzt hier in der App und muss den Empfang bestätigen — sobald das passiert, siehst auch du es hier und der Betrag gilt als beglichen.</p>
       <p id="settleModalError" class="error-text hidden"></p>
     `,
     onSubmit: async () => {
+      const errEl = document.getElementById("settleModalError");
+      const input = document.getElementById("settleAmountInput");
+      const amount = parseFloat(input.value);
+      errEl.classList.add("hidden");
+
+      if (!amount || amount <= 0) {
+        errEl.textContent = "Bitte einen Betrag eingeben.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+
       const res = await fetch("/api/expenses/settle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to_id: s.to_id }),
+        body: JSON.stringify({ to_id: s.to_id, amount }),
       });
       if (res.ok) {
         closeModal();
@@ -1527,11 +1542,8 @@ function openConfirmSettleModal(s) {
         loadBalance();
       } else {
         const data = await res.json().catch(() => ({}));
-        const errEl = document.getElementById("settleModalError");
-        if (errEl) {
-          errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
-          errEl.classList.remove("hidden");
-        }
+        errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
+        errEl.classList.remove("hidden");
       }
     },
   });
@@ -1646,7 +1658,7 @@ async function loadReceivedPayments() {
     if (!res.ok) throw new Error("Fehler beim Laden");
     const received = await res.json();
 
-    // Wichtig: ohne diesen Vergleich würde das 1-Sekunden-Polling das Eingabefeld
+    // Wichtig: ohne diesen Vergleich würde das Polling das Eingabefeld
     // hier bei jedem Tick neu aufbauen und man könnte nie eine Zahl eintippen,
     // obwohl sich an den Daten gar nichts geändert hat.
     const signature = JSON.stringify(received);
@@ -1706,7 +1718,7 @@ async function loadLeaderboard() {
   }
 }
 
-/* ---------- Kosten: alles alle 1 Sekunde aktualisieren ---------- */
+/* ---------- Kosten: alles alle 3 Sekunden aktualisieren ---------- */
 // Läuft unabhängig davon, welche Unteransicht gerade sichtbar ist (gleiches
 // Prinzip wie beim Einkaufslisten-Polling) — so ist z. B. sofort sichtbar,
 // wenn jemand anderes eine Zahlung bestätigt, ohne dass neu eingeloggt werden muss.
@@ -1728,15 +1740,15 @@ document.addEventListener("DOMContentLoaded", () => {
     updateLeaderboardCountdown();
   }, 30000); // keine Sekundenanzeige mehr, reicht alle 30s
   loadShoppingList();
-  setInterval(pollShoppingList, 1000);
+  setInterval(pollShoppingList, 3000);
   loadTasks();
-  setInterval(loadTasks, 1000);
+  setInterval(loadTasks, 3000);
   loadPackList();
-  setInterval(loadPackList, 1000);
+  setInterval(loadPackList, 5000);
   loadPlanList();
-  setInterval(loadPlanList, 1000);
+  setInterval(loadPlanList, 5000);
   loadTodayPlan();
-  setInterval(loadTodayPlan, 1000);
+  setInterval(loadTodayPlan, 5000);
   pollCostsViews();
-  setInterval(pollCostsViews, 1000);
+  setInterval(pollCostsViews, 3000);
 });

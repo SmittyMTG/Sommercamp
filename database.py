@@ -7,8 +7,21 @@ from datetime import datetime, date
 import uuid
 
 # SQLite DB
+# check_same_thread=False: Routen laufen als normale (sync) Handler in Starlettes
+# Threadpool, nicht mehr alle im einen Event-Loop-Thread — ohne dieses Flag
+# wirft sqlite3, sobald eine gepoolte Connection in einem anderen Thread als
+# ihrem Erstellungs-Thread wiederverwendet wird. Der SQLAlchemy-Pool serialisiert
+# den Zugriff pro Connection ohnehin (nie zwei Threads gleichzeitig), das ist der
+# offiziell empfohlene Weg für SQLite + FastAPI-Threadpool.
+# pool_size/max_overflow angehoben (Standard 5+10=15 war zu knapp fürs
+# Sekunden-Polling mehrerer gleichzeitiger Nutzer, siehe QueuePool-Timeouts im Log).
 DATABASE_URL = "sqlite:///./users.db"
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    pool_size=20,
+    max_overflow=20,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

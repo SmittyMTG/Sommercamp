@@ -82,6 +82,7 @@ class ExpenseCreate(BaseModel):
 
 class SettleRequest(BaseModel):
     to_id: int
+    amount: float | None = None
 
 
 class ConfirmReceivedRequest(BaseModel):
@@ -91,7 +92,7 @@ class ConfirmReceivedRequest(BaseModel):
 
 # --- Routes ---
 @app.get("/", name="index", response_class=HTMLResponse)
-async def home(request: Request):
+def home(request: Request):
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=303)
@@ -99,12 +100,12 @@ async def home(request: Request):
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
+def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 
 @app.post("/login")
-async def login_post(
+def login_post(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
@@ -117,7 +118,7 @@ async def login_post(
 
 
 @app.get("/logout")
-async def logout_route(response: Response):
+def logout_route(response: Response):
     logout(response)
     return RedirectResponse(url="/login", status_code=303)
 
@@ -125,7 +126,7 @@ async def logout_route(response: Response):
 # --- Einkaufsliste ---
 
 @app.get("/api/shopping")
-async def get_shopping_items(request: Request, db: Session = Depends(get_db)):
+def get_shopping_items(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -153,7 +154,7 @@ async def get_shopping_items(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/api/shopping")
-async def create_shopping_item(
+def create_shopping_item(
     request: Request, item: ShoppingItemCreate, db: Session = Depends(get_db)
 ):
     user = get_current_user(request)
@@ -185,7 +186,7 @@ async def create_shopping_item(
 
 
 @app.patch("/api/shopping/{item_id}")
-async def update_shopping_item(
+def update_shopping_item(
     item_id: int, request: Request, item: ShoppingItemCreate, db: Session = Depends(get_db)
 ):
     if not get_current_user(request):
@@ -221,7 +222,7 @@ async def update_shopping_item(
 # --- Woher-Quellen für die Einkaufsliste ---
 
 @app.get("/api/shopping-sources")
-async def list_shopping_sources(request: Request, db: Session = Depends(get_db)):
+def list_shopping_sources(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
@@ -230,7 +231,7 @@ async def list_shopping_sources(request: Request, db: Session = Depends(get_db))
 
 
 @app.post("/api/shopping-sources")
-async def create_shopping_source(
+def create_shopping_source(
     request: Request, payload: ShoppingSourceCreate, db: Session = Depends(get_db)
 ):
     if not get_current_user(request):
@@ -258,7 +259,7 @@ async def create_shopping_source(
 
 
 @app.patch("/api/shopping/{item_id}/toggle")
-async def toggle_shopping_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+def toggle_shopping_item(item_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -273,7 +274,7 @@ async def toggle_shopping_item(item_id: int, request: Request, db: Session = Dep
 
 
 @app.delete("/api/shopping/{item_id}")
-async def delete_shopping_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+def delete_shopping_item(item_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request)
     if not user:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -329,7 +330,7 @@ def _serialize_task(task: Task, assignee_ids: list[int], usernames: dict[int, st
 
 
 @app.get("/api/tasks")
-async def list_tasks(request: Request, db: Session = Depends(get_db)):
+def list_tasks(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
@@ -344,7 +345,7 @@ async def list_tasks(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/api/tasks")
-async def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get_db)):
+def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -368,7 +369,7 @@ async def create_task(request: Request, payload: TaskCreate, db: Session = Depen
 
 
 @app.patch("/api/tasks/{task_id}")
-async def update_task(task_id: int, request: Request, payload: TaskCreate, db: Session = Depends(get_db)):
+def update_task(task_id: int, request: Request, payload: TaskCreate, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
@@ -394,7 +395,7 @@ async def update_task(task_id: int, request: Request, payload: TaskCreate, db: S
 
 
 @app.patch("/api/tasks/{task_id}/toggle")
-async def toggle_task(task_id: int, request: Request, db: Session = Depends(get_db)):
+def toggle_task(task_id: int, request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
@@ -408,7 +409,7 @@ async def toggle_task(task_id: int, request: Request, db: Session = Depends(get_
 
 
 @app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
+def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
@@ -423,7 +424,7 @@ async def delete_task(task_id: int, request: Request, db: Session = Depends(get_
 # --- Packliste (privat pro User) ---
 
 @app.get("/api/pack")
-async def get_pack_items(request: Request, db: Session = Depends(get_db)):
+def get_pack_items(request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -438,7 +439,7 @@ async def get_pack_items(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/api/pack")
-async def create_pack_item(
+def create_pack_item(
     request: Request, item: PackItemCreate, db: Session = Depends(get_db)
 ):
     username = get_current_user(request)
@@ -458,7 +459,7 @@ async def create_pack_item(
 
 
 @app.patch("/api/pack/{item_id}")
-async def update_pack_item(
+def update_pack_item(
     item_id: int, request: Request, item: PackItemCreate, db: Session = Depends(get_db)
 ):
     username = get_current_user(request)
@@ -483,7 +484,7 @@ async def update_pack_item(
 
 
 @app.patch("/api/pack/{item_id}/toggle")
-async def toggle_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+def toggle_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -504,7 +505,7 @@ async def toggle_pack_item(item_id: int, request: Request, db: Session = Depends
 
 
 @app.delete("/api/pack/{item_id}")
-async def delete_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
+def delete_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -558,7 +559,7 @@ def _validate_plan_payload(payload: PlanEventCreate):
 
 
 @app.get("/api/plan")
-async def list_plan_events(request: Request, db: Session = Depends(get_db)):
+def list_plan_events(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
@@ -577,7 +578,7 @@ async def list_plan_events(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/api/plan")
-async def create_plan_event(
+def create_plan_event(
     request: Request, payload: PlanEventCreate, db: Session = Depends(get_db)
 ):
     username = get_current_user(request)
@@ -614,7 +615,7 @@ async def create_plan_event(
 
 
 @app.patch("/api/plan/{event_id}")
-async def update_plan_event(
+def update_plan_event(
     event_id: int, request: Request, payload: PlanEventCreate, db: Session = Depends(get_db)
 ):
     username = get_current_user(request)
@@ -650,7 +651,7 @@ async def update_plan_event(
 
 
 @app.delete("/api/plan/{event_id}")
-async def delete_plan_event(event_id: int, request: Request, db: Session = Depends(get_db)):
+def delete_plan_event(event_id: int, request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -667,7 +668,7 @@ async def delete_plan_event(event_id: int, request: Request, db: Session = Depen
 # --- User-Übersicht (für die Auswahl in der Ausgaben-Maske) ---
 
 @app.get("/api/me")
-async def get_me(request: Request, db: Session = Depends(get_db)):
+def get_me(request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -679,7 +680,7 @@ async def get_me(request: Request, db: Session = Depends(get_db)):
 
 
 @app.get("/api/users")
-async def list_users(request: Request, db: Session = Depends(get_db)):
+def list_users(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
@@ -690,7 +691,7 @@ async def list_users(request: Request, db: Session = Depends(get_db)):
 # --- Kosten & Schulden ---
 
 @app.get("/api/expenses")
-async def list_expenses(request: Request, db: Session = Depends(get_db)):
+def list_expenses(request: Request, db: Session = Depends(get_db)):
     if not get_current_user(request):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
@@ -722,7 +723,7 @@ async def list_expenses(request: Request, db: Session = Depends(get_db)):
 
 
 @app.get("/api/expenses/balance")
-async def get_expense_balance(request: Request, db: Session = Depends(get_db)):
+def get_expense_balance(request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -801,7 +802,7 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
 
 
 @app.post("/api/expenses")
-async def create_expense(
+def create_expense(
     request: Request, payload: ExpenseCreate, db: Session = Depends(get_db)
 ):
     if not get_current_user(request):
@@ -831,7 +832,7 @@ async def create_expense(
 
 
 @app.post("/api/expenses/reset")
-async def reset_expenses(request: Request, db: Session = Depends(get_db)):
+def reset_expenses(request: Request, db: Session = Depends(get_db)):
     """Löscht ALLE Zeilen der ausgaben-Tabelle (Ausgaben, Salden-Historie UND
     Tilgungseinträge) für ALLE Camper unwiderruflich. Nur für Admins, zusätzlich
     im Frontend mit einer Tipp-zum-Bestätigen-Sperre abgesichert."""
@@ -847,7 +848,7 @@ async def reset_expenses(request: Request, db: Session = Depends(get_db)):
 
 
 @app.patch("/api/expenses/batch/{batch_id}")
-async def update_expense_batch(
+def update_expense_batch(
     batch_id: str, request: Request, payload: ExpenseCreate, db: Session = Depends(get_db)
 ):
     username = get_current_user(request)
@@ -888,7 +889,7 @@ async def update_expense_batch(
 
 
 @app.delete("/api/expenses/batch/{batch_id}")
-async def delete_expense_batch(batch_id: str, request: Request, db: Session = Depends(get_db)):
+def delete_expense_batch(batch_id: str, request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
@@ -953,7 +954,7 @@ def _compute_min_settlements(net: dict[int, float]) -> list[tuple[int, int, floa
 
 
 @app.get("/api/expenses/open")
-async def get_open_settlements(request: Request, db: Session = Depends(get_db)):
+def get_open_settlements(request: Request, db: Session = Depends(get_db)):
     """
     Schlägt die minimale Anzahl an Überweisungen vor, um alle offenen Schulden
     auszugleichen (Greedy-Minimierung über alle Netto-Salden, siehe
@@ -1016,7 +1017,7 @@ async def get_open_settlements(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/api/expenses/settle")
-async def settle_expenses(
+def settle_expenses(
     request: Request, payload: SettleRequest, db: Session = Depends(get_db)
 ):
     """
@@ -1028,10 +1029,13 @@ async def settle_expenses(
     bis dahin bleibt der offene Betrag sichtbar, nur als "wartend" markiert (siehe
     /api/expenses/open), damit man parallel an mehrere Personen etwas schicken kann.
 
-    Der Betrag wird über dieselbe Minimierungs-Berechnung wie /api/expenses/open
-    ermittelt (nicht aus der direkten Historie zwischen den beiden), damit auch
-    global optimierte Zahlungsvorschläge bestätigt werden können, die keine
-    direkte gemeinsame Ausgabe haben.
+    Der maximal mögliche Betrag wird über dieselbe Minimierungs-Berechnung wie
+    /api/expenses/open ermittelt (nicht aus der direkten Historie zwischen den
+    beiden), damit auch global optimierte Zahlungsvorschläge bestätigt werden
+    können, die keine direkte gemeinsame Ausgabe haben. payload.amount ist
+    optional und erlaubt Teilzahlungen bis zu diesem Maximum — der Rest bleibt
+    offen und fließt beim nächsten Abruf ganz normal wieder in die
+    Netto-Saldo-Berechnung ein.
     """
     username = get_current_user(request)
     if not username:
@@ -1067,21 +1071,34 @@ async def settle_expenses(
             content={"error": "Diese Zahlung ist aktuell nicht mehr offen — bitte Ansicht neu laden"},
         )
 
+    # Teilzahlungen: amount ist optional, Default = kompletter offener Betrag
+    # (bisheriges Verhalten). Der Rest bleibt einfach offen und taucht beim
+    # nächsten Abruf von /api/expenses/open wieder auf, da er weiterhin in die
+    # Netto-Saldo-Berechnung einfließt — keine Änderung an der Verrechnung nötig.
+    amount = round(payload.amount, 2) if payload.amount is not None else match
+    if amount <= 0:
+        return JSONResponse(status_code=400, content={"error": "Betrag muss positiv sein"})
+    if amount > match + 0.005:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Betrag darf die offenen {match:.2f} € nicht übersteigen".replace(".", ",")},
+        )
+
     tilgung = Ausgabe(
         glaubiger_id=me.id,
         schuldner_id=creditor.id,
-        cash=match,
+        cash=amount,
         betreff=f"Tilgung an {creditor.username}",
         datum=date.today(),
         status="pending",
     )
     db.add(tilgung)
     db.commit()
-    return {"created": True, "amount": match, "to": creditor.username}
+    return {"created": True, "amount": amount, "to": creditor.username}
 
 
 @app.get("/api/expenses/received")
-async def get_pending_received(request: Request, db: Session = Depends(get_db)):
+def get_pending_received(request: Request, db: Session = Depends(get_db)):
     """Zahlungen, die laut Schuldner bereits unterwegs sind und auf Bestätigung
     des Empfängers (dem eingeloggten User) warten."""
     username = get_current_user(request)
@@ -1112,7 +1129,7 @@ async def get_pending_received(request: Request, db: Session = Depends(get_db)):
 
 
 @app.post("/api/expenses/settle/confirm")
-async def confirm_received_payment(
+def confirm_received_payment(
     request: Request, payload: ConfirmReceivedRequest, db: Session = Depends(get_db)
 ):
     """Schritt 2: der Gläubiger tippt den erhaltenen Betrag selbst ein. Nur bei
@@ -1148,7 +1165,7 @@ async def confirm_received_payment(
 
 
 @app.get("/api/expenses/leaderboard")
-async def get_expense_leaderboard(request: Request, db: Session = Depends(get_db)):
+def get_expense_leaderboard(request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
