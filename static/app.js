@@ -38,6 +38,8 @@ function initNavigation() {
 }
 
 /* ---------- Countdown ---------- */
+// Zählt bis zum Camp-Ende runter (nicht mehr bis zum Start) — die Fortschrittsleiste
+// zeigt entsprechend, wie viel vom Zeitraum Start–Ende bereits vergangen ist.
 function updateCountdown() {
   const el = document.getElementById("countdown");
   const progressEl = document.getElementById("countdownProgress");
@@ -45,19 +47,13 @@ function updateCountdown() {
 
   const now = new Date();
 
-  if (now >= CAMP_START && now <= CAMP_END) {
-    el.innerHTML = `Läuft <small>gerade</small>`;
-    if (progressEl) progressEl.style.width = "100%";
-    return;
-  }
-
   if (now > CAMP_END) {
     el.innerHTML = `Vorbei <small>🏕️</small>`;
     if (progressEl) progressEl.style.width = "100%";
     return;
   }
 
-  const diffMs = CAMP_START - now;
+  const diffMs = CAMP_END - now;
   const days = Math.floor(diffMs / 86400000);
   const hours = Math.floor((diffMs % 86400000) / 3600000);
   const minutes = Math.floor((diffMs % 3600000) / 60000);
@@ -65,10 +61,9 @@ function updateCountdown() {
   el.innerHTML = `${days} <small>T</small> ${hours} <small>Std</small> ${minutes} <small>Min</small>`;
 
   if (progressEl) {
-    // Fortschritt seit "heute - 60 Tage" als grobe Annäherung, rein optisch
-    const windowMs = 60 * 86400000;
-    const elapsed = Math.max(0, windowMs - diffMs);
-    const pct = Math.min(100, Math.round((elapsed / windowMs) * 100));
+    const totalMs = CAMP_END - CAMP_START;
+    const elapsed = Math.max(0, now - CAMP_START);
+    const pct = Math.min(100, Math.max(0, Math.round((elapsed / totalMs) * 100)));
     progressEl.style.width = `${pct}%`;
   }
 }
@@ -602,6 +597,56 @@ async function renderFilteredSortedTasks() {
     taskListEl.innerHTML = `<div class="empty-state"><p>Keine Aufgaben.</p></div>`;
   } else {
     sorted.forEach((t) => taskListEl.appendChild(renderTaskItem(t)));
+  }
+
+  renderMyOpenTasks(me);
+}
+
+/* ---------- Dashboard: "Deine Aufgaben"-Vorschau auf der Startseite ---------- */
+const myOpenTasksEl = document.getElementById("myOpenTasks");
+
+function renderMyOpenTaskCard(task) {
+  const card = document.createElement("div");
+  card.className = "list-card clickable";
+
+  const overdue = isTaskOverdue(task);
+  let metaHtml = "";
+  if (task.deadline) {
+    const label = `📅 ${formatDeadline(task.deadline)}`;
+    metaHtml = `<p class="list-card-meta">${overdue ? `<span class="danger">⚠️ ${label}</span>` : label}</p>`;
+  }
+
+  card.innerHTML = `
+    <div class="list-card-text">
+      <p class="list-card-title">${escapeHtml(task.titel)}</p>
+      ${metaHtml}
+    </div>
+  `;
+  card.addEventListener("click", () => goToScreen("more"));
+  return card;
+}
+
+// Nur eigene, noch offene Aufgaben — nächste Deadline zuerst, damit heute
+// fällige/überfällige Sachen ganz oben stehen. Läuft am Task-Polling mit,
+// braucht also keinen eigenen Fetch.
+function renderMyOpenTasks(me) {
+  if (!myOpenTasksEl) return;
+
+  const mine = lastTaskItems
+    .filter((t) => !t.done && me && t.assignees.some((a) => a.id === me.id))
+    .sort((a, b) => {
+      if (!a.deadline && !b.deadline) return 0;
+      if (!a.deadline) return 1;
+      if (!b.deadline) return -1;
+      return new Date(a.deadline) - new Date(b.deadline);
+    })
+    .slice(0, 4);
+
+  myOpenTasksEl.innerHTML = "";
+  if (mine.length === 0) {
+    myOpenTasksEl.innerHTML = `<div class="empty-state"><p>Keine offenen Aufgaben für dich.</p></div>`;
+  } else {
+    mine.forEach((t) => myOpenTasksEl.appendChild(renderMyOpenTaskCard(t)));
   }
 }
 
