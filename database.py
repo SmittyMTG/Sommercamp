@@ -37,6 +37,17 @@ class User(Base):
     role = Column(String)
 
 
+# Sessions in der DB statt nur im Prozessspeicher (siehe auth.py) — sonst wirft
+# jeder Server-Neustart (Deploy, Crash) ALLE eingeloggten Geräte gleichzeitig
+# raus, weil ein reines In-Memory-Dict den Neustart nicht übersteht.
+class UserSession(Base):
+    __tablename__ = "sessions"
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(64), unique=True, nullable=False, index=True)
+    username = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # Woher-Tag für Einkaufslisten-Items: erweiterbare Liste aus Farbe + Kurzname
 # (z. B. "Rewe", "Aldi", "Bau"), wird direkt beim Anlegen eines Items mit erstellt.
 class ShoppingSource(Base):

@@ -78,6 +78,9 @@ class ExpenseCreate(BaseModel):
     cash: float
     betreff: str
     datum: str | None = None
+    # Optional: fixer Betrag für einzelne Personen (user_id -> Betrag). Wer hier
+    # nicht auftaucht, teilt sich den verbleibenden Rest gleichmäßig auf.
+    fixed_amounts: dict[int, float] = {}
 
 
 class SettleRequest(BaseModel):
@@ -118,8 +121,8 @@ def login_post(
 
 
 @app.get("/logout")
-def logout_route(response: Response):
-    logout(response)
+def logout_route(request: Request, response: Response):
+    logout(request, response)
     return RedirectResponse(url="/login", status_code=303)
 
 
@@ -766,8 +769,10 @@ def get_expense_balance(request: Request, db: Session = Depends(get_db)):
 
 def _validate_expense_payload(payload: ExpenseCreate, db: Session):
     """Validiert eine Ausgabe für Anlegen UND Bearbeiten. Gibt entweder ein Tupel
-    (glaubiger_id, beneficiary_ids, betreff, expense_date, share) oder eine
-    fertige JSONResponse mit Fehlermeldung zurück."""
+    (glaubiger_id, beneficiary_ids, betreff, expense_date, amounts) oder eine
+    fertige JSONResponse mit Fehlermeldung zurück. amounts ist eine dict[user_id,
+    Betrag] mit dem finalen Betrag pro Person: fixed_amounts wird 1:1 übernommen,
+    alle übrigen ausgewählten Personen teilen sich den Rest gleichmäßig auf."""
     betreff = payload.betreff.strip()
     if not betreff:
         return JSONResponse(status_code=400, content={"error": "Betreff darf nicht leer sein"})
@@ -794,11 +799,38 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
     else:
         expense_date = date.today()
 
+    fixed = {uid: round(amt, 2) for uid, amt in (payload.fixed_amounts or {}).items()}
+    if set(fixed) - set(beneficiary_ids):
+        return JSONResponse(
+            status_code=400, content={"error": "Fixierter Betrag für nicht ausgewählte Person"}
+        )
+    if any(amt <= 0 for amt in fixed.values()):
+        return JSONResponse(status_code=400, content={"error": "Fixierte Beträge müssen positiv sein"})
+
+    fixed_total = round(sum(fixed.values()), 2)
+    if fixed_total > payload.cash + 0.005:
+        return JSONResponse(
+            status_code=400, content={"error": "Fixierte Beträge übersteigen den Gesamtbetrag"}
+        )
+
+    remaining_ids = [uid for uid in beneficiary_ids if uid not in fixed]
+    remaining_total = round(payload.cash - fixed_total, 2)
+    if not remaining_ids and remaining_total > 0.005:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Die fixierten Beträge ergeben nicht den Gesamtbetrag — bitte Rest zuweisen"},
+        )
+
     # Ein Eintrag pro ausgewählter Person, auch für den Zahler selbst (z. B. eigener
     # Snackkauf ohne Beteiligte). schuldner_id == glaubiger_id ist keine echte Schuld,
     # zählt aber fürs Leaderboard mit und wird in Saldo/Offene-Zahlungen ausgeblendet.
-    share = round(payload.cash / len(beneficiary_ids), 2)
-    return payload.glaubiger_id, beneficiary_ids, betreff, expense_date, share
+    amounts = dict(fixed)
+    if remaining_ids:
+        share = round(remaining_total / len(remaining_ids), 2)
+        for uid in remaining_ids:
+            amounts[uid] = share
+
+    return payload.glaubiger_id, beneficiary_ids, betreff, expense_date, amounts
 
 
 @app.post("/api/expenses")
@@ -811,7 +843,7 @@ def create_expense(
     validated = _validate_expense_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    glaubiger_id, beneficiary_ids, betreff, expense_date, share = validated
+    glaubiger_id, beneficiary_ids, betreff, expense_date, amounts = validated
 
     batch_id = uuid.uuid4().hex
     created = []
@@ -819,7 +851,7 @@ def create_expense(
         row = Ausgabe(
             glaubiger_id=glaubiger_id,
             schuldner_id=uid,
-            cash=share,
+            cash=amounts[uid],
             betreff=betreff,
             datum=expense_date,
             batch_id=batch_id,
@@ -828,7 +860,7 @@ def create_expense(
         created.append(row)
     db.commit()
 
-    return {"created": len(created), "share": share, "betreff": betreff, "batch_id": batch_id}
+    return {"created": len(created), "amounts": amounts, "betreff": betreff, "batch_id": batch_id}
 
 
 @app.post("/api/expenses/reset")
@@ -866,7 +898,7 @@ def update_expense_batch(
     validated = _validate_expense_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    glaubiger_id, beneficiary_ids, betreff, expense_date, share = validated
+    glaubiger_id, beneficiary_ids, betreff, expense_date, amounts = validated
 
     # Alte Zeilen des Vorgangs ersetzen statt anzupassen — einfacher und robuster
     # als ein Zeilen-für-Zeilen-Diff, gleiche batch_id bleibt für Kontinuität erhalten.
@@ -877,7 +909,7 @@ def update_expense_batch(
             Ausgabe(
                 glaubiger_id=glaubiger_id,
                 schuldner_id=uid,
-                cash=share,
+                cash=amounts[uid],
                 betreff=betreff,
                 datum=expense_date,
                 batch_id=batch_id,
@@ -885,7 +917,7 @@ def update_expense_batch(
         )
     db.commit()
 
-    return {"batch_id": batch_id, "created": len(beneficiary_ids), "share": share, "betreff": betreff}
+    return {"batch_id": batch_id, "created": len(beneficiary_ids), "amounts": amounts, "betreff": betreff}
 
 
 @app.delete("/api/expenses/batch/{batch_id}")

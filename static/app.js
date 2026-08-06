@@ -3,9 +3,22 @@
 // Screen-Navigation + Countdown. Datenanbindung folgt später.
 // ===========================================================
 
-const CAMP_START = new Date("2026-08-04T00:00:00");
+const CAMP_START = new Date("2026-08-05T06:00:00");
 const CAMP_END = new Date("2026-08-16T23:59:59");
 const PARTY_TIME = new Date("2026-08-15T17:00:00"); // Abschlussfeier — Leaderboard schaltet dann frei
+
+// Zentrale 401-Behandlung für ALLE fetch()-Aufrufe in dieser Datei: sobald die
+// Session ungültig ist (abgelaufenes Cookie, Logout auf einem anderen Gerät),
+// sofort zum Login weiterleiten — statt dass Listen im Hintergrund still
+// fehlschlagen und man erst durch manuelles Neuladen merkt, dass man raus ist.
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const res = await nativeFetch(...args);
+  if (res.status === 401 && !window.location.pathname.startsWith("/login")) {
+    window.location.href = "/login";
+  }
+  return res;
+};
 
 // Ganz oben deklariert (nicht erst im Kosten-Abschnitt), damit fetchUsersAndMe()
 // von JEDER Stelle im Skript aus sicher aufgerufen werden kann, auch von Code,
@@ -1276,6 +1289,59 @@ function renderExpenseGroup(group, isAdmin) {
   return card;
 }
 
+/* ---------- Kosten: Ausgaben nach Person filtern ---------- */
+const expenseFilterSelect = document.getElementById("expenseFilterSelect");
+let lastExpenses = [];
+let lastExpensesIsAdmin = false;
+let lastExpensesMeId = null;
+let expenseFilterUserId = null; // null = alle Personen, "mine_paid" = nur eigene Zahlungen
+let expenseFilterOptionsPopulated = false;
+
+async function populateExpenseFilterOptions() {
+  if (expenseFilterOptionsPopulated || !expenseFilterSelect) return;
+  const { users } = await fetchUsersAndMe();
+  users
+    .slice()
+    .sort((a, b) => a.username.localeCompare(b.username, "de"))
+    .forEach((u) => {
+      const opt = document.createElement("option");
+      opt.value = u.id;
+      opt.textContent = u.username;
+      expenseFilterSelect.appendChild(opt);
+    });
+  expenseFilterOptionsPopulated = true;
+}
+
+if (expenseFilterSelect) {
+  populateExpenseFilterOptions();
+  expenseFilterSelect.addEventListener("change", () => {
+    const val = expenseFilterSelect.value;
+    expenseFilterUserId = val === "" ? null : val === "mine_paid" ? "mine_paid" : parseInt(val, 10);
+    renderExpenseList();
+  });
+}
+
+// Zeigt nur Ausgaben-Vorgänge, an denen die gewählte Person als Zahler ODER
+// als Beteiligter (auch bei sich selbst) beteiligt war. "mine_paid" ist enger:
+// nur Vorgänge, die man selbst tatsächlich bezahlt hat (zum Nachrechnen).
+function renderExpenseList() {
+  if (!expenseListEl) return;
+  const groups = groupExpenses(lastExpenses).filter((g) => {
+    if (expenseFilterUserId === null) return true;
+    if (expenseFilterUserId === "mine_paid") return g.glaubigerId === lastExpensesMeId;
+    return g.glaubigerId === expenseFilterUserId || g.beneficiaryIds.has(expenseFilterUserId);
+  });
+
+  expenseListEl.innerHTML = "";
+  if (groups.length === 0) {
+    expenseListEl.innerHTML = `<div class="empty"><p>${
+      lastExpenses.length === 0 ? "Noch keine Einträge." : "Keine Ausgaben für diese Auswahl."
+    }</p></div>`;
+  } else {
+    groups.forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, lastExpensesIsAdmin)));
+  }
+}
+
 let lastExpensesSignature = null;
 
 async function loadExpenses() {
@@ -1290,16 +1356,13 @@ async function loadExpenses() {
     const signature = JSON.stringify(expenses);
     if (signature === lastExpensesSignature) return;
     lastExpensesSignature = signature;
+    lastExpenses = expenses;
 
     const { me } = await fetchUsersAndMe();
-    const isAdmin = !!me && isAdminRole(me.role);
+    lastExpensesIsAdmin = !!me && isAdminRole(me.role);
+    lastExpensesMeId = me ? me.id : null;
 
-    expenseListEl.innerHTML = "";
-    if (expenses.length === 0) {
-      expenseListEl.innerHTML = `<div class="empty"><p>Noch keine Einträge.</p></div>`;
-    } else {
-      groupExpenses(expenses).forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, isAdmin)));
-    }
+    renderExpenseList();
   } catch (err) {
     expenseListEl.innerHTML = `<div class="empty"><p>Ausgaben konnten nicht geladen werden.</p></div>`;
   }
@@ -1361,7 +1424,7 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
   const beneficiaryOptions = users
     .map((u) => {
       const checked = beneficiaryIds ? beneficiaryIds.has(u.id) : true;
-      return `<label class="check-card"><input type="checkbox" value="${u.id}"${checked ? " checked" : ""}>${escapeHtml(u.username)}</label>`;
+      return `<label class="check-card"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}>${escapeHtml(u.username)}</label>`;
     })
     .join("");
 
@@ -1372,11 +1435,20 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
       </label>
       <div class="checkbox-group">
         <div class="eyebrow">Für wen?</div>
+        <div class="action-row">
+          <button type="button" id="expensePresetAll" class="secondary compact">Für Allgemeinheit</button>
+          <button type="button" id="expensePresetMe" class="secondary compact">Nur für mich</button>
+        </div>
         <div id="expenseBeneficiaries" class="checkbox-grid">${beneficiaryOptions}</div>
       </div>
       <label>Betrag gesamt (€)
         <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" placeholder="z. B. 24.50" required>
       </label>
+      <div class="checkbox-group">
+        <div class="eyebrow">Individuelle Beträge (optional)</div>
+        <div id="expenseFixedAmounts" class="stack"></div>
+        <p id="expenseSplitHint" class="muted"></p>
+      </div>
       <label>Betreff
         <input type="text" id="expenseBetreffInput" maxlength="40" value="${escapeHtml(prefill.betreff || "")}" placeholder="z. B. Rewe Grillkäse" required>
       </label>
@@ -1387,17 +1459,120 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
   `;
 }
 
+// Baut pro aktuell ausgewählter Person eine Zeile mit optionalem Festbetrag.
+// Wer keinen Wert einträgt, teilt sich später den Rest gleichmäßig auf (siehe
+// updateExpenseSplitHint). Bereits eingetragene Werte bleiben beim Umschalten
+// der Checkboxen erhalten, solange die Person weiterhin ausgewählt ist.
+function renderExpenseFixedAmountInputs(users, entryAmounts) {
+  const container = document.getElementById("expenseFixedAmounts");
+  if (!container) return;
+
+  const checkedIds = Array.from(
+    document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox:checked")
+  ).map((el) => parseInt(el.value, 10));
+
+  const existingValues = {};
+  container.querySelectorAll(".expense-fixed-input").forEach((el) => {
+    if (el.value) existingValues[parseInt(el.dataset.uid, 10)] = el.value;
+  });
+
+  const byId = new Map(users.map((u) => [u.id, u]));
+  container.innerHTML = checkedIds
+    .map((uid) => {
+      const u = byId.get(uid);
+      if (!u) return "";
+      const prefillValue =
+        existingValues[uid] ?? (entryAmounts[uid] != null ? entryAmounts[uid].toFixed(2) : "");
+      return `
+        <div class="fixed-amount-row">
+          <span>${escapeHtml(u.username)}</span>
+          <input type="number" step="0.01" min="0.01" inputmode="decimal" class="expense-fixed-input" data-uid="${uid}" placeholder="auto" value="${prefillValue}">
+        </div>
+      `;
+    })
+    .join("");
+
+  container.querySelectorAll(".expense-fixed-input").forEach((el) => {
+    el.addEventListener("input", updateExpenseSplitHint);
+  });
+
+  updateExpenseSplitHint();
+}
+
+function updateExpenseSplitHint() {
+  const hintEl = document.getElementById("expenseSplitHint");
+  if (!hintEl) return;
+
+  const fixedInputs = Array.from(document.querySelectorAll(".expense-fixed-input"));
+  hintEl.classList.remove("error-text");
+
+  if (fixedInputs.length === 0) {
+    hintEl.textContent = "";
+    return;
+  }
+
+  const cash = parseFloat(document.getElementById("expenseCashInput").value) || 0;
+  const fixedTotal = fixedInputs.reduce((sum, el) => sum + (parseFloat(el.value) || 0), 0);
+  const openCount = fixedInputs.filter((el) => !el.value).length;
+  const remaining = Math.round((cash - fixedTotal) * 100) / 100;
+
+  if (remaining < -0.005) {
+    hintEl.textContent = `Fixierte Beträge übersteigen den Gesamtbetrag um ${formatEuro(-remaining)}.`;
+    hintEl.classList.add("error-text");
+  } else if (openCount === 0) {
+    hintEl.textContent =
+      remaining > 0.005
+        ? `Rest von ${formatEuro(remaining)} ist niemandem zugewiesen.`
+        : "Alle Beträge sind fest zugewiesen.";
+  } else {
+    hintEl.textContent = `Rest: ${formatEuro(remaining)} auf ${openCount} Person${openCount === 1 ? "" : "en"} à ${formatEuro(remaining / openCount)}.`;
+  }
+}
+
+// Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten Felder im DOM).
+function wireExpenseForm(users, me, entryAmounts) {
+  renderExpenseFixedAmountInputs(users, entryAmounts);
+
+  const checkboxes = () => document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox");
+  checkboxes().forEach((cb) => {
+    cb.addEventListener("change", () => renderExpenseFixedAmountInputs(users, entryAmounts));
+  });
+
+  document.getElementById("expenseCashInput").addEventListener("input", updateExpenseSplitHint);
+
+  const presetAll = document.getElementById("expensePresetAll");
+  const presetMe = document.getElementById("expensePresetMe");
+  if (presetAll) {
+    presetAll.addEventListener("click", () => {
+      checkboxes().forEach((cb) => (cb.checked = true));
+      renderExpenseFixedAmountInputs(users, entryAmounts);
+    });
+  }
+  if (presetMe && me) {
+    presetMe.addEventListener("click", () => {
+      checkboxes().forEach((cb) => (cb.checked = parseInt(cb.value, 10) === me.id));
+      renderExpenseFixedAmountInputs(users, entryAmounts);
+    });
+  }
+}
+
 function readExpenseForm() {
   const glaubiger_id = parseInt(document.getElementById("expensePayerSelect").value, 10);
   const schuldner_ids = Array.from(
-    document.querySelectorAll("#expenseBeneficiaries input[type=checkbox]:checked")
+    document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox:checked")
   ).map((el) => parseInt(el.value, 10));
   const cash = parseFloat(document.getElementById("expenseCashInput").value);
   const betreff = document.getElementById("expenseBetreffInput").value.trim();
   const datum = document.getElementById("expenseDatumInput").value;
 
+  const fixed_amounts = {};
+  document.querySelectorAll(".expense-fixed-input").forEach((el) => {
+    const val = parseFloat(el.value);
+    if (el.value && val > 0) fixed_amounts[el.dataset.uid] = val;
+  });
+
   if (!betreff || !cash || cash <= 0 || schuldner_ids.length === 0) return null;
-  return { glaubiger_id, schuldner_ids, cash, betreff, datum };
+  return { glaubiger_id, schuldner_ids, cash, betreff, datum, fixed_amounts };
 }
 
 async function openAddExpenseModal() {
@@ -1426,6 +1601,8 @@ async function openAddExpenseModal() {
       }
     },
   });
+
+  wireExpenseForm(users, me, {});
 }
 
 async function openEditExpenseModal(group) {
@@ -1460,6 +1637,14 @@ async function openEditExpenseModal(group) {
       }
     },
   });
+
+  // Bestehende Beträge vorausfüllen, damit ein unveränderter Save die aktuelle
+  // (ggf. individuelle) Aufteilung nicht stillschweigend auf Gleichverteilung zurücksetzt.
+  const entryAmounts = {};
+  group.entries.forEach((e) => {
+    entryAmounts[e.schuldner_id] = e.cash;
+  });
+  wireExpenseForm(users, me, entryAmounts);
 }
 
 const addExpenseButton = document.getElementById("addExpenseButton");
