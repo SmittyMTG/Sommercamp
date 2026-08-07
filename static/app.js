@@ -688,6 +688,99 @@ async function renderFilteredSortedTasks() {
   }
 
   renderMyOpenTasks(me);
+  renderTaskStats();
+}
+
+/* ---------- Aufgaben-Statistik ---------- */
+// Baut eine Zeile pro Eintrag (Label, Balken, Anzahl) — für die Kategorie- und
+// Personen-Aufschlüsselung der offenen Aufgaben. Ein Balken pro Zeile, die
+// Länge ist relativ zum größten Wert (magnitude, eine Farbe).
+function renderTaskStatBars(container, entries, emptyText) {
+  if (!container) return;
+  if (entries.length === 0) {
+    container.innerHTML = `<p class="muted">${emptyText}</p>`;
+    return;
+  }
+  const max = Math.max(...entries.map((e) => e.count));
+  container.innerHTML = entries
+    .map(
+      (e) => `
+        <div class="task-stat-row">
+          <span class="task-stat-label">${escapeHtml(e.label)}</span>
+          <div class="task-stat-track"><div class="task-stat-fill" style="width:${Math.max(6, (e.count / max) * 100)}%"></div></div>
+          <span class="task-stat-count">${e.count}</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderTaskStats() {
+  const headlineEl = document.getElementById("taskStatsHeadline");
+  const barEl = document.getElementById("taskStatsBar");
+  const legendEl = document.getElementById("taskStatsLegend");
+  const byCategoryEl = document.getElementById("taskStatsByCategory");
+  const byPersonEl = document.getElementById("taskStatsByPerson");
+  if (!headlineEl) return;
+
+  const total = lastTaskItems.length;
+  const done = lastTaskItems.filter((t) => t.done).length;
+  const openItems = lastTaskItems.filter((t) => !t.done);
+  const overdue = openItems.filter((t) => isTaskOverdue(t)).length;
+  const openNotOverdue = openItems.length - overdue;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  headlineEl.textContent = total ? `${done} von ${total} (${pct}%)` : "–";
+
+  if (total === 0) {
+    barEl.innerHTML = "";
+    legendEl.innerHTML = `<p class="muted">Noch keine Aufgaben angelegt.</p>`;
+  } else {
+    const segments = [
+      ["done", done],
+      ["open", openNotOverdue],
+      ["overdue", overdue],
+    ].filter(([, count]) => count > 0);
+    barEl.innerHTML = segments
+      .map(([cls, count]) => `<span class="task-stats-seg task-stats-seg--${cls}" style="flex:${count}"></span>`)
+      .join("");
+    legendEl.innerHTML = `
+      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--done"></span>✓ Erledigt (${done})</span>
+      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--open"></span>Offen (${openNotOverdue})</span>
+      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--overdue"></span>⚠️ Überfällig (${overdue})</span>
+    `;
+  }
+
+  // Nur offene Aufgaben — zeigt, wo aktuell noch was zu tun ist.
+  const categoryCounts = new Map();
+  let uncategorized = 0;
+  openItems.forEach((t) => {
+    if (t.category) {
+      categoryCounts.set(t.category.bezeichnung, (categoryCounts.get(t.category.bezeichnung) || 0) + 1);
+    } else {
+      uncategorized += 1;
+    }
+  });
+  const categoryEntries = Array.from(categoryCounts, ([label, count]) => ({ label, count })).sort(
+    (a, b) => b.count - a.count
+  );
+  if (uncategorized > 0) categoryEntries.push({ label: "Ohne Kategorie", count: uncategorized });
+  renderTaskStatBars(byCategoryEl, categoryEntries, "Keine offenen Aufgaben.");
+
+  const personCounts = new Map();
+  let forAll = 0;
+  openItems.forEach((t) => {
+    if (t.assignees.length) {
+      personCounts.set(t.assignees[0].username, (personCounts.get(t.assignees[0].username) || 0) + 1);
+    } else {
+      forAll += 1;
+    }
+  });
+  const personEntries = Array.from(personCounts, ([label, count]) => ({ label, count })).sort(
+    (a, b) => b.count - a.count
+  );
+  if (forAll > 0) personEntries.push({ label: "Für alle", count: forAll });
+  renderTaskStatBars(byPersonEl, personEntries, "Keine offenen Aufgaben.");
 }
 
 /* ---------- Dashboard: "Deine Aufgaben"-Vorschau auf der Startseite ---------- */
@@ -1347,11 +1440,12 @@ function renderExpenseGroup(group, isAdmin) {
   return card;
 }
 
-/* ---------- Kosten: Ausgaben nach Zahler filtern ---------- */
+/* ---------- Kosten: Ausgaben nach Person filtern ---------- */
 const expenseFilterSelect = document.getElementById("expenseFilterSelect");
 let lastExpenses = [];
 let lastExpensesIsAdmin = false;
-let expenseFilterUserId = null; // null = alle Personen
+let expenseFilterMode = null; // "von" | "fuer" | null (= alle)
+let expenseFilterUserId = null;
 let expenseFilterOptionsPopulated = false;
 
 async function populateExpenseFilterOptions() {
@@ -1361,10 +1455,17 @@ async function populateExpenseFilterOptions() {
     .slice()
     .sort((a, b) => a.username.localeCompare(b.username, "de"))
     .forEach((u) => {
-      const opt = document.createElement("option");
-      opt.value = u.id;
-      opt.textContent = me && u.id === me.id ? "Nur von dir bezahlt" : `Nur von ${u.username} bezahlt`;
-      expenseFilterSelect.appendChild(opt);
+      const isMe = !!me && u.id === me.id;
+
+      const vonOpt = document.createElement("option");
+      vonOpt.value = `von:${u.id}`;
+      vonOpt.textContent = isMe ? "Von dir" : `Von ${u.username}`;
+      expenseFilterSelect.appendChild(vonOpt);
+
+      const fuerOpt = document.createElement("option");
+      fuerOpt.value = `fuer:${u.id}`;
+      fuerOpt.textContent = isMe ? "Für dich" : `Für ${u.username}`;
+      expenseFilterSelect.appendChild(fuerOpt);
     });
   expenseFilterOptionsPopulated = true;
 }
@@ -1373,18 +1474,27 @@ if (expenseFilterSelect) {
   populateExpenseFilterOptions();
   expenseFilterSelect.addEventListener("change", () => {
     const val = expenseFilterSelect.value;
-    expenseFilterUserId = val ? parseInt(val, 10) : null;
+    if (!val) {
+      expenseFilterMode = null;
+      expenseFilterUserId = null;
+    } else {
+      const [mode, id] = val.split(":");
+      expenseFilterMode = mode;
+      expenseFilterUserId = parseInt(id, 10);
+    }
     renderExpenseList();
   });
 }
 
-// Zeigt nur Ausgaben-Vorgänge, die die gewählte Person tatsächlich bezahlt hat
-// (nicht nur "war beteiligt") — für jede Person einzeln zum Nachrechnen.
+// "Von X": X hat bezahlt (Zahler). "Für X": X war Beteiligter/Nutznießer
+// (auch bei sich selbst) — unabhängig davon, wer bezahlt hat.
 function renderExpenseList() {
   if (!expenseListEl) return;
-  const groups = groupExpenses(lastExpenses).filter(
-    (g) => expenseFilterUserId === null || g.glaubigerId === expenseFilterUserId
-  );
+  const groups = groupExpenses(lastExpenses).filter((g) => {
+    if (expenseFilterUserId === null) return true;
+    if (expenseFilterMode === "von") return g.glaubigerId === expenseFilterUserId;
+    return g.beneficiaryIds.has(expenseFilterUserId);
+  });
 
   expenseListEl.innerHTML = "";
   if (groups.length === 0) {
@@ -1703,63 +1813,6 @@ async function openEditExpenseModal(group) {
 const addExpenseButton = document.getElementById("addExpenseButton");
 if (addExpenseButton) addExpenseButton.addEventListener("click", openAddExpenseModal);
 
-/* ---------- Kosten: Reset (nur Admins) ---------- */
-const resetExpensesButton = document.getElementById("resetExpensesButton");
-
-function openResetExpensesModal() {
-  openModal({
-    eyebrow: "Kosten",
-    title: "Kostendatenbank wirklich zurücksetzen?",
-    submitLabel: "Alles löschen",
-    danger: true,
-    bodyHtml: `
-      <div class="form-stack">
-        <p class="muted warning-text">
-          Das löscht ALLE Ausgaben, Salden und die komplette Tilgungs-Historie für
-          ALLE Camper unwiderruflich. Das lässt sich nicht rückgängig machen.
-        </p>
-        <label>Tippe <strong>RESET</strong> zur Bestätigung
-          <input type="text" id="resetConfirmInput" placeholder="RESET" autocomplete="off">
-        </label>
-        <p class="error-text hidden reset-modal-error"></p>
-      </div>
-    `,
-    onSubmit: async () => {
-      const confirmInput = document.getElementById("resetConfirmInput");
-      const errEl = document.querySelector(".reset-modal-error");
-      errEl.classList.add("hidden");
-
-      if (confirmInput.value.trim().toUpperCase() !== "RESET") {
-        errEl.textContent = "Bitte RESET eintippen, um zu bestätigen.";
-        errEl.classList.remove("hidden");
-        return;
-      }
-
-      const res = await fetch("/api/expenses/reset", { method: "POST" });
-      if (res.ok) {
-        closeModal();
-        loadExpenses();
-        loadBalance();
-        loadOpenSettlements();
-        loadReceivedPayments();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        errEl.textContent = data.error || "Konnte nicht zurückgesetzt werden.";
-        errEl.classList.remove("hidden");
-      }
-    },
-  });
-}
-
-if (resetExpensesButton) {
-  resetExpensesButton.addEventListener("click", openResetExpensesModal);
-  // Button ist standardmäßig ausgeblendet (siehe index.html), damit er für
-  // Nicht-Admins nie kurz aufblitzt, bis die Rolle bekannt ist.
-  fetchUsersAndMe().then(({ me }) => {
-    if (me && isAdminRole(me.role)) resetExpensesButton.classList.remove("hidden");
-  });
-}
-
 /* ---------- Kosten: Ansicht wechseln ---------- */
 const costsViewRow = document.getElementById("costsViewRow");
 const costsViews = {
@@ -1979,6 +2032,25 @@ function pollCostsViews() {
   loadReceivedPayments();
 }
 
+/* ---------- Auto-Update: neuen Deploy selbstständig erkennen und neu laden ---------- */
+// Kein manuelles Aktualisieren mehr nötig: erkennt eine neue Version (Backend-
+// Neustart ODER geänderte app.js/style.css/index.html) und lädt automatisch
+// neu — aber nur, wenn gerade kein Formular offen ist, damit nichts Eingegebenes
+// verloren geht. Ist ein Modal offen, wird beim nächsten Tick erneut geprüft.
+async function checkAppVersion() {
+  if (!window.APP_VERSION) return;
+  try {
+    const res = await fetch("/api/version");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.version && data.version !== window.APP_VERSION && !modal.open) {
+      location.reload();
+    }
+  } catch (err) {
+    // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
+  }
+}
+
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
@@ -1998,4 +2070,5 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(loadTodayPlan, 5000);
   pollCostsViews();
   setInterval(pollCostsViews, 3000);
+  setInterval(checkAppVersion, 60000);
 });

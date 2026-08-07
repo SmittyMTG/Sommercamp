@@ -39,6 +39,24 @@ def static_version(filename: str) -> int:
     return int((STATIC_DIR / filename).stat().st_mtime)
 
 
+# Server-Start-Zeitpunkt: erfasst Backend-Deploys (main.py etc. ändern sich nur
+# durch einen Neustart des Prozesses), kombiniert mit den mtimes der Frontend-
+# Dateien (die OHNE Neustart wirksam werden) ergibt das die App-weite Version,
+# die das Frontend per /api/version abfragt, um sich bei einem neuen Deploy
+# selbstständig neu zu laden — siehe checkAppVersion() in app.js.
+SERVER_START_TIME = int(dt.now().timestamp())
+
+
+def app_version() -> str:
+    files = [STATIC_DIR / "app.js", STATIC_DIR / "style.css", BASE_DIR / "templates" / "index.html"]
+    parts = [str(int(f.stat().st_mtime)) for f in files if f.exists()]
+    parts.append(str(SERVER_START_TIME))
+    return "-".join(parts)
+
+
+templates.env.globals["app_version"] = app_version
+
+
 templates.env.globals["static_version"] = static_version
 
 
@@ -126,6 +144,14 @@ def login_post(
 def logout_route(request: Request, response: Response):
     logout(request, response)
     return RedirectResponse(url="/login", status_code=303)
+
+
+@app.get("/api/version")
+def get_app_version():
+    """Kein Login nötig — wird von jeder geöffneten Seite (auch /login) regelmäßig
+    abgefragt, damit die App einen neuen Deploy selbstständig erkennt und sich
+    neu lädt, statt dass man manuell aktualisieren muss."""
+    return {"version": app_version()}
 
 
 # --- Einkaufsliste ---
@@ -833,22 +859,6 @@ def create_expense(
     db.commit()
 
     return {"created": len(created), "amounts": amounts, "betreff": betreff, "batch_id": batch_id}
-
-
-@app.post("/api/expenses/reset")
-def reset_expenses(request: Request, db: Session = Depends(get_db)):
-    """Löscht ALLE Zeilen der ausgaben-Tabelle (Ausgaben, Salden-Historie UND
-    Tilgungseinträge) für ALLE Camper unwiderruflich. Nur für Admins, zusätzlich
-    im Frontend mit einer Tipp-zum-Bestätigen-Sperre abgesichert."""
-    username = get_current_user(request)
-    if not username:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    if not _require_admin(db, username):
-        return JSONResponse(status_code=403, content={"error": "Nur Admins können die Kostendatenbank zurücksetzen"})
-
-    deleted = db.query(Ausgabe).delete(synchronize_session=False)
-    db.commit()
-    return {"ok": True, "deleted": deleted}
 
 
 @app.patch("/api/expenses/batch/{batch_id}")

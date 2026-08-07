@@ -57,4 +57,28 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .modal-card{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:18px;max-height:88vh;overflow:auto}.modal-header,.modal-actions{display:flex;justify-content:space-between;gap:10px;align-items:center}.modal-header h2{margin:3px 0 0}.modal-actions{margin-top:16px}.modal-actions button{flex:1}
 .delete-dialog .modal-card{border-left:4px solid var(--red)}.delete-dialog .warning-text{color:var(--red);margin:12px 0;font-weight:700}
 .profile-line{display:flex;justify-content:space-between;gap:10px;align-items:center}.role{color:var(--yellow);font-weight:900}
+
+/* Aufgaben-Statistik */
+.task-stats{margin-bottom:16px}
+.task-stats-headline{display:flex;align-items:baseline;gap:8px;margin-bottom:12px}
+.task-stats-value{font-size:28px;font-weight:900}
+.task-stats-bar{display:flex;gap:2px;height:10px;border-radius:999px;overflow:hidden;background:var(--bg)}
+.task-stats-seg{display:block;flex-grow:1;flex-basis:0;min-width:2px}
+.task-stats-seg--done{background:var(--green)}
+.task-stats-seg--open{background:var(--muted)}
+.task-stats-seg--overdue{background:var(--red)}
+.task-stats-legend{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0 20px;font-size:12px;color:var(--muted)}
+.task-stats-legend-item{display:flex;align-items:center;gap:5px}
+.task-stats-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.task-stats-dot--done{background:var(--green)}
+.task-stats-dot--open{background:var(--muted)}
+.task-stats-dot--overdue{background:var(--red)}
+.task-stats-subhead{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}
+.task-stats-breakdown{display:grid;gap:8px}
+.task-stats-breakdown+.task-stats-subhead{margin-top:18px}
+.task-stat-row{display:grid;grid-template-columns:88px 1fr 24px;align-items:center;gap:8px;font-size:13px}
+.task-stat-label{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-stat-track{height:8px;border-radius:999px;background:var(--surface2);overflow:hidden}
+.task-stat-fill{height:100%;background:var(--yellow);border-radius:999px}
+.task-stat-count{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
 @media(min-width:650px){.summary-grid{grid-template-columns:repeat(4,1fr)}.quick-grid{grid-template-columns:repeat(4,1fr)}.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
