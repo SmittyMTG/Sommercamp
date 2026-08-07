@@ -68,21 +68,21 @@ class ShoppingItem(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Packliste: privat pro User — owner_username entscheidet, wer die Zeile sehen
-# und ändern darf. Anders als bei ShoppingItem.added_by (nur Info) ist das hier
-# eine echte Zugriffskontrolle.
-class PackItem(Base):
-    __tablename__ = "pack_items"
+# Kategorie-Tag für Aufgaben (z. B. "Einkauf", "Aufbau") — gleiches Muster wie
+# ShoppingSource: erweiterbare Liste aus Farbe + Kurzname, direkt beim Anlegen
+# einer Aufgabe mit erstellbar.
+class TaskCategory(Base):
+    __tablename__ = "task_categories"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    done = Column(Boolean, default=False)
-    owner_username = Column(String, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    farbe = Column(String(20), nullable=False)
+    bezeichnung = Column(String(16), nullable=False, unique=True)
 
 
-# Aufgaben: geteilte Todo-Liste (nicht privat wie PackItem) — jeder darf anlegen,
-# bearbeiten, abhaken und löschen. Mehrere Personen können zugewiesen werden
-# (daher eigene Zuordnungstabelle statt einer einzelnen Spalte).
+# Aufgaben: geteilte Todo-Liste — jeder darf anlegen, bearbeiten, abhaken und
+# löschen. Höchstens eine Person kann zugewiesen werden
+# (daher genügt eine einzelne Zuordnungstabelle mit maximal einer Zeile pro
+# Aufgabe statt einer direkten Spalte — historisch für mehrere Personen gedacht,
+# heute an main.py auf max. 1 begrenzt). Keine Zuweisung heißt: gilt für alle.
 class Task(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True, index=True)
@@ -90,6 +90,7 @@ class Task(Base):
     beschreibung = Column(Text, nullable=True)
     done = Column(Boolean, nullable=False, default=False)
     deadline = Column(DateTime, nullable=True)
+    category_id = Column(Integer, ForeignKey("task_categories.id"), nullable=True)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -157,6 +158,7 @@ _ensure_column("ausgaben", "gezahlt", "BOOLEAN", "DEFAULT 0")
 _ensure_column("ausgaben", "status", "TEXT", "DEFAULT 'offen'")
 _ensure_column("ausgaben", "batch_id", "TEXT")
 _ensure_column("shopping_items", "woher_id", "INTEGER")
+_ensure_column("tasks", "category_id", "INTEGER")
 
 
 def _backfill_expense_batch_ids():

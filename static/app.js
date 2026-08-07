@@ -483,8 +483,13 @@ let lastTaskItems = [];
 let taskSortMode = "deadline";
 let taskFilterMode = "alle";
 
+// Deadlines sind reine Datumsangaben (kein Uhrzeit-Anteil) — "heute fällig"
+// gilt daher bewusst noch nicht als überfällig, erst ab dem Folgetag.
 function isTaskOverdue(task) {
-  return !task.done && !!task.deadline && new Date(task.deadline) < new Date();
+  if (task.done || !task.deadline) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return new Date(task.deadline) < today;
 }
 
 function formatDeadline(iso) {
@@ -493,21 +498,33 @@ function formatDeadline(iso) {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
   });
 }
 
+// Eine Aufgabe ohne Zuweisung gilt für alle — zählt daher überall wie "meine".
+function isTaskMine(task, meId) {
+  return task.assignees.length === 0 || task.assignees.some((a) => a.id === meId);
+}
+
 function filterTasks(items, mode, meId) {
-  if (mode === "meine") return items.filter((t) => t.assignees.some((a) => a.id === meId));
+  if (mode === "meine") return items.filter((t) => isTaskMine(t, meId));
   if (mode === "offen") return items.filter((t) => !t.done);
   if (mode === "ueberfaellig") return items.filter((t) => isTaskOverdue(t));
   return items;
 }
 
+// Sortierschlüssel für "Verantwortlich": eigene Aufgaben zuerst, dann die
+// übrigen alphabetisch nach zuständiger Person, nicht zugewiesene ("Für alle") ganz am Ende.
+function taskResponsibleSortKey(task, meId) {
+  const assignee = task.assignees[0];
+  if (!assignee) return [2, ""];
+  if (assignee.id === meId) return [0, ""];
+  return [1, assignee.username.toLowerCase()];
+}
+
 // Offene Aufgaben stehen immer vor erledigten; die gewählte Sortierung gilt
 // jeweils nur innerhalb dieser beiden Gruppen.
-function sortTasks(items, mode) {
+function sortTasks(items, mode, meId) {
   const sortWithin = (arr) => {
     const out = [...arr];
     if (mode === "titel") {
@@ -518,6 +535,18 @@ function sortTasks(items, mode) {
         if (!a.deadline) return 1;
         if (!b.deadline) return -1;
         return new Date(a.deadline) - new Date(b.deadline);
+      });
+    } else if (mode === "verantwortlich") {
+      out.sort((a, b) => {
+        const ka = taskResponsibleSortKey(a, meId);
+        const kb = taskResponsibleSortKey(b, meId);
+        return ka[0] !== kb[0] ? ka[0] - kb[0] : ka[1].localeCompare(kb[1], "de");
+      });
+    } else if (mode === "kategorie") {
+      out.sort((a, b) => {
+        const an = a.category ? a.category.bezeichnung : "￿"; // ohne Kategorie ans Ende
+        const bn = b.category ? b.category.bezeichnung : "￿";
+        return an.localeCompare(bn, "de");
       });
     }
     // "neu" = Server-Reihenfolge (created_at absteigend), keine Änderung nötig
@@ -540,15 +569,15 @@ function renderTaskItem(task) {
     metaParts.push(overdue ? `<span class="danger">⚠️ ${label}</span>` : label);
   }
   if (task.assignees.length) {
-    metaParts.push(`Zugewiesen: ${task.assignees.map((a) => escapeHtml(a.username)).join(", ")}`);
+    metaParts.push(`${task.assignees.map((a) => escapeHtml(a.username)).join(", ")} ist verantwortlich`);
   }
+
+  const categoryTag = task.category
+    ? `<span class="source-tag" style="background:${escapeHtml(task.category.farbe)}">${escapeHtml(task.category.bezeichnung)}</span>`
+    : "";
 
   const descHtml = task.beschreibung
     ? `<p class="list-card-meta">${escapeHtml(task.beschreibung)}</p>`
-    : "";
-  // Ersteller dezent, in derselben gedämpften Meta-Zeilen-Optik wie alles andere hier.
-  const creatorHtml = task.created_by
-    ? `<p class="list-card-meta">von ${escapeHtml(task.created_by)}</p>`
     : "";
 
   card.innerHTML = `
@@ -556,9 +585,9 @@ function renderTaskItem(task) {
       <button type="button" class="list-card-checkbox${task.done ? " checked" : ""}" aria-label="Erledigt"></button>
       <div class="list-card-text">
         <p class="list-card-title">${escapeHtml(task.titel)}</p>
+        ${categoryTag}
         ${metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : ""}
         ${descHtml}
-        ${creatorHtml}
       </div>
     </div>
     <div class="list-card-actions">
@@ -603,7 +632,7 @@ async function renderFilteredSortedTasks() {
   if (!taskListEl) return;
   const { me } = await fetchUsersAndMe();
   const filtered = filterTasks(lastTaskItems, taskFilterMode, me ? me.id : null);
-  const sorted = sortTasks(filtered, taskSortMode);
+  const sorted = sortTasks(filtered, taskSortMode, me ? me.id : null);
 
   taskListEl.innerHTML = "";
   if (sorted.length === 0) {
@@ -623,15 +652,20 @@ function renderMyOpenTaskCard(task) {
   card.className = "list-card clickable";
 
   const overdue = isTaskOverdue(task);
-  let metaHtml = "";
+  const metaParts = [];
   if (task.deadline) {
     const label = `📅 ${formatDeadline(task.deadline)}`;
-    metaHtml = `<p class="list-card-meta">${overdue ? `<span class="danger">⚠️ ${label}</span>` : label}</p>`;
+    metaParts.push(overdue ? `<span class="danger">⚠️ ${label}</span>` : label);
   }
+  const metaHtml = metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : "";
+  const categoryTag = task.category
+    ? `<span class="source-tag" style="background:${escapeHtml(task.category.farbe)}">${escapeHtml(task.category.bezeichnung)}</span>`
+    : "";
 
   card.innerHTML = `
     <div class="list-card-text">
       <p class="list-card-title">${escapeHtml(task.titel)}</p>
+      ${categoryTag}
       ${metaHtml}
     </div>
   `;
@@ -639,14 +673,14 @@ function renderMyOpenTaskCard(task) {
   return card;
 }
 
-// Nur eigene, noch offene Aufgaben — nächste Deadline zuerst, damit heute
-// fällige/überfällige Sachen ganz oben stehen. Läuft am Task-Polling mit,
-// braucht also keinen eigenen Fetch.
+// Eigene + nicht zugewiesene (= für alle geltende) offene Aufgaben — nächste
+// Deadline zuerst, damit heute fällige/überfällige Sachen ganz oben stehen.
+// Läuft am Task-Polling mit, braucht also keinen eigenen Fetch.
 function renderMyOpenTasks(me) {
   if (!myOpenTasksEl) return;
 
   const mine = lastTaskItems
-    .filter((t) => !t.done && me && t.assignees.some((a) => a.id === me.id))
+    .filter((t) => !t.done && me && isTaskMine(t, me.id))
     .sort((a, b) => {
       if (!a.deadline && !b.deadline) return 0;
       if (!a.deadline) return 1;
@@ -699,17 +733,42 @@ if (taskFilterRow) {
   });
 }
 
-function taskModalBodyHtml(users, prefill = {}) {
-  const assigneeIds = prefill.assignees ? new Set(prefill.assignees.map((a) => a.id)) : new Set();
+/* ---------- Aufgaben: Kategorien (z. B. "Einkauf", "Aufbau") ---------- */
+let cachedTaskCategories = null;
+
+async function fetchTaskCategories(forceRefresh) {
+  if (cachedTaskCategories && !forceRefresh) return cachedTaskCategories;
+  const res = await fetch("/api/task-categories");
+  cachedTaskCategories = res.ok ? await res.json() : [];
+  return cachedTaskCategories;
+}
+
+function taskCategoryOptionsHtml(categories, selectedId) {
+  return categories
+    .map(
+      (c) =>
+        `<option value="${c.id}"${c.id === selectedId ? " selected" : ""}>${escapeHtml(c.bezeichnung)}</option>`
+    )
+    .join("");
+}
+
+function taskModalBodyHtml(users, categories, prefill = {}) {
+  // Höchstens eine Person kann verantwortlich sein — ein Dropdown macht das
+  // (anders als eine Checkbox-Gruppe) von sich aus unmissverständlich: entweder
+  // "Niemand" (Aufgabe gilt für alle) oder genau eine konkret verantwortliche Person.
+  const currentAssigneeId =
+    prefill.assignees && prefill.assignees.length ? prefill.assignees[0].id : null;
   const assigneeOptions = users
     .map(
       (u) =>
-        `<label class="check-card"><input type="checkbox" value="${u.id}"${assigneeIds.has(u.id) ? " checked" : ""}>${escapeHtml(u.username)}</label>`
+        `<option value="${u.id}"${u.id === currentAssigneeId ? " selected" : ""}>${escapeHtml(u.username)}</option>`
     )
     .join("");
 
-  // datetime-local erwartet "YYYY-MM-DDTHH:MM", der Server liefert ein volles ISO-Format zurück.
-  const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 16) : "";
+  const currentCategoryId = prefill.category ? prefill.category.id : null;
+
+  // date erwartet "YYYY-MM-DD", der Server liefert ein volles ISO-Format zurück.
+  const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 10) : "";
 
   return `
     <div class="form-stack">
@@ -719,38 +778,145 @@ function taskModalBodyHtml(users, prefill = {}) {
       <label>Beschreibung (optional)
         <textarea id="taskBeschreibungInput" placeholder="Details …">${escapeHtml(prefill.beschreibung || "")}</textarea>
       </label>
-      <div class="checkbox-group">
-        <div class="eyebrow">Wer soll das machen? (optional)</div>
-        <div id="taskAssignees" class="checkbox-grid">${assigneeOptions}</div>
+      <label>Verantwortlich
+        <select id="taskAssigneeSelect">
+          <option value="">Alle</option>
+          ${assigneeOptions}
+        </select>
+      </label>
+      <label>Kategorie (optional)
+        <select id="taskCategorySelect">
+          <option value="">— keine Angabe —</option>
+          ${taskCategoryOptionsHtml(categories, currentCategoryId)}
+          <option value="__new__">+ Neue Kategorie anlegen…</option>
+        </select>
+      </label>
+      <div id="newTaskCategoryFields" class="form-stack hidden">
+        <label>Farbe
+          <input type="color" id="newTaskCategoryColor" value="#ffd400">
+        </label>
+        <label>Bezeichnung
+          <input type="text" id="newTaskCategoryLabel" maxlength="16" placeholder="z. B. Einkauf">
+        </label>
+        <button type="button" id="createTaskCategoryBtn" class="secondary compact">Kategorie anlegen</button>
+        <p class="error-text hidden new-task-category-error"></p>
       </div>
       <label>Deadline (optional)
-        <input type="datetime-local" id="taskDeadlineInput" value="${deadlineValue}">
+        <input type="date" id="taskDeadlineInput" value="${deadlineValue}">
       </label>
     </div>
   `;
 }
 
-function readTaskForm() {
+// Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten Felder im DOM).
+function wireTaskCategoryPicker() {
+  const categorySelect = document.getElementById("taskCategorySelect");
+  const newFields = document.getElementById("newTaskCategoryFields");
+  categorySelect.addEventListener("change", () => {
+    newFields.classList.toggle("hidden", categorySelect.value !== "__new__");
+  });
+
+  document.getElementById("createTaskCategoryBtn").addEventListener("click", async () => {
+    const colorInput = document.getElementById("newTaskCategoryColor");
+    const labelInput = document.getElementById("newTaskCategoryLabel");
+    const errEl = document.querySelector(".new-task-category-error");
+    const bezeichnung = labelInput.value.trim();
+    errEl.classList.add("hidden");
+
+    if (!bezeichnung) {
+      errEl.textContent = "Bitte eine Bezeichnung eingeben.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const res = await fetch("/api/task-categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ farbe: colorInput.value, bezeichnung }),
+    });
+
+    if (res.ok) {
+      const created = await res.json();
+      const categories = await fetchTaskCategories(true);
+      categorySelect.innerHTML = `
+        <option value="">— keine Angabe —</option>
+        ${taskCategoryOptionsHtml(categories, created.id)}
+        <option value="__new__">+ Neue Kategorie anlegen…</option>
+      `;
+      newFields.classList.add("hidden");
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errEl.textContent = data.error || "Konnte nicht angelegt werden.";
+      errEl.classList.remove("hidden");
+    }
+  });
+}
+
+// Falls im Kategorie-Dropdown noch "+ Neue Kategorie anlegen…" ausgewählt ist,
+// wird sie hier direkt beim Speichern miterstellt — kein separater Klick auf
+// "Kategorie anlegen" nötig. Gibt die category_id zurück, oder null bei Fehler
+// (dann steht die Fehlermeldung im .new-task-category-error-Feld).
+async function resolveTaskCategoryId() {
+  const categorySelect = document.getElementById("taskCategorySelect");
+  if (categorySelect.value !== "__new__") {
+    return { ok: true, category_id: categorySelect.value ? parseInt(categorySelect.value, 10) : null };
+  }
+
+  const colorInput = document.getElementById("newTaskCategoryColor");
+  const labelInput = document.getElementById("newTaskCategoryLabel");
+  const errEl = document.querySelector(".new-task-category-error");
+  const bezeichnung = labelInput.value.trim();
+  errEl.classList.add("hidden");
+
+  if (!bezeichnung) {
+    errEl.textContent = "Bitte eine Bezeichnung für die neue Kategorie eingeben.";
+    errEl.classList.remove("hidden");
+    return { ok: false };
+  }
+
+  const res = await fetch("/api/task-categories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ farbe: colorInput.value, bezeichnung }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    errEl.textContent = data.error || "Kategorie konnte nicht angelegt werden.";
+    errEl.classList.remove("hidden");
+    return { ok: false };
+  }
+
+  const created = await res.json();
+  await fetchTaskCategories(true);
+  return { ok: true, category_id: created.id };
+}
+
+async function readTaskForm() {
   const titel = document.getElementById("taskTitelInput").value.trim();
   if (!titel) return null;
   const beschreibung = document.getElementById("taskBeschreibungInput").value.trim();
-  const assignee_ids = Array.from(
-    document.querySelectorAll("#taskAssignees input[type=checkbox]:checked")
-  ).map((el) => parseInt(el.value, 10));
+  const assigneeValue = document.getElementById("taskAssigneeSelect").value;
+  const assignee_ids = assigneeValue ? [parseInt(assigneeValue, 10)] : [];
   const deadline = document.getElementById("taskDeadlineInput").value || null;
-  return { titel, beschreibung, assignee_ids, deadline };
+
+  const categoryResult = await resolveTaskCategoryId();
+  if (!categoryResult.ok) return null;
+
+  return { titel, beschreibung, assignee_ids, category_id: categoryResult.category_id, deadline };
 }
 
 async function openAddTaskModal() {
   const { users } = await fetchUsersAndMe();
+  const categories = await fetchTaskCategories();
 
   openModal({
     eyebrow: "Aufgabe",
     title: "Aufgabe hinzufügen",
     submitLabel: "Speichern",
-    bodyHtml: taskModalBodyHtml(users),
+    bodyHtml: taskModalBodyHtml(users, categories),
     onSubmit: async () => {
-      const form = readTaskForm();
+      const form = await readTaskForm();
       if (!form) return;
 
       const res = await fetch("/api/tasks", {
@@ -765,18 +931,21 @@ async function openAddTaskModal() {
       }
     },
   });
+
+  wireTaskCategoryPicker();
 }
 
 async function openEditTaskModal(task) {
   const { users } = await fetchUsersAndMe();
+  const categories = await fetchTaskCategories();
 
   openModal({
     eyebrow: "Aufgabe",
     title: "Aufgabe bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: taskModalBodyHtml(users, task),
+    bodyHtml: taskModalBodyHtml(users, categories, task),
     onSubmit: async () => {
-      const form = readTaskForm();
+      const form = await readTaskForm();
       if (!form) return;
 
       const res = await fetch(`/api/tasks/${task.id}`, {
@@ -791,169 +960,12 @@ async function openEditTaskModal(task) {
       }
     },
   });
+
+  wireTaskCategoryPicker();
 }
 
 const addTaskButton = document.getElementById("addTaskButton");
 if (addTaskButton) addTaskButton.addEventListener("click", openAddTaskModal);
-
-/* ---------- Packliste (privat pro User) ---------- */
-const packListEl = document.getElementById("packList");
-
-function renderPackItem(item) {
-  const card = document.createElement("div");
-  card.className = "list-card" + (item.done ? " done" : "");
-  card.dataset.id = item.id;
-
-  card.innerHTML = `
-    <div class="list-card-content">
-      <button type="button" class="list-card-checkbox${item.done ? " checked" : ""}" aria-label="Erledigt"></button>
-      <div class="list-card-text">
-        <p class="list-card-title">${escapeHtml(item.name)}</p>
-      </div>
-    </div>
-    <div class="list-card-actions">
-      <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
-      <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
-    </div>
-  `;
-
-  const checkbox = card.querySelector(".list-card-checkbox");
-  checkbox.addEventListener("click", async (e) => {
-    e.preventDefault();
-    const res = await fetch(`/api/pack/${item.id}/toggle`, { method: "PATCH" });
-    if (res.ok) {
-      const data = await res.json();
-      checkbox.classList.toggle("checked", data.done);
-      card.classList.toggle("done", data.done);
-    }
-  });
-
-  card.querySelector(".edit-btn").addEventListener("click", () => openEditPackModal(item, card));
-
-  card.querySelector(".delete-btn").addEventListener("click", () => {
-    openModal({
-      eyebrow: "Packliste",
-      title: `„${item.name}" löschen?`,
-      bodyHtml: `<p class="muted warning-text">Der Eintrag wird aus deiner privaten Packliste entfernt. Das lässt sich nicht rückgängig machen.</p>`,
-      submitLabel: "Löschen",
-      danger: true,
-      onSubmit: async () => {
-        const res = await fetch(`/api/pack/${item.id}`, { method: "DELETE" });
-        if (res.ok) {
-          card.remove();
-          if (!packListEl.querySelector(".list-card")) {
-            packListEl.innerHTML = `<div class="empty-state"><p>Packliste ist leer.</p></div>`;
-          }
-        }
-        closeModal();
-      },
-    });
-  });
-
-  return card;
-}
-
-// Offene Einträge stehen immer vor erledigten (sonst bleibt die Server-Reihenfolge erhalten).
-function sortPackItems(items) {
-  const open = items.filter((i) => !i.done);
-  const done = items.filter((i) => i.done);
-  return [...open, ...done];
-}
-
-function renderPackListItems(items) {
-  packListEl.innerHTML = "";
-  if (items.length === 0) {
-    packListEl.innerHTML = `<div class="empty-state"><p>Packliste ist leer.</p></div>`;
-  } else {
-    sortPackItems(items).forEach((item) => packListEl.appendChild(renderPackItem(item)));
-  }
-}
-
-let lastPackSignature = null;
-
-async function loadPackList() {
-  if (!packListEl) return;
-  try {
-    const res = await fetch("/api/pack");
-    if (!res.ok) throw new Error("Fehler beim Laden");
-    const items = await res.json();
-    const signature = JSON.stringify(items);
-    if (signature === lastPackSignature) return;
-    lastPackSignature = signature;
-    renderPackListItems(items);
-  } catch (err) {
-    packListEl.innerHTML = `<div class="empty-state"><p>Liste konnte nicht geladen werden.</p></div>`;
-  }
-}
-
-function openAddPackModal() {
-  openModal({
-    eyebrow: "Packliste",
-    title: "Eintrag hinzufügen",
-    bodyHtml: `
-      <div class="form-stack">
-        <label>Was fehlt noch?
-          <input type="text" id="packNameInput" placeholder="z. B. Zahnbürste" required>
-        </label>
-      </div>
-    `,
-    onSubmit: async () => {
-      const input = document.getElementById("packNameInput");
-      const name = input.value.trim();
-      if (!name) return;
-
-      const res = await fetch("/api/pack", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-
-      if (res.ok) {
-        const newItem = await res.json();
-        const emptyState = packListEl.querySelector(".empty-state");
-        if (emptyState) emptyState.remove();
-        packListEl.prepend(renderPackItem(newItem));
-        closeModal();
-      }
-    },
-  });
-}
-
-function openEditPackModal(item, card) {
-  openModal({
-    eyebrow: "Packliste",
-    title: "Eintrag bearbeiten",
-    submitLabel: "Speichern",
-    bodyHtml: `
-      <div class="form-stack">
-        <label>Was fehlt noch?
-          <input type="text" id="packNameInput" value="${escapeHtml(item.name)}" required>
-        </label>
-      </div>
-    `,
-    onSubmit: async () => {
-      const name = document.getElementById("packNameInput").value.trim();
-      if (!name) return;
-
-      const res = await fetch(`/api/pack/${item.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-
-      if (res.ok) {
-        const updated = await res.json();
-        item.name = updated.name;
-        const titleEl = card.querySelector(".list-card-title");
-        if (titleEl) titleEl.textContent = updated.name;
-        closeModal();
-      }
-    },
-  });
-}
-
-const addPackButton = document.getElementById("addPackButton");
-if (addPackButton) addPackButton.addEventListener("click", openAddPackModal);
 
 /* ---------- Camp-Plan (Termine, nur Admins legen an) ---------- */
 const planListEl = document.getElementById("planList");
@@ -1689,7 +1701,6 @@ function openResetExpensesModal() {
         loadBalance();
         loadOpenSettlements();
         loadReceivedPayments();
-        loadLeaderboard();
       } else {
         const data = await res.json().catch(() => ({}));
         errEl.textContent = data.error || "Konnte nicht zurückgesetzt werden.";
@@ -1723,7 +1734,6 @@ function switchCostsView(view) {
   });
   if (view === "open") loadOpenSettlements();
   if (view === "received") loadReceivedPayments();
-  if (view === "leaderboard") loadLeaderboard();
 }
 
 if (costsViewSelect) {
@@ -1907,46 +1917,9 @@ async function loadReceivedPayments() {
 }
 
 /* ---------- Kosten: Leaderboard ---------- */
-const leaderboardListEl = document.getElementById("leaderboardList");
-
-function renderLeaderboardOwnRank(data) {
-  const card = document.createElement("div");
-  card.className = "list-card";
-  const badgeClass = data.rank === 1 ? "top" : "";
-  card.innerHTML = `
-    <div class="list-card-content">
-      <div class="rank-badge ${badgeClass}">${data.rank}</div>
-      <div class="list-card-text">
-        <p class="list-card-title">Dein Platz</p>
-        <p class="list-card-meta">von ${data.total_participants}</p>
-      </div>
-    </div>
-    <p class="list-card-value">${formatEuro(data.your_total)}</p>
-  `;
-  return card;
-}
-
-let lastLeaderboardSignature = null;
-
-async function loadLeaderboard() {
-  if (!leaderboardListEl) return;
-  try {
-    const res = await fetch("/api/expenses/leaderboard");
-    if (!res.ok) throw new Error("Fehler beim Laden");
-    const data = await res.json();
-
-    const signature = JSON.stringify(data);
-    if (signature === lastLeaderboardSignature) return;
-    lastLeaderboardSignature = signature;
-
-    leaderboardListEl.innerHTML = "";
-    if (data.rank) {
-      leaderboardListEl.appendChild(renderLeaderboardOwnRank(data));
-    }
-  } catch (err) {
-    leaderboardListEl.innerHTML = `<div class="empty"><p>Leaderboard konnte nicht geladen werden.</p></div>`;
-  }
-}
+// Bewusst komplett gesperrt bis zur Abschlussparty — auch die eigene
+// Platzierung wird nicht mehr vorab angezeigt (siehe #leaderboardLockHero
+// in index.html), daher gibt es hier nichts mehr zu laden/rendern.
 
 /* ---------- Kosten: alles alle 3 Sekunden aktualisieren ---------- */
 // Läuft unabhängig davon, welche Unteransicht gerade sichtbar ist (gleiches
@@ -1957,7 +1930,6 @@ function pollCostsViews() {
   loadExpenses();
   loadOpenSettlements();
   loadReceivedPayments();
-  loadLeaderboard();
 }
 
 /* ---------- Init ---------- */
@@ -1973,8 +1945,6 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(pollShoppingList, 3000);
   loadTasks();
   setInterval(loadTasks, 3000);
-  loadPackList();
-  setInterval(loadPackList, 5000);
   loadPlanList();
   setInterval(loadPlanList, 5000);
   loadTodayPlan();

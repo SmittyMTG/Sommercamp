@@ -15,10 +15,10 @@ from database import (
     User,
     ShoppingItem,
     ShoppingSource,
-    PackItem,
     PlanEvent,
     Task,
     TaskAssignee,
+    TaskCategory,
     Ausgabe,
     get_db,
 )
@@ -53,15 +53,17 @@ class ShoppingSourceCreate(BaseModel):
     bezeichnung: str
 
 
-class PackItemCreate(BaseModel):
-    name: str
-
-
 class TaskCreate(BaseModel):
     titel: str
     beschreibung: str | None = None
     deadline: str | None = None
     assignee_ids: list[int] = []
+    category_id: int | None = None
+
+
+class TaskCategoryCreate(BaseModel):
+    farbe: str
+    bezeichnung: str
 
 
 class PlanEventCreate(BaseModel):
@@ -289,11 +291,11 @@ def delete_shopping_item(item_id: int, request: Request, db: Session = Depends(g
     return {"ok": True}
 
 
-# --- Aufgaben (geteilt, mehrere Personen zuweisbar, mit Deadline) ---
+# --- Aufgaben (geteilt, höchstens eine Person zuweisbar, mit Deadline) ---
 
 def _validate_task_payload(payload: TaskCreate, db: Session):
-    """Gibt entweder (titel, beschreibung, deadline, assignee_ids) oder eine
-    fertige JSONResponse mit Fehlermeldung zurück."""
+    """Gibt entweder (titel, beschreibung, deadline, assignee_ids, category_id)
+    oder eine fertige JSONResponse mit Fehlermeldung zurück."""
     titel = payload.titel.strip()
     if not titel:
         return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
@@ -309,16 +311,28 @@ def _validate_task_payload(payload: TaskCreate, db: Session):
         except ValueError:
             return JSONResponse(status_code=400, content={"error": "Ungültige Deadline"})
 
+    # Höchstens eine Person: entweder klar verantwortlich, oder niemand (dann
+    # gilt die Aufgabe für alle, siehe Frontend-Filter/Dashboard).
     assignee_ids = sorted(set(payload.assignee_ids))
+    if len(assignee_ids) > 1:
+        return JSONResponse(status_code=400, content={"error": "Nur eine Person kann zugewiesen werden"})
     if assignee_ids:
         valid_ids = {u.id for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
         if not set(assignee_ids).issubset(valid_ids):
             return JSONResponse(status_code=400, content={"error": "Unbekannte Person ausgewählt"})
 
-    return titel, beschreibung, deadline, assignee_ids
+    category_id = payload.category_id
+    if category_id is not None:
+        if not db.query(TaskCategory).filter(TaskCategory.id == category_id).first():
+            return JSONResponse(status_code=400, content={"error": "Unbekannte Kategorie"})
+
+    return titel, beschreibung, deadline, assignee_ids, category_id
 
 
-def _serialize_task(task: Task, assignee_ids: list[int], usernames: dict[int, str]) -> dict:
+def _serialize_task(
+    task: Task, assignee_ids: list[int], usernames: dict[int, str], categories: dict[int, TaskCategory]
+) -> dict:
+    category = categories.get(task.category_id) if task.category_id else None
     return {
         "id": task.id,
         "titel": task.titel,
@@ -329,6 +343,11 @@ def _serialize_task(task: Task, assignee_ids: list[int], usernames: dict[int, st
         "assignees": [
             {"id": uid, "username": usernames.get(uid, "?")} for uid in assignee_ids
         ],
+        "category": (
+            {"id": category.id, "farbe": category.farbe, "bezeichnung": category.bezeichnung}
+            if category
+            else None
+        ),
     }
 
 
@@ -339,12 +358,52 @@ def list_tasks(request: Request, db: Session = Depends(get_db)):
 
     tasks = db.query(Task).order_by(Task.created_at.desc()).all()
     usernames = {u.id: u.username for u in db.query(User).all()}
+    categories = {c.id: c for c in db.query(TaskCategory).all()}
 
     assignees_by_task: dict[int, list[int]] = {}
     for a in db.query(TaskAssignee).all():
         assignees_by_task.setdefault(a.task_id, []).append(a.user_id)
 
-    return [_serialize_task(t, assignees_by_task.get(t.id, []), usernames) for t in tasks]
+    return [
+        _serialize_task(t, assignees_by_task.get(t.id, []), usernames, categories) for t in tasks
+    ]
+
+
+@app.get("/api/task-categories")
+def list_task_categories(request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    categories = db.query(TaskCategory).order_by(TaskCategory.bezeichnung.asc()).all()
+    return [{"id": c.id, "farbe": c.farbe, "bezeichnung": c.bezeichnung} for c in categories]
+
+
+@app.post("/api/task-categories")
+def create_task_category(
+    request: Request, payload: TaskCategoryCreate, db: Session = Depends(get_db)
+):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    bezeichnung = payload.bezeichnung.strip()
+    if not bezeichnung:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
+    if len(bezeichnung) > 16:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 16 Zeichen haben"})
+
+    farbe = payload.farbe.strip().lower()
+    if not re.fullmatch(r"#[0-9a-f]{6}", farbe):
+        return JSONResponse(status_code=400, content={"error": "Farbe muss ein Hex-Code sein, z. B. #ffd400"})
+
+    existing = db.query(TaskCategory).filter(TaskCategory.bezeichnung == bezeichnung).first()
+    if existing:
+        return JSONResponse(status_code=400, content={"error": "Diese Bezeichnung gibt es schon"})
+
+    category = TaskCategory(farbe=farbe, bezeichnung=bezeichnung)
+    db.add(category)
+    db.commit()
+    db.refresh(category)
+    return {"id": category.id, "farbe": category.farbe, "bezeichnung": category.bezeichnung}
 
 
 @app.post("/api/tasks")
@@ -356,9 +415,15 @@ def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get
     validated = _validate_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, assignee_ids = validated
+    titel, beschreibung, deadline, assignee_ids, category_id = validated
 
-    task = Task(titel=titel, beschreibung=beschreibung, deadline=deadline, created_by=username)
+    task = Task(
+        titel=titel,
+        beschreibung=beschreibung,
+        deadline=deadline,
+        created_by=username,
+        category_id=category_id,
+    )
     db.add(task)
     db.commit()
     db.refresh(task)
@@ -368,7 +433,10 @@ def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get
     db.commit()
 
     usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
-    return _serialize_task(task, assignee_ids, usernames)
+    categories = {
+        c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()
+    }
+    return _serialize_task(task, assignee_ids, usernames, categories)
 
 
 @app.patch("/api/tasks/{task_id}")
@@ -383,18 +451,22 @@ def update_task(task_id: int, request: Request, payload: TaskCreate, db: Session
     validated = _validate_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, assignee_ids = validated
+    titel, beschreibung, deadline, assignee_ids, category_id = validated
 
     task.titel = titel
     task.beschreibung = beschreibung
     task.deadline = deadline
+    task.category_id = category_id
     db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).delete(synchronize_session=False)
     for uid in assignee_ids:
         db.add(TaskAssignee(task_id=task.id, user_id=uid))
     db.commit()
 
     usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
-    return _serialize_task(task, assignee_ids, usernames)
+    categories = {
+        c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()
+    }
+    return _serialize_task(task, assignee_ids, usernames, categories)
 
 
 @app.patch("/api/tasks/{task_id}/toggle")
@@ -420,106 +492,6 @@ def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
     if task:
         db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).delete(synchronize_session=False)
         db.delete(task)
-        db.commit()
-    return {"ok": True}
-
-
-# --- Packliste (privat pro User) ---
-
-@app.get("/api/pack")
-def get_pack_items(request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    if not username:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    items = (
-        db.query(PackItem)
-        .filter(PackItem.owner_username == username)
-        .order_by(PackItem.created_at.desc())
-        .all()
-    )
-    return [{"id": i.id, "name": i.name, "done": i.done} for i in items]
-
-
-@app.post("/api/pack")
-def create_pack_item(
-    request: Request, item: PackItemCreate, db: Session = Depends(get_db)
-):
-    username = get_current_user(request)
-    if not username:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    name = item.name.strip()
-    if not name:
-        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
-
-    new_item = PackItem(name=name, owner_username=username)
-    db.add(new_item)
-    db.commit()
-    db.refresh(new_item)
-
-    return {"id": new_item.id, "name": new_item.name, "done": new_item.done}
-
-
-@app.patch("/api/pack/{item_id}")
-def update_pack_item(
-    item_id: int, request: Request, item: PackItemCreate, db: Session = Depends(get_db)
-):
-    username = get_current_user(request)
-    if not username:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    existing = (
-        db.query(PackItem)
-        .filter(PackItem.id == item_id, PackItem.owner_username == username)
-        .first()
-    )
-    if not existing:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-
-    name = item.name.strip()
-    if not name:
-        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
-
-    existing.name = name
-    db.commit()
-    return {"id": existing.id, "name": existing.name, "done": existing.done}
-
-
-@app.patch("/api/pack/{item_id}/toggle")
-def toggle_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    if not username:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    # owner_username ist Teil des Filters, nicht nur eine Anzeige-Info — so kann
-    # niemand über eine erratene ID ein fremdes privates Item toggeln.
-    item = (
-        db.query(PackItem)
-        .filter(PackItem.id == item_id, PackItem.owner_username == username)
-        .first()
-    )
-    if not item:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-
-    item.done = not item.done
-    db.commit()
-    return {"id": item.id, "done": item.done}
-
-
-@app.delete("/api/pack/{item_id}")
-def delete_pack_item(item_id: int, request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    if not username:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    item = (
-        db.query(PackItem)
-        .filter(PackItem.id == item_id, PackItem.owner_username == username)
-        .first()
-    )
-    if item:
-        db.delete(item)
         db.commit()
     return {"ok": True}
 
