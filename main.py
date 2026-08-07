@@ -1,8 +1,10 @@
 import re
+import time
 import uuid
 from datetime import date, datetime as dt
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Request, Depends, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,7 +21,9 @@ from database import (
     Task,
     TaskAssignee,
     TaskCategory,
+    TaskSubitem,
     Ausgabe,
+    ActivityLog,
     get_db,
 )
 from auth import login, logout, get_current_user
@@ -60,6 +64,15 @@ templates.env.globals["app_version"] = app_version
 templates.env.globals["static_version"] = static_version
 
 
+# Aktivitäts-Log: absichtlich sehr eng gehalten (nur die Aktionen, bei denen
+# eine ANDERE Person konkret betroffen ist — neue Aufgabe, Aufgabe erledigt,
+# Ausgabe erfasst, Zahlung gemeldet/bestätigt), nicht jeder Klick in der App.
+def log_action(db: Session, actor: str, affected: str | None, action: str, message: str):
+    if affected == actor:
+        affected = None
+    db.add(ActivityLog(actor_username=actor, affected_username=affected, action=action, message=message))
+
+
 # --- Schemas ---
 class ShoppingItemCreate(BaseModel):
     name: str
@@ -77,6 +90,12 @@ class TaskCreate(BaseModel):
     deadline: str | None = None
     assignee_ids: list[int] = []
     category_id: int | None = None
+    recurring: bool = False
+    aufwand_min: int | None = None
+
+
+class TaskSubitemCreate(BaseModel):
+    titel: str
 
 
 class TaskCategoryCreate(BaseModel):
@@ -156,6 +175,17 @@ def get_app_version():
 
 # --- Einkaufsliste ---
 
+def _serialize_shopping_item(item: ShoppingItem, woher: ShoppingSource | None) -> dict:
+    return {
+        "id": item.id,
+        "name": item.name,
+        "done": item.done,
+        "added_by": item.added_by,
+        "deadline": item.deadline.isoformat() if item.deadline else None,
+        "woher": {"id": woher.id, "farbe": woher.farbe, "bezeichnung": woher.bezeichnung} if woher else None,
+    }
+
+
 @app.get("/api/shopping")
 def get_shopping_items(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request)
@@ -168,20 +198,7 @@ def get_shopping_items(request: Request, db: Session = Depends(get_db)):
     # nur clientseitig, wenn gewünscht.
     items = db.query(ShoppingItem).order_by(ShoppingItem.created_at.desc()).all()
     sources = {s.id: s for s in db.query(ShoppingSource).all()}
-    return [
-        {
-            "id": i.id,
-            "name": i.name,
-            "done": i.done,
-            "added_by": i.added_by,
-            "woher": (
-                {"id": sources[i.woher_id].id, "farbe": sources[i.woher_id].farbe, "bezeichnung": sources[i.woher_id].bezeichnung}
-                if i.woher_id and i.woher_id in sources
-                else None
-            ),
-        }
-        for i in items
-    ]
+    return [_serialize_shopping_item(i, sources.get(i.woher_id)) for i in items]
 
 
 @app.post("/api/shopping")
@@ -207,13 +224,7 @@ def create_shopping_item(
     db.commit()
     db.refresh(new_item)
 
-    return {
-        "id": new_item.id,
-        "name": new_item.name,
-        "done": new_item.done,
-        "added_by": new_item.added_by,
-        "woher": {"id": woher.id, "farbe": woher.farbe, "bezeichnung": woher.bezeichnung} if woher else None,
-    }
+    return _serialize_shopping_item(new_item, woher)
 
 
 @app.patch("/api/shopping/{item_id}")
@@ -241,13 +252,7 @@ def update_shopping_item(
     existing.woher_id = woher.id if woher else None
     db.commit()
 
-    return {
-        "id": existing.id,
-        "name": existing.name,
-        "done": existing.done,
-        "added_by": existing.added_by,
-        "woher": {"id": woher.id, "farbe": woher.farbe, "bezeichnung": woher.bezeichnung} if woher else None,
-    }
+    return _serialize_shopping_item(existing, woher)
 
 
 # --- Woher-Quellen für die Einkaufsliste ---
@@ -304,6 +309,22 @@ def toggle_shopping_item(item_id: int, request: Request, db: Session = Depends(g
     return {"id": item.id, "done": item.done}
 
 
+@app.patch("/api/shopping/{item_id}/deadline-today")
+def toggle_shopping_deadline_today(item_id: int, request: Request, db: Session = Depends(get_db)):
+    """Schnellaktion (❗-Button): markiert "wird heute gebraucht". Steht das
+    Datum schon auf heute, wird es stattdessen wieder entfernt (Toggle)."""
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    item = db.query(ShoppingItem).filter(ShoppingItem.id == item_id).first()
+    if not item:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    item.deadline = None if item.deadline == date.today() else date.today()
+    db.commit()
+    return {"id": item.id, "deadline": item.deadline.isoformat() if item.deadline else None}
+
+
 @app.delete("/api/shopping/{item_id}")
 def delete_shopping_item(item_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request)
@@ -320,8 +341,8 @@ def delete_shopping_item(item_id: int, request: Request, db: Session = Depends(g
 # --- Aufgaben (geteilt, höchstens eine Person zuweisbar, mit Deadline) ---
 
 def _validate_task_payload(payload: TaskCreate, db: Session):
-    """Gibt entweder (titel, beschreibung, deadline, assignee_ids, category_id)
-    oder eine fertige JSONResponse mit Fehlermeldung zurück."""
+    """Gibt entweder (titel, beschreibung, deadline, assignee_ids, category_id,
+    aufwand_min) oder eine fertige JSONResponse mit Fehlermeldung zurück."""
     titel = payload.titel.strip()
     if not titel:
         return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
@@ -352,11 +373,19 @@ def _validate_task_payload(payload: TaskCreate, db: Session):
         if not db.query(TaskCategory).filter(TaskCategory.id == category_id).first():
             return JSONResponse(status_code=400, content={"error": "Unbekannte Kategorie"})
 
-    return titel, beschreibung, deadline, assignee_ids, category_id
+    aufwand_min = payload.aufwand_min
+    if aufwand_min is not None and aufwand_min < 0:
+        return JSONResponse(status_code=400, content={"error": "Aufwand darf nicht negativ sein"})
+
+    return titel, beschreibung, deadline, assignee_ids, category_id, aufwand_min
 
 
 def _serialize_task(
-    task: Task, assignee_ids: list[int], usernames: dict[int, str], categories: dict[int, TaskCategory]
+    task: Task,
+    assignee_ids: list[int],
+    usernames: dict[int, str],
+    categories: dict[int, TaskCategory],
+    subitems: list[TaskSubitem] | None = None,
 ) -> dict:
     category = categories.get(task.category_id) if task.category_id else None
     return {
@@ -366,6 +395,8 @@ def _serialize_task(
         "done": task.done,
         "deadline": task.deadline.isoformat() if task.deadline else None,
         "created_by": task.created_by,
+        "recurring": task.recurring,
+        "aufwand_min": task.aufwand_min,
         "assignees": [
             {"id": uid, "username": usernames.get(uid, "?")} for uid in assignee_ids
         ],
@@ -374,6 +405,7 @@ def _serialize_task(
             if category
             else None
         ),
+        "subitems": [{"id": s.id, "titel": s.titel, "done": s.done} for s in (subitems or [])],
     }
 
 
@@ -390,8 +422,15 @@ def list_tasks(request: Request, db: Session = Depends(get_db)):
     for a in db.query(TaskAssignee).all():
         assignees_by_task.setdefault(a.task_id, []).append(a.user_id)
 
+    subitems_by_task: dict[int, list[TaskSubitem]] = {}
+    for s in db.query(TaskSubitem).order_by(TaskSubitem.created_at.asc()).all():
+        subitems_by_task.setdefault(s.task_id, []).append(s)
+
     return [
-        _serialize_task(t, assignees_by_task.get(t.id, []), usernames, categories) for t in tasks
+        _serialize_task(
+            t, assignees_by_task.get(t.id, []), usernames, categories, subitems_by_task.get(t.id, [])
+        )
+        for t in tasks
     ]
 
 
@@ -441,7 +480,7 @@ def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get
     validated = _validate_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, assignee_ids, category_id = validated
+    titel, beschreibung, deadline, assignee_ids, category_id, aufwand_min = validated
 
     task = Task(
         titel=titel,
@@ -449,6 +488,8 @@ def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get
         deadline=deadline,
         created_by=username,
         category_id=category_id,
+        recurring=payload.recurring,
+        aufwand_min=aufwand_min,
     )
     db.add(task)
     db.commit()
@@ -462,7 +503,14 @@ def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get
     categories = {
         c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()
     }
-    return _serialize_task(task, assignee_ids, usernames, categories)
+
+    if assignee_ids:
+        affected = usernames.get(assignee_ids[0])
+        if affected:
+            log_action(db, username, affected, "task_created", f"{username} hat dir die Aufgabe „{titel}“ zugewiesen")
+            db.commit()
+
+    return _serialize_task(task, assignee_ids, usernames, categories, [])
 
 
 @app.patch("/api/tasks/{task_id}")
@@ -477,12 +525,14 @@ def update_task(task_id: int, request: Request, payload: TaskCreate, db: Session
     validated = _validate_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, assignee_ids, category_id = validated
+    titel, beschreibung, deadline, assignee_ids, category_id, aufwand_min = validated
 
     task.titel = titel
     task.beschreibung = beschreibung
     task.deadline = deadline
     task.category_id = category_id
+    task.recurring = payload.recurring
+    task.aufwand_min = aufwand_min
     db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).delete(synchronize_session=False)
     for uid in assignee_ids:
         db.add(TaskAssignee(task_id=task.id, user_id=uid))
@@ -492,12 +542,14 @@ def update_task(task_id: int, request: Request, payload: TaskCreate, db: Session
     categories = {
         c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()
     }
-    return _serialize_task(task, assignee_ids, usernames, categories)
+    subitems = db.query(TaskSubitem).filter(TaskSubitem.task_id == task.id).order_by(TaskSubitem.created_at.asc()).all()
+    return _serialize_task(task, assignee_ids, usernames, categories, subitems)
 
 
 @app.patch("/api/tasks/{task_id}/toggle")
 def toggle_task(task_id: int, request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request):
+    username = get_current_user(request)
+    if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     task = db.query(Task).filter(Task.id == task_id).first()
@@ -505,8 +557,62 @@ def toggle_task(task_id: int, request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=404, content={"error": "not found"})
 
     task.done = not task.done
+    cloned = False
+
+    if task.done:
+        assignee = db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).first()
+        if assignee:
+            affected_user = db.query(User).filter(User.id == assignee.user_id).first()
+            if affected_user:
+                log_action(
+                    db,
+                    username,
+                    affected_user.username,
+                    "task_done",
+                    f"{username} hat deine Aufgabe „{task.titel}“ abgeschlossen",
+                )
+
+        # Wiederkehrend: die erledigte Zeile bleibt als abgeschlossener Vorgang
+        # stehen (zählt in der Statistik als "erledigt"), eine frische Kopie
+        # entsteht offen — zählt dort dann als eigene, neue Aufgabe.
+        if task.recurring:
+            clone = Task(
+                titel=task.titel,
+                beschreibung=task.beschreibung,
+                deadline=task.deadline,
+                created_by=task.created_by,
+                category_id=task.category_id,
+                recurring=True,
+                aufwand_min=task.aufwand_min,
+            )
+            db.add(clone)
+            db.commit()
+            db.refresh(clone)
+            for a in db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).all():
+                db.add(TaskAssignee(task_id=clone.id, user_id=a.user_id))
+            cloned = True
+
     db.commit()
-    return {"id": task.id, "done": task.done}
+    return {"id": task.id, "done": task.done, "cloned": cloned}
+
+
+@app.patch("/api/tasks/{task_id}/deadline-today")
+def toggle_task_deadline_today(task_id: int, request: Request, db: Session = Depends(get_db)):
+    """Schnellaktion (❗-Button): setzt die Deadline auf heute. Steht sie schon
+    auf heute, wird sie stattdessen wieder entfernt (Toggle)."""
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    if task.deadline and task.deadline.date() == date.today():
+        task.deadline = None
+    else:
+        task.deadline = dt.combine(date.today(), dt.min.time())
+    db.commit()
+    return {"id": task.id, "deadline": task.deadline.isoformat() if task.deadline else None}
 
 
 @app.delete("/api/tasks/{task_id}")
@@ -517,8 +623,59 @@ def delete_task(task_id: int, request: Request, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id).first()
     if task:
         db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).delete(synchronize_session=False)
+        db.query(TaskSubitem).filter(TaskSubitem.task_id == task.id).delete(synchronize_session=False)
         db.delete(task)
         db.commit()
+    return {"ok": True}
+
+
+# --- Teilaufgaben (Checkliste innerhalb einer Aufgabe) ---
+
+@app.post("/api/tasks/{task_id}/subitems")
+def create_task_subitem(task_id: int, request: Request, payload: TaskSubitemCreate, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    titel = payload.titel.strip()
+    if not titel:
+        return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
+    if len(titel) > 120:
+        return JSONResponse(status_code=400, content={"error": "Titel darf maximal 120 Zeichen haben"})
+
+    sub = TaskSubitem(task_id=task_id, titel=titel)
+    db.add(sub)
+    db.commit()
+    db.refresh(sub)
+    return {"id": sub.id, "titel": sub.titel, "done": sub.done}
+
+
+@app.patch("/api/tasks/{task_id}/subitems/{sub_id}/toggle")
+def toggle_task_subitem(task_id: int, sub_id: int, request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    sub = db.query(TaskSubitem).filter(TaskSubitem.id == sub_id, TaskSubitem.task_id == task_id).first()
+    if not sub:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    sub.done = not sub.done
+    db.commit()
+    return {"id": sub.id, "done": sub.done}
+
+
+@app.delete("/api/tasks/{task_id}/subitems/{sub_id}")
+def delete_task_subitem(task_id: int, sub_id: int, request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    db.query(TaskSubitem).filter(TaskSubitem.id == sub_id, TaskSubitem.task_id == task_id).delete(
+        synchronize_session=False
+    )
+    db.commit()
     return {"ok": True}
 
 
@@ -689,6 +846,33 @@ def list_users(request: Request, db: Session = Depends(get_db)):
     return [{"id": u.id, "username": u.username} for u in users]
 
 
+@app.get("/api/activity")
+def get_my_activity(request: Request, db: Session = Depends(get_db)):
+    """Bis zu 3 aktuelle Log-Einträge, bei denen der eingeloggte User die
+    BETROFFENE (nicht auslösende) Person ist — für die Startseite."""
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    rows = (
+        db.query(ActivityLog)
+        .filter(ActivityLog.affected_username == username)
+        .order_by(ActivityLog.created_at.desc())
+        .limit(3)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "created_at": r.created_at.isoformat(),
+            "actor": r.actor_username,
+            "action": r.action,
+            "message": r.message,
+        }
+        for r in rows
+    ]
+
+
 # --- Kosten & Schulden ---
 
 @app.get("/api/expenses")
@@ -856,6 +1040,17 @@ def create_expense(
         )
         db.add(row)
         created.append(row)
+    db.commit()
+
+    names = {u.id: u.username for u in db.query(User).filter(User.id.in_(beneficiary_ids + [glaubiger_id])).all()}
+    payer_name = names.get(glaubiger_id, "?")
+    for uid in beneficiary_ids:
+        beneficiary_name = names.get(uid, "?")
+        amount_str = f"{amounts[uid]:.2f} €".replace(".", ",")
+        log_action(
+            db, payer_name, beneficiary_name, "expense_created",
+            f"{payer_name} hat {amount_str} für „{betreff}“ für dich bezahlt",
+        )
     db.commit()
 
     return {"created": len(created), "amounts": amounts, "betreff": betreff, "batch_id": batch_id}
@@ -1108,6 +1303,14 @@ def settle_expenses(
     )
     db.add(tilgung)
     db.commit()
+
+    amount_str = f"{amount:.2f} €".replace(".", ",")
+    log_action(
+        db, me.username, creditor.username, "payment_reported",
+        f"{me.username} hat gemeldet, dir {amount_str} überwiesen zu haben",
+    )
+    db.commit()
+
     return {"created": True, "amount": amount, "to": creditor.username}
 
 
@@ -1175,6 +1378,16 @@ def confirm_received_payment(
 
     row.status = "getilgt"
     db.commit()
+
+    original_sender = db.query(User).filter(User.id == row.glaubiger_id).first()
+    if original_sender:
+        amount_str = f"{float(row.cash):.2f} €".replace(".", ",")
+        log_action(
+            db, me.username, original_sender.username, "payment_confirmed",
+            f"{me.username} hat deine Zahlung von {amount_str} bestätigt",
+        )
+        db.commit()
+
     return {"ok": True}
 
 
@@ -1207,6 +1420,119 @@ def get_expense_leaderboard(request: Request, db: Session = Depends(get_db)):
         "rank": rank,
         "total_participants": len(ranking),
         "your_total": float(totals.get(me.id, 0) or 0) if me else 0,
+    }
+
+
+# --- Wetter (Open-Meteo, keine Anmeldung/API-Key nötig) ---
+# Feste Koordinaten des Camp-Standorts.
+CAMP_LAT = 47.6738659
+CAMP_LON = 9.7418924
+WEATHER_CACHE_SECONDS = 600  # 10 Minuten — genug Aktualität, schont die kostenlose API
+THUNDERSTORM_CODES = {95, 96, 99}
+STORM_GUST_THRESHOLD_KMH = 70
+
+_weather_cache = {"data": None, "fetched_at": 0.0}
+
+
+def _fetch_weather_raw() -> dict:
+    now = time.time()
+    if _weather_cache["data"] and now - _weather_cache["fetched_at"] < WEATHER_CACHE_SECONDS:
+        return _weather_cache["data"]
+
+    resp = httpx.get(
+        "https://api.open-meteo.com/v1/forecast",
+        params={
+            "latitude": CAMP_LAT,
+            "longitude": CAMP_LON,
+            "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,"
+            "wind_gusts_10m,wind_direction_10m,relative_humidity_2m,precipitation",
+            "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code,"
+            "wind_speed_10m,wind_gusts_10m",
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
+            "wind_speed_10m_max,wind_gusts_10m_max,sunrise,sunset",
+            "timezone": "Europe/Berlin",
+            "forecast_days": 4,
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    _weather_cache["data"] = data
+    _weather_cache["fetched_at"] = now
+    return data
+
+
+@app.get("/api/weather")
+def get_weather(request: Request):
+    """Kein Standort-Handling nötig — der Camp-Standort ist fix. Ableitung von
+    Gewitter-/Sturmwarnungen passiert hier aus den echten Open-Meteo-Rohdaten
+    (Wettercode 95/96/99 bzw. Böen ab 70 km/h in den nächsten 24h) — das ist
+    keine offizielle DWD-Unwetterwarnung, sondern eine eigene, transparente
+    Schwellenwert-Auswertung auf Basis echter Vorhersagedaten."""
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    try:
+        data = _fetch_weather_raw()
+    except Exception:
+        return JSONResponse(status_code=502, content={"error": "Wetterdaten aktuell nicht abrufbar"})
+
+    hourly = data.get("hourly", {})
+    times = hourly.get("time", [])
+    codes = hourly.get("weather_code", [])
+    gusts = hourly.get("wind_gusts_10m", [])
+    # current.time hat Minutenauflösung (z. B. "...T12:30"), hourly.time nur
+    # volle Stunden — ein exakter String-Vergleich träfe daher nie. ISO8601 in
+    # diesem Format ("YYYY-MM-DDTHH:MM") vergleicht sich lexikografisch korrekt
+    # chronologisch, daher reicht ">=" um die nächste kommende Stunde zu finden.
+    current_time = data.get("current", {}).get("time") or ""
+    start_idx = next((i for i, t in enumerate(times) if t >= current_time), 0)
+    end_idx = min(start_idx + 24, len(times))
+
+    warnings = []
+    for i in range(start_idx, end_idx):
+        if codes[i] in THUNDERSTORM_CODES:
+            warnings.append({"type": "gewitter", "time": times[i], "message": "Gewitter möglich"})
+        elif gusts[i] >= STORM_GUST_THRESHOLD_KMH:
+            warnings.append(
+                {"type": "sturm", "time": times[i], "message": f"Starke Böen bis {round(gusts[i])} km/h"}
+            )
+
+    hourly_out = [
+        {
+            "time": times[i],
+            "temp": hourly.get("temperature_2m", [None])[i] if i < len(hourly.get("temperature_2m", [])) else None,
+            "precip_prob": hourly.get("precipitation_probability", [None])[i]
+            if i < len(hourly.get("precipitation_probability", []))
+            else None,
+            "precip": hourly.get("precipitation", [None])[i] if i < len(hourly.get("precipitation", [])) else None,
+            "code": codes[i],
+            "wind": hourly.get("wind_speed_10m", [None])[i] if i < len(hourly.get("wind_speed_10m", [])) else None,
+            "gust": gusts[i] if i < len(gusts) else None,
+        }
+        for i in range(start_idx, end_idx)
+    ]
+
+    daily = data.get("daily", {})
+    daily_out = [
+        {
+            "date": daily["time"][i],
+            "code": daily["weather_code"][i],
+            "temp_max": daily["temperature_2m_max"][i],
+            "temp_min": daily["temperature_2m_min"][i],
+            "precip_prob": daily["precipitation_probability_max"][i],
+            "wind_max": daily["wind_speed_10m_max"][i],
+            "gust_max": daily["wind_gusts_10m_max"][i],
+        }
+        for i in range(len(daily.get("time", [])))
+    ]
+
+    return {
+        "current": data.get("current"),
+        "hourly": hourly_out,
+        "daily": daily_out,
+        "warnings": warnings,
+        "fetched_at": _weather_cache["fetched_at"],
     }
 
 

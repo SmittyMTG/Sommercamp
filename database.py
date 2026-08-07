@@ -65,6 +65,9 @@ class ShoppingItem(Base):
     done = Column(Boolean, default=False)
     added_by = Column(String, nullable=True)
     woher_id = Column(Integer, ForeignKey("shopping_sources.id"), nullable=True)
+    # Schnellaktion (❗-Button): "wird heute gebraucht", kein volles Datumsfeld
+    # im Formular — nur gesetzt/entfernt über den Toggle-Endpunkt.
+    deadline = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -93,6 +96,13 @@ class Task(Base):
     category_id = Column(Integer, ForeignKey("task_categories.id"), nullable=True)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Wiederkehrend: beim Abschließen wird automatisch eine neue, offene Kopie
+    # angelegt (siehe main.py toggle_task) — die erledigte Zeile bleibt als
+    # eigenständiger, abgeschlossener Vorgang in der Statistik stehen.
+    recurring = Column(Boolean, nullable=False, default=False)
+    # Geschätzter Aufwand in Minuten (ganzzahlig, optional) — fließt gewichtet
+    # in die Aufgaben-Statistik ein.
+    aufwand_min = Column(Integer, nullable=True)
 
 
 class TaskAssignee(Base):
@@ -100,6 +110,18 @@ class TaskAssignee(Base):
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+
+# Teilaufgaben: einfache Checkliste innerhalb einer Aufgabe. Zählt NICHT als
+# eigene Aufgabe in der Statistik — nur die übergeordnete Task zählt, die
+# Subitems sind rein interner Fortschritt.
+class TaskSubitem(Base):
+    __tablename__ = "task_subitems"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    titel = Column(String(120), nullable=False)
+    done = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 # Camp-Plan-Termin: nur Admins legen Termine an, sichtbar für alle.
@@ -139,6 +161,20 @@ class Ausgabe(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+# Aktivitäts-Log: EIN Eintrag pro Aktion, mit auslösendem UND betroffenem
+# Account getrennt (z. B. "Person B schließt eine Aufgabe von Person A" ->
+# actor=B, affected=A). affected_username ist NULL, wenn niemand konkret
+# betroffen ist (z. B. eine Aufgabe ohne Zuweisung wird angelegt).
+class ActivityLog(Base):
+    __tablename__ = "activity_log"
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    actor_username = Column(String, nullable=False, index=True)
+    affected_username = Column(String, nullable=True, index=True)
+    action = Column(String(40), nullable=False)
+    message = Column(String(200), nullable=False)
+
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
@@ -158,7 +194,10 @@ _ensure_column("ausgaben", "gezahlt", "BOOLEAN", "DEFAULT 0")
 _ensure_column("ausgaben", "status", "TEXT", "DEFAULT 'offen'")
 _ensure_column("ausgaben", "batch_id", "TEXT")
 _ensure_column("shopping_items", "woher_id", "INTEGER")
+_ensure_column("shopping_items", "deadline", "DATE")
 _ensure_column("tasks", "category_id", "INTEGER")
+_ensure_column("tasks", "recurring", "BOOLEAN", "DEFAULT 0")
+_ensure_column("tasks", "aufwand_min", "INTEGER")
 
 
 def _backfill_expense_batch_ids():

@@ -111,6 +111,23 @@ function isAdminRole(role) {
   return typeof role === "string" && role.trim().toLowerCase() === "admin";
 }
 
+// Feste Farbe pro Person, überall im UI verwendet, wo ein Name auftaucht —
+// Wiedererkennung auf einen Blick, unabhängig vom Kontext (Aufgaben, Ausgaben,
+// Zahlungen, Geldfluss-Diagramm). Namen ohne Eintrag bleiben schlicht (kein Tag).
+const NAME_COLORS = {
+  Henning: "#ffd400",
+  Noah: "#ff9f45",
+  Claus: "#ff7a7a",
+  Nick: "#c9a3ff",
+  Felix: "#4fd8cf",
+};
+
+function nameTag(username) {
+  const safe = escapeHtml(username);
+  const color = NAME_COLORS[username];
+  return color ? `<span class="name-tag" style="background:${color}">${safe}</span>` : safe;
+}
+
 /* ---------- Generic modal ---------- */
 const modal = document.getElementById("modal");
 const modalForm = document.getElementById("modalForm");
@@ -124,7 +141,11 @@ let modalSubmitHandler = null;
 // Schnappschuss aller Feldwerte im Modal, um beim Schließen zu erkennen, ob
 // sich seit dem Öffnen etwas geändert hat (siehe hasUnsavedModalChanges).
 function snapshotModalFormState() {
+  // [data-live-save] Felder (z. B. Teilaufgaben-Checkboxen) speichern sofort
+  // eigenständig beim Ändern — sollen daher nicht als "ungespeicherte Eingabe"
+  // des Hauptformulars zählen und keinen unnötigen Verwerfen-Dialog auslösen.
   return Array.from(modalBody.querySelectorAll("input, textarea, select"))
+    .filter((el) => !el.closest("[data-live-save]"))
     .map((el) => (el.type === "checkbox" || el.type === "radio" ? (el.checked ? "1" : "0") : el.value))
     .join("|");
 }
@@ -215,6 +236,7 @@ function renderShoppingItem(item) {
   const sourceTag = item.woher
     ? `<span class="source-tag" style="background:${escapeHtml(item.woher.farbe)}">${escapeHtml(item.woher.bezeichnung)}</span>`
     : "";
+  const urgentTag = item.deadline ? `<p class="list-card-meta danger">❗ wird heute gebraucht</p>` : "";
 
   card.innerHTML = `
     <div class="list-card-content">
@@ -222,9 +244,11 @@ function renderShoppingItem(item) {
       <div class="list-card-text">
         <p class="list-card-title">${escapeHtml(item.name)}</p>
         ${sourceTag}
+        ${urgentTag}
       </div>
     </div>
     <div class="list-card-actions">
+      <button type="button" class="urgent-btn${item.deadline ? " active" : ""}" aria-label="Wird heute gebraucht">❗</button>
       <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
       <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
     </div>
@@ -241,6 +265,15 @@ function renderShoppingItem(item) {
       checkbox.classList.toggle("checked", data.done);
       card.classList.toggle("done", data.done);
       updateQuickShoppingCount();
+    }
+  });
+
+  card.querySelector(".urgent-btn").addEventListener("click", async () => {
+    const res = await fetch(`/api/shopping/${item.id}/deadline-today`, { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      item.deadline = data.deadline;
+      renderSortedShoppingList();
     }
   });
 
@@ -538,6 +571,13 @@ function isTaskOverdue(task) {
   return new Date(task.deadline) < today;
 }
 
+// Für den ❗-Schnellaktion-Button: zeigt "aktiv", solange die Deadline auf
+// heute steht (egal ob bei Aufgaben — Datum+Zeit — oder Einkaufsliste — nur Datum).
+function isDeadlineToday(iso) {
+  if (!iso) return false;
+  return new Date(iso).toDateString() === new Date().toDateString();
+}
+
 function formatDeadline(iso) {
   const d = new Date(iso);
   return d.toLocaleString("de-DE", {
@@ -614,33 +654,68 @@ function renderTaskItem(task) {
     const label = `📅 ${formatDeadline(task.deadline)}`;
     metaParts.push(overdue ? `<span class="danger">⚠️ ${label}</span>` : label);
   }
+  if (task.aufwand_min != null) metaParts.push(`⏱ ${task.aufwand_min} Min`);
   if (task.assignees.length) {
-    metaParts.push(`${task.assignees.map((a) => escapeHtml(a.username)).join(", ")} ist verantwortlich`);
+    metaParts.push(`${task.assignees.map((a) => nameTag(a.username)).join(", ")} ist verantwortlich`);
   }
 
   const categoryTag = task.category
     ? `<span class="source-tag" style="background:${escapeHtml(task.category.farbe)}">${escapeHtml(task.category.bezeichnung)}</span>`
     : "";
+  const recurringTag = task.recurring ? `<span class="recurring-tag">🔁 wiederkehrend</span>` : "";
 
   const descHtml = task.beschreibung
     ? `<p class="list-card-meta">${escapeHtml(task.beschreibung)}</p>`
     : "";
+
+  const subitems = task.subitems || [];
+  const subitemsDone = subitems.filter((s) => s.done).length;
+  const subitemsHtml = subitems.length
+    ? `
+      <p class="list-card-meta subitems-progress">Teilaufgaben: ${subitemsDone}/${subitems.length}</p>
+      <div class="subitems-list">
+        ${subitems
+          .map(
+            (s) => `
+              <label class="subitem-row${s.done ? " done" : ""}">
+                <input type="checkbox" data-sub-id="${s.id}"${s.done ? " checked" : ""}>
+                <span>${escapeHtml(s.titel)}</span>
+              </label>
+            `
+          )
+          .join("")}
+      </div>
+    `
+    : "";
+
+  const isUrgentToday = isDeadlineToday(task.deadline);
 
   card.innerHTML = `
     <div class="list-card-content">
       <button type="button" class="list-card-checkbox${task.done ? " checked" : ""}" aria-label="Erledigt"></button>
       <div class="list-card-text">
         <p class="list-card-title">${escapeHtml(task.titel)}</p>
-        ${categoryTag}
+        ${categoryTag}${recurringTag}
         ${metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : ""}
         ${descHtml}
+        ${subitemsHtml}
       </div>
     </div>
     <div class="list-card-actions">
+      <button type="button" class="urgent-btn${isUrgentToday ? " active" : ""}" aria-label="Deadline auf heute setzen">❗</button>
       <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
       <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
     </div>
   `;
+
+  card.querySelector(".urgent-btn").addEventListener("click", async () => {
+    const res = await fetch(`/api/tasks/${task.id}/deadline-today`, { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      task.deadline = data.deadline;
+      loadTasks(true);
+    }
+  });
 
   const checkbox = card.querySelector(".list-card-checkbox");
   checkbox.addEventListener("click", async (e) => {
@@ -648,10 +723,24 @@ function renderTaskItem(task) {
     const res = await fetch(`/api/tasks/${task.id}/toggle`, { method: "PATCH" });
     if (res.ok) {
       const data = await res.json();
+      if (data.cloned) {
+        // Wiederkehrend: eine neue offene Kopie ist entstanden — komplett neu laden,
+        // damit sie in der Liste auftaucht, statt nur diese eine Karte zu aktualisieren.
+        loadTasks(true);
+        return;
+      }
       checkbox.classList.toggle("checked", data.done);
       card.classList.toggle("done", data.done);
       task.done = data.done;
     }
+  });
+
+  card.querySelectorAll(".subitem-row input[type=checkbox]").forEach((cb) => {
+    cb.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const res = await fetch(`/api/tasks/${task.id}/subitems/${cb.dataset.subId}/toggle`, { method: "PATCH" });
+      if (res.ok) loadTasks(true);
+    });
   });
 
   card.querySelector(".edit-btn").addEventListener("click", () => openEditTaskModal(task));
@@ -695,20 +784,34 @@ async function renderFilteredSortedTasks() {
 // Baut eine Zeile pro Eintrag (Label, Balken, Anzahl) — für die Kategorie- und
 // Personen-Aufschlüsselung der offenen Aufgaben. Ein Balken pro Zeile, die
 // Länge ist relativ zum größten Wert (magnitude, eine Farbe).
+// Aufgaben ohne eigene Aufwandsschätzung zählen trotzdem mit einem Standardwert
+// mit, statt in der gewichteten Statistik komplett zu verschwinden.
+const DEFAULT_TASK_WEIGHT_MIN = 15;
+function taskWeight(t) {
+  return t.aufwand_min != null ? t.aufwand_min : DEFAULT_TASK_WEIGHT_MIN;
+}
+
+function formatTaskMinutes(min) {
+  if (min < 60) return `${Math.round(min)} Min`;
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return m ? `${h} Std ${m} Min` : `${h} Std`;
+}
+
 function renderTaskStatBars(container, entries, emptyText) {
   if (!container) return;
   if (entries.length === 0) {
     container.innerHTML = `<p class="muted">${emptyText}</p>`;
     return;
   }
-  const max = Math.max(...entries.map((e) => e.count));
+  const max = Math.max(...entries.map((e) => e.minutes));
   container.innerHTML = entries
     .map(
       (e) => `
         <div class="task-stat-row">
           <span class="task-stat-label">${escapeHtml(e.label)}</span>
-          <div class="task-stat-track"><div class="task-stat-fill" style="width:${Math.max(6, (e.count / max) * 100)}%"></div></div>
-          <span class="task-stat-count">${e.count}</span>
+          <div class="task-stat-track"><div class="task-stat-fill" style="width:${Math.max(6, (e.minutes / max) * 100)}%"></div></div>
+          <span class="task-stat-count">${formatTaskMinutes(e.minutes)}</span>
         </div>
       `
     )
@@ -724,63 +827,271 @@ function renderTaskStats() {
   if (!headlineEl) return;
 
   const total = lastTaskItems.length;
-  const done = lastTaskItems.filter((t) => t.done).length;
+  const doneItems = lastTaskItems.filter((t) => t.done);
   const openItems = lastTaskItems.filter((t) => !t.done);
-  const overdue = openItems.filter((t) => isTaskOverdue(t)).length;
-  const openNotOverdue = openItems.length - overdue;
-  const pct = total ? Math.round((done / total) * 100) : 0;
+  const overdueItems = openItems.filter((t) => isTaskOverdue(t));
+  const openNotOverdueItems = openItems.filter((t) => !isTaskOverdue(t));
+  const pct = total ? Math.round((doneItems.length / total) * 100) : 0;
 
-  headlineEl.textContent = total ? `${done} von ${total} (${pct}%)` : "–";
+  headlineEl.textContent = total ? `${doneItems.length} von ${total} Aufgaben (${pct}%)` : "–";
+
+  const sumWeight = (items) => items.reduce((s, t) => s + taskWeight(t), 0);
+  const doneMin = sumWeight(doneItems);
+  const openMin = sumWeight(openNotOverdueItems);
+  const overdueMin = sumWeight(overdueItems);
 
   if (total === 0) {
     barEl.innerHTML = "";
     legendEl.innerHTML = `<p class="muted">Noch keine Aufgaben angelegt.</p>`;
   } else {
     const segments = [
-      ["done", done],
-      ["open", openNotOverdue],
-      ["overdue", overdue],
-    ].filter(([, count]) => count > 0);
+      ["done", doneMin],
+      ["open", openMin],
+      ["overdue", overdueMin],
+    ].filter(([, m]) => m > 0);
     barEl.innerHTML = segments
-      .map(([cls, count]) => `<span class="task-stats-seg task-stats-seg--${cls}" style="flex:${count}"></span>`)
+      .map(([cls, m]) => `<span class="task-stats-seg task-stats-seg--${cls}" style="flex:${m}"></span>`)
       .join("");
     legendEl.innerHTML = `
-      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--done"></span>✓ Erledigt (${done})</span>
-      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--open"></span>Offen (${openNotOverdue})</span>
-      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--overdue"></span>⚠️ Überfällig (${overdue})</span>
+      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--done"></span>✓ Erledigt: ${doneItems.length} (${formatTaskMinutes(doneMin)})</span>
+      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--open"></span>Offen: ${openNotOverdueItems.length} (${formatTaskMinutes(openMin)})</span>
+      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--overdue"></span>⚠️ Überfällig: ${overdueItems.length} (${formatTaskMinutes(overdueMin)})</span>
     `;
   }
 
-  // Nur offene Aufgaben — zeigt, wo aktuell noch was zu tun ist.
-  const categoryCounts = new Map();
+  // Nur offene Aufgaben, gewichtet nach Aufwand (Minuten) statt nach reiner
+  // Anzahl — zeigt, wo aktuell wie viel Arbeit liegt, nicht nur wie viele Zettel.
+  const categoryMinutes = new Map();
   let uncategorized = 0;
   openItems.forEach((t) => {
+    const w = taskWeight(t);
     if (t.category) {
-      categoryCounts.set(t.category.bezeichnung, (categoryCounts.get(t.category.bezeichnung) || 0) + 1);
+      categoryMinutes.set(t.category.bezeichnung, (categoryMinutes.get(t.category.bezeichnung) || 0) + w);
     } else {
-      uncategorized += 1;
+      uncategorized += w;
     }
   });
-  const categoryEntries = Array.from(categoryCounts, ([label, count]) => ({ label, count })).sort(
-    (a, b) => b.count - a.count
+  const categoryEntries = Array.from(categoryMinutes, ([label, minutes]) => ({ label, minutes })).sort(
+    (a, b) => b.minutes - a.minutes
   );
-  if (uncategorized > 0) categoryEntries.push({ label: "Ohne Kategorie", count: uncategorized });
+  if (uncategorized > 0) categoryEntries.push({ label: "Ohne Kategorie", minutes: uncategorized });
   renderTaskStatBars(byCategoryEl, categoryEntries, "Keine offenen Aufgaben.");
 
-  const personCounts = new Map();
+  const personMinutes = new Map();
   let forAll = 0;
   openItems.forEach((t) => {
+    const w = taskWeight(t);
     if (t.assignees.length) {
-      personCounts.set(t.assignees[0].username, (personCounts.get(t.assignees[0].username) || 0) + 1);
+      personMinutes.set(t.assignees[0].username, (personMinutes.get(t.assignees[0].username) || 0) + w);
     } else {
-      forAll += 1;
+      forAll += w;
     }
   });
-  const personEntries = Array.from(personCounts, ([label, count]) => ({ label, count })).sort(
-    (a, b) => b.count - a.count
+  const personEntries = Array.from(personMinutes, ([label, minutes]) => ({ label, minutes })).sort(
+    (a, b) => b.minutes - a.minutes
   );
-  if (forAll > 0) personEntries.push({ label: "Für alle", count: forAll });
+  if (forAll > 0) personEntries.push({ label: "Für alle", minutes: forAll });
   renderTaskStatBars(byPersonEl, personEntries, "Keine offenen Aufgaben.");
+}
+
+/* ---------- Dashboard: Wetter am Camp (echte Daten von Open-Meteo) ---------- */
+const WEATHER_CODES = {
+  0: { icon: "☀️", label: "Klar" },
+  1: { icon: "🌤️", label: "Überwiegend klar" },
+  2: { icon: "⛅", label: "Teilweise bewölkt" },
+  3: { icon: "☁️", label: "Bedeckt" },
+  45: { icon: "🌫️", label: "Nebel" },
+  48: { icon: "🌫️", label: "Reifnebel" },
+  51: { icon: "🌦️", label: "Leichter Nieselregen" },
+  53: { icon: "🌦️", label: "Nieselregen" },
+  55: { icon: "🌧️", label: "Starker Nieselregen" },
+  56: { icon: "🌧️", label: "Gefrierender Niesel" },
+  57: { icon: "🌧️", label: "Starker gefrierender Niesel" },
+  61: { icon: "🌦️", label: "Leichter Regen" },
+  63: { icon: "🌧️", label: "Regen" },
+  65: { icon: "🌧️", label: "Starker Regen" },
+  66: { icon: "🌧️", label: "Gefrierender Regen" },
+  67: { icon: "🌧️", label: "Starker gefrierender Regen" },
+  71: { icon: "🌨️", label: "Leichter Schneefall" },
+  73: { icon: "🌨️", label: "Schneefall" },
+  75: { icon: "❄️", label: "Starker Schneefall" },
+  77: { icon: "❄️", label: "Schneekörner" },
+  80: { icon: "🌦️", label: "Leichte Schauer" },
+  81: { icon: "🌧️", label: "Schauer" },
+  82: { icon: "⛈️", label: "Heftige Schauer" },
+  85: { icon: "🌨️", label: "Leichte Schneeschauer" },
+  86: { icon: "❄️", label: "Starke Schneeschauer" },
+  95: { icon: "⛈️", label: "Gewitter" },
+  96: { icon: "⛈️", label: "Gewitter mit Hagel" },
+  99: { icon: "⛈️", label: "Schweres Gewitter mit Hagel" },
+};
+function weatherInfo(code) {
+  return WEATHER_CODES[code] || { icon: "🌡️", label: "" };
+}
+function windDirLabel(deg) {
+  if (deg == null) return "";
+  const dirs = ["N", "NO", "O", "SO", "S", "SW", "W", "NW"];
+  return dirs[Math.round(deg / 45) % 8];
+}
+
+// Fasst aufeinanderfolgende Warn-Stunden desselben Typs zu einer Zeitspanne
+// zusammen, statt für jede einzelne Stunde eine eigene Zeile zu zeigen.
+function groupWeatherWarnings(warnings) {
+  const groups = [];
+  warnings.forEach((w) => {
+    const last = groups[groups.length - 1];
+    if (last && last.type === w.type && new Date(w.time) - new Date(last.endTime) <= 3600000) {
+      last.endTime = w.time;
+    } else {
+      groups.push({ type: w.type, startTime: w.time, endTime: w.time });
+    }
+  });
+  const fmt = (iso) => new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  return groups.map((g) => {
+    const icon = g.type === "gewitter" ? "⛈️" : "💨";
+    const label = g.type === "gewitter" ? "Gewitter möglich" : "Starke Böen möglich";
+    const range = g.startTime === g.endTime ? fmt(g.startTime) : `${fmt(g.startTime)}–${fmt(g.endTime)}`;
+    return { icon, text: `${label}, ${range} Uhr` };
+  });
+}
+
+function renderWeather(data) {
+  const el = document.getElementById("weatherCard");
+  if (!el) return;
+  if (!data || !data.current) {
+    el.classList.add("hidden");
+    return;
+  }
+  el.classList.remove("hidden");
+
+  const cur = data.current;
+  const info = weatherInfo(cur.weather_code);
+
+  const warningsHtml = (data.warnings || []).length
+    ? groupWeatherWarnings(data.warnings)
+        .map((w) => `<div class="weather-warning">${w.icon} ${escapeHtml(w.text)}</div>`)
+        .join("")
+    : "";
+
+  const hourly = (data.hourly || []).slice(0, 12);
+  const hourlyHtml = hourly
+    .map((h, i) => {
+      const hour = new Date(h.time).getHours();
+      const prob = h.precip_prob || 0;
+      const heightPct = Math.max(4, prob);
+      return `
+        <div class="weather-hour">
+          <span class="weather-hour-prob">${prob > 9 ? prob + "%" : ""}</span>
+          <div class="weather-hour-track"><div class="weather-hour-fill" style="height:${heightPct}%"></div></div>
+          <span class="weather-hour-label">${i % 3 === 0 ? hour + "h" : ""}</span>
+        </div>
+      `;
+    })
+    .join("");
+
+  const dailyHtml = (data.daily || [])
+    .map((d) => {
+      const dInfo = weatherInfo(d.code);
+      const dayLabel = new Date(d.date).toLocaleDateString("de-DE", { weekday: "short" });
+      return `
+        <div class="weather-day">
+          <span class="weather-day-name">${dayLabel}</span>
+          <span class="weather-day-icon">${dInfo.icon}</span>
+          <span class="weather-day-temp">${Math.round(d.temp_max)}°/${Math.round(d.temp_min)}°</span>
+        </div>
+      `;
+    })
+    .join("");
+
+  el.innerHTML = `
+    <div class="weather-header">
+      <div>
+        <div class="eyebrow">Wetter am Camp</div>
+        <div class="weather-now"><span class="weather-icon">${info.icon}</span><span class="weather-temp">${Math.round(cur.temperature_2m)}°</span></div>
+        <div class="muted">${escapeHtml(info.label)} · Gefühlt ${Math.round(cur.apparent_temperature)}° · Luftfeuchte ${Math.round(cur.relative_humidity_2m)}%</div>
+      </div>
+    </div>
+    ${warningsHtml}
+    <p class="weather-subhead">Niederschlag — nächste Stunden</p>
+    <div class="weather-hourly">${hourlyHtml}</div>
+    <div class="weather-wind-row">💨 ${Math.round(cur.wind_speed_10m)} km/h aus ${windDirLabel(cur.wind_direction_10m)}, Böen bis ${Math.round(cur.wind_gusts_10m)} km/h</div>
+    <p class="weather-subhead">Ausblick</p>
+    <div class="weather-daily">${dailyHtml}</div>
+  `;
+}
+
+let lastWeatherSignature = null;
+
+async function loadWeather() {
+  try {
+    const res = await fetch("/api/weather");
+    if (!res.ok) return;
+    const data = await res.json();
+    const signature = JSON.stringify(data);
+    if (signature === lastWeatherSignature) return;
+    lastWeatherSignature = signature;
+    renderWeather(data);
+  } catch (err) {
+    // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
+  }
+}
+
+/* ---------- Dashboard: "Neu für dich" (Activity-Log-Feed) ---------- */
+const activityFeedSectionEl = document.getElementById("activityFeedSection");
+const activityFeedEl = document.getElementById("activityFeed");
+
+function formatActivityTime(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+}
+
+const ACTIVITY_ICONS = {
+  task_created: "📋",
+  task_done: "✅",
+  expense_created: "💶",
+  payment_reported: "📤",
+  payment_confirmed: "📥",
+};
+
+function renderActivityItem(entry) {
+  const card = document.createElement("div");
+  card.className = "list-card";
+  // Name im fertigen Satz einfärben: Nachricht kommt vom Server als reiner
+  // Text, escapen und dann den (ebenfalls escapten) Namen gegen den farbigen
+  // Tag tauschen — ersetzt nur das erste Vorkommen, das reicht hier immer.
+  const messageHtml = escapeHtml(entry.message).replace(escapeHtml(entry.actor), nameTag(entry.actor));
+  card.innerHTML = `
+    <div class="list-card-text">
+      <p class="list-card-title">${ACTIVITY_ICONS[entry.action] || "•"} ${messageHtml}</p>
+      <p class="list-card-meta">${formatActivityTime(entry.created_at)}</p>
+    </div>
+  `;
+  return card;
+}
+
+let lastActivitySignature = null;
+
+async function loadActivityFeed() {
+  if (!activityFeedEl || !activityFeedSectionEl) return;
+  try {
+    const res = await fetch("/api/activity");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const entries = await res.json();
+
+    const signature = JSON.stringify(entries);
+    if (signature === lastActivitySignature) return;
+    lastActivitySignature = signature;
+
+    activityFeedSectionEl.classList.toggle("hidden", entries.length === 0);
+    activityFeedEl.innerHTML = "";
+    entries.forEach((e) => activityFeedEl.appendChild(renderActivityItem(e)));
+  } catch (err) {
+    // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
+  }
 }
 
 /* ---------- Dashboard: "Deine Aufgaben"-Vorschau auf der Startseite ---------- */
@@ -943,8 +1254,91 @@ function taskModalBodyHtml(users, categories, prefill = {}) {
       <label>Deadline (optional)
         <input type="date" id="taskDeadlineInput" value="${deadlineValue}">
       </label>
+      <label>Aufwand in Minuten (optional)
+        <input type="number" id="taskAufwandInput" min="0" step="1" inputmode="numeric" value="${prefill.aufwand_min != null ? prefill.aufwand_min : ""}" placeholder="z. B. 30">
+      </label>
+      <label class="check-card">
+        <input type="checkbox" id="taskRecurringInput"${prefill.recurring ? " checked" : ""}>
+        🔁 Wiederkehrend — nach Abschluss erscheint automatisch eine neue, offene Kopie
+      </label>
+      ${
+        prefill.id
+          ? `
+        <div class="checkbox-group" data-live-save>
+          <div class="eyebrow">Teilaufgaben</div>
+          <div id="taskSubitemsList" class="stack"></div>
+          <div class="action-row">
+            <input type="text" id="newSubitemInput" placeholder="Neue Teilaufgabe…" maxlength="120">
+            <button type="button" id="addSubitemBtn" class="secondary compact">+ Hinzufügen</button>
+          </div>
+        </div>
+      `
+          : ""
+      }
     </div>
   `;
+}
+
+// Muss NACH openModal() aufgerufen werden — nur im Bearbeiten-Modus vorhanden
+// (eine neue Aufgabe hat noch keine ID, der Server bräuchte die für die Subitems).
+function renderTaskSubitemsEditor(taskId, subitems) {
+  const container = document.getElementById("taskSubitemsList");
+  if (!container) return;
+  container.innerHTML = subitems.length
+    ? subitems
+        .map(
+          (s) => `
+            <div class="subitem-edit-row" data-sub-id="${s.id}">
+              <label>
+                <input type="checkbox" class="subitem-toggle" data-sub-id="${s.id}"${s.done ? " checked" : ""}>
+                <span>${escapeHtml(s.titel)}</span>
+              </label>
+              <button type="button" class="icon-button subitem-delete" data-sub-id="${s.id}" aria-label="Löschen">🗑️</button>
+            </div>
+          `
+        )
+        .join("")
+    : `<p class="muted">Noch keine Teilaufgaben.</p>`;
+
+  container.querySelectorAll(".subitem-toggle").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      await fetch(`/api/tasks/${taskId}/subitems/${cb.dataset.subId}/toggle`, { method: "PATCH" });
+      const sub = subitems.find((s) => s.id === parseInt(cb.dataset.subId, 10));
+      if (sub) sub.done = cb.checked;
+    });
+  });
+  container.querySelectorAll(".subitem-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await fetch(`/api/tasks/${taskId}/subitems/${btn.dataset.subId}`, { method: "DELETE" });
+      const idx = subitems.findIndex((s) => s.id === parseInt(btn.dataset.subId, 10));
+      if (idx !== -1) subitems.splice(idx, 1);
+      renderTaskSubitemsEditor(taskId, subitems);
+    });
+  });
+}
+
+function wireTaskSubitems(taskId, initialSubitems) {
+  const subitems = (initialSubitems || []).slice();
+  renderTaskSubitemsEditor(taskId, subitems);
+
+  const addBtn = document.getElementById("addSubitemBtn");
+  const input = document.getElementById("newSubitemInput");
+  if (!addBtn || !input) return;
+  addBtn.addEventListener("click", async () => {
+    const titel = input.value.trim();
+    if (!titel) return;
+    const res = await fetch(`/api/tasks/${taskId}/subitems`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ titel }),
+    });
+    if (res.ok) {
+      const created = await res.json();
+      subitems.push(created);
+      input.value = "";
+      renderTaskSubitemsEditor(taskId, subitems);
+    }
+  });
 }
 
 // Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten Felder im DOM).
@@ -1038,11 +1432,22 @@ async function readTaskForm() {
   const assigneeValue = document.getElementById("taskAssigneeSelect").value;
   const assignee_ids = assigneeValue ? [parseInt(assigneeValue, 10)] : [];
   const deadline = document.getElementById("taskDeadlineInput").value || null;
+  const aufwandRaw = document.getElementById("taskAufwandInput").value;
+  const aufwand_min = aufwandRaw !== "" ? parseInt(aufwandRaw, 10) : null;
+  const recurring = document.getElementById("taskRecurringInput").checked;
 
   const categoryResult = await resolveTaskCategoryId();
   if (!categoryResult.ok) return null;
 
-  return { titel, beschreibung, assignee_ids, category_id: categoryResult.category_id, deadline };
+  return {
+    titel,
+    beschreibung,
+    assignee_ids,
+    category_id: categoryResult.category_id,
+    deadline,
+    aufwand_min,
+    recurring,
+  };
 }
 
 async function openAddTaskModal() {
@@ -1101,6 +1506,7 @@ async function openEditTaskModal(task) {
   });
 
   wireTaskCategoryPicker();
+  wireTaskSubitems(task.id, task.subitems);
 }
 
 const addTaskButton = document.getElementById("addTaskButton");
@@ -1391,11 +1797,16 @@ function groupExpenses(expenses) {
 function renderExpenseGroup(group, isAdmin) {
   const card = document.createElement("div");
   card.className = "list-card";
-  const payer = Array.from(group.glaeubiger).map(escapeHtml).join(", ");
+  // Namen bleiben hier bewusst unhighlighted — die Randfarbe des Zahlers an
+  // der ganzen Kachel reicht als visuelle Zuordnung.
+  const payerNames = Array.from(group.glaeubiger);
+  const borderColor = NAME_COLORS[payerNames[0]];
+  if (borderColor) card.style.borderLeft = `4px solid ${borderColor}`;
+  const payer = payerNames.map((n) => escapeHtml(n)).join(", ");
   const breakdown = group.entries
     .map((e) => {
-      const label = e.selbst ? `${e.schuldner} (eigen)` : e.schuldner;
-      return `${escapeHtml(label)}: ${formatEuro(e.cash)}`;
+      const label = e.selbst ? `${escapeHtml(e.schuldner)} (eigen)` : escapeHtml(e.schuldner);
+      return `${label}: ${formatEuro(e.cash)}`;
     })
     .join(" · ");
   const canManage = isAdmin && group.batchId;
@@ -1504,6 +1915,8 @@ function renderExpenseList() {
   } else {
     groups.forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, lastExpensesIsAdmin)));
   }
+
+  updateExpensesHeroCard();
 }
 
 let lastExpensesSignature = null;
@@ -1544,35 +1957,93 @@ async function loadBalance() {
     if (signature === lastBalanceSignature) return;
     lastBalanceSignature = signature;
 
+    // Dezenter Chip statt großer Karte — sitzt neben der "Offene Zahlungen"-Überschrift.
     if (balance.net > 0.005) {
       balanceHeroEl.innerHTML = `
-        <div class="eyebrow">Dein Saldo</div>
-        <div class="countdown success">+${formatEuro(balance.net)}</div>
-        <div class="muted">Du bekommst insgesamt ${formatEuro(balance.net)} zurück.</div>
+        <span class="balance-chip-label">Dein Saldo</span>
+        <span class="balance-chip-value success">+${formatEuro(balance.net)}</span>
       `;
     } else if (balance.net < -0.005) {
       balanceHeroEl.innerHTML = `
-        <div class="eyebrow">Dein Saldo</div>
-        <div class="countdown danger">${formatEuro(balance.net)}</div>
-        <div class="muted">Du schuldest insgesamt ${formatEuro(Math.abs(balance.net))}.</div>
+        <span class="balance-chip-label">Dein Saldo</span>
+        <span class="balance-chip-value danger">${formatEuro(balance.net)}</span>
       `;
     } else {
-      balanceHeroEl.innerHTML = `<div class="muted">Du bist ausgeglichen.</div>`;
-    }
-
-    if (myExpensesHeroEl) {
-      myExpensesHeroEl.innerHTML = `
-        <div class="eyebrow">Deine Ausgaben</div>
-        <div class="countdown">${formatEuro(balance.my_total)}</div>
-        <div class="muted">Insgesamt für dich angefallene Kosten.</div>
+      balanceHeroEl.innerHTML = `
+        <span class="balance-chip-label">Dein Saldo</span>
+        <span class="balance-chip-value muted">ausgeglichen</span>
       `;
     }
   } catch (err) {
     balanceHeroEl.innerHTML = `<div class="muted">Saldo konnte nicht geladen werden.</div>`;
-    if (myExpensesHeroEl) {
-      myExpensesHeroEl.innerHTML = `<div class="muted">Ausgaben konnten nicht geladen werden.</div>`;
+  }
+}
+
+// "Ausgaben"-Karte reagiert auf den Personen-Filter darunter — rein clientseitig
+// aus den bereits geladenen Ausgaben berechnet, gleiche Regel wie die Liste
+// (nur status "offen", keine Tilgungsbuchungen — die kommen aus /api/expenses
+// erst gar nicht mit).
+function computeFilteredExpenseTotal() {
+  if (expenseFilterUserId === null) {
+    return lastExpenses.reduce((sum, e) => sum + e.cash, 0);
+  }
+  if (expenseFilterMode === "von") {
+    return lastExpenses.filter((e) => e.glaubiger_id === expenseFilterUserId).reduce((s, e) => s + e.cash, 0);
+  }
+  return lastExpenses.filter((e) => e.schuldner_id === expenseFilterUserId).reduce((s, e) => s + e.cash, 0);
+}
+
+function updateExpensesHeroCard() {
+  if (!myExpensesHeroEl) return;
+
+  let title = "Alle Ausgaben";
+  if (expenseFilterUserId !== null && cachedUsers) {
+    const person = cachedUsers.find((u) => u.id === expenseFilterUserId);
+    const isMe = person && cachedMe && person.id === cachedMe.id;
+    if (person) {
+      if (expenseFilterMode === "von") {
+        title = isMe ? "Deine Ausgaben" : `Ausgaben von ${nameTag(person.username)}`;
+      } else {
+        title = isMe ? "Für dich ausgegeben" : `Für ${nameTag(person.username)} ausgegeben`;
+      }
     }
   }
+
+  const total = computeFilteredExpenseTotal();
+  myExpensesHeroEl.innerHTML = `
+    <div class="eyebrow">${title}</div>
+    <div class="countdown">${formatEuro(total)}</div>
+  `;
+
+  renderBudgetProjection();
+}
+
+// Lineare Hochrechnung (Dreisatz) der eigenen Gesamtausgaben auf die volle
+// Camp-Länge: bisher Ausgegebenes / bisherige Camp-Tage * Camp-Gesamttage.
+// Bewusst immer auf die eigene Person bezogen, unabhängig vom Ausgaben-Filter
+// oben — "eigene Ausgaben" heißt hier wirklich "meine", nicht "gefilterte".
+function renderBudgetProjection() {
+  const el = document.getElementById("budgetProjection");
+  const valueEl = document.getElementById("budgetProjectionValue");
+  const detailEl = document.getElementById("budgetProjectionDetail");
+  if (!el || !valueEl || !detailEl || !cachedMe) return;
+
+  const totalCampDays = (CAMP_END - CAMP_START) / 86400000;
+  const now = new Date();
+  if (now < CAMP_START || totalCampDays <= 0) {
+    el.classList.add("hidden");
+    return;
+  }
+
+  const elapsedDays = Math.max(Math.min(now - CAMP_START, CAMP_END - CAMP_START) / 86400000, 1 / 24);
+  const spent = lastExpenses
+    .filter((e) => e.schuldner_id === cachedMe.id)
+    .reduce((sum, e) => sum + e.cash, 0);
+  const projected = (spent / elapsedDays) * totalCampDays;
+
+  el.classList.remove("hidden");
+  valueEl.textContent = formatEuro(projected);
+  detailEl.textContent = `Hochgerechnet auf alle ${Math.round(totalCampDays)} Camp-Tage, basierend auf ${formatEuro(spent)} bisher (Tag ${Math.max(1, Math.round(elapsedDays))} von ${Math.round(totalCampDays)}).`;
 }
 
 function expenseModalBodyHtml(users, me, prefill = {}) {
@@ -1587,7 +2058,7 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
   const beneficiaryOptions = users
     .map((u) => {
       const checked = beneficiaryIds ? beneficiaryIds.has(u.id) : true;
-      return `<label class="check-card"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}>${escapeHtml(u.username)}</label>`;
+      return `<label class="check-card"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}>${nameTag(u.username)}</label>`;
     })
     .join("");
 
@@ -1648,7 +2119,7 @@ function renderExpenseFixedAmountInputs(users, entryAmounts) {
         existingValues[uid] ?? (entryAmounts[uid] != null ? entryAmounts[uid].toFixed(2) : "");
       return `
         <div class="fixed-amount-row">
-          <span>${escapeHtml(u.username)}</span>
+          <span>${nameTag(u.username)}</span>
           <input type="number" step="0.01" min="0.01" inputmode="decimal" class="expense-fixed-input" data-uid="${uid}" placeholder="auto" value="${prefillValue}">
         </div>
       `;
@@ -1738,6 +2209,14 @@ function readExpenseForm() {
   return { glaubiger_id, schuldner_ids, cash, betreff, datum, fixed_amounts };
 }
 
+// Idiotensicherung gegen versehentliches Doppelt-Erfassen: gleicher Zahler +
+// (fast) gleicher Gesamtbetrag wie eine bereits bestehende Ausgabe.
+function findPossibleDuplicateExpense(form) {
+  return groupExpenses(lastExpenses).find(
+    (g) => g.glaubigerId === form.glaubiger_id && Math.abs(g.total - form.cash) < 0.01
+  );
+}
+
 async function openAddExpenseModal() {
   const { users, me } = await fetchUsersAndMe();
   if (!me || users.length === 0) return;
@@ -1750,6 +2229,15 @@ async function openAddExpenseModal() {
     onSubmit: async () => {
       const form = readExpenseForm();
       if (!form) return;
+
+      const duplicate = findPossibleDuplicateExpense(form);
+      if (duplicate) {
+        const payerName = Array.from(duplicate.glaeubiger)[0] || "?";
+        const proceed = confirm(
+          `⚠️ ${payerName} hat schon eine Ausgabe über ${formatEuro(duplicate.total)} erfasst ("${duplicate.betreff}", ${formatDate(duplicate.datum)}). Meintest du diese Zahlung? Trotzdem als neue, separate Ausgabe speichern?`
+        );
+        if (!proceed) return;
+      }
 
       const res = await fetch("/api/expenses", {
         method: "POST",
@@ -1846,9 +2334,9 @@ const moneyFlowDiagramEl = document.getElementById("moneyFlowDiagram");
 const FLOW_COLOR_VARS = ["--flow-1", "--flow-2", "--flow-3", "--flow-4", "--flow-5", "--flow-6", "--flow-7", "--flow-8"];
 
 // Sankey-artiges Flussdiagramm: links Schuldner, rechts Gläubiger, Bandbreite
-// = Betrag. Farbe folgt dem Schuldner (Absender) und bleibt fest pro Person
-// (alphabetisch zugewiesen, nie nach Betrag/Rang) — die Empfänger-Knoten
-// bleiben bewusst neutral, da bei ihnen mehrere Farben zusammenlaufen.
+// = Betrag. Farbe folgt der Person (feste Namensfarbe, siehe NAME_COLORS —
+// für alle anderen fällt es auf die Kategorial-Palette zurück) und bleibt auf
+// beiden Seiten gleich, damit man dieselbe Person sofort wiedererkennt.
 function buildMoneyFlowSvg(settlements) {
   if (settlements.length === 0) return "";
   const totalAmount = settlements.reduce((sum, s) => sum + s.amount, 0);
@@ -1871,10 +2359,16 @@ function buildMoneyFlowSvg(settlements) {
     names[s.to_id] = s.to;
   });
   const colorOf = {};
-  Array.from(new Set(settlements.map((s) => s.from_id)))
+  let autoColorIdx = 0;
+  Array.from(new Set(settlements.flatMap((s) => [s.from_id, s.to_id])))
     .sort((a, b) => names[a].localeCompare(names[b], "de"))
-    .forEach((id, i) => {
-      colorOf[id] = `var(${FLOW_COLOR_VARS[i % FLOW_COLOR_VARS.length]})`;
+    .forEach((id) => {
+      if (NAME_COLORS[names[id]]) {
+        colorOf[id] = NAME_COLORS[names[id]];
+      } else {
+        colorOf[id] = `var(${FLOW_COLOR_VARS[autoColorIdx % FLOW_COLOR_VARS.length]})`;
+        autoColorIdx += 1;
+      }
     });
 
   function buildNodes(idKey) {
@@ -1918,13 +2412,17 @@ function buildMoneyFlowSvg(settlements) {
   rightNodes.forEach((n) => {
     const pos = right.positions[n.id];
     const y = pos.y + rightOffset;
-    nodesSvg += `<rect x="${rightXStart.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="var(--yellow)"/>`;
+    nodesSvg += `<rect x="${rightXStart.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
     nodesSvg += `<text class="money-flow-node-label" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(y + pos.h / 2 - 3).toFixed(1)}" text-anchor="start">${escapeHtml(n.name)}</text>`;
     nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(y + pos.h / 2 + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
   });
 
   // Größte Bänder zuerst zeichnen, damit dünnere beim Überlappen sichtbar bleiben.
+  // Jedes Band bekommt seinen Betrag direkt als Label an der schmalsten Stelle
+  // (Bandmitte) — damit ist im Chart selbst schon alles ablesbar, ganz ohne
+  // die Liste darunter zu Rate ziehen zu müssen.
   let ribbonsSvg = "";
+  let labelsSvg = "";
   settlements
     .slice()
     .sort((a, b) => b.amount - a.amount)
@@ -1939,10 +2437,14 @@ function buildMoneyFlowSvg(settlements) {
       const d = `M${leftXEnd},${y0.toFixed(1)} C${midX},${y0.toFixed(1)} ${midX},${y1.toFixed(1)} ${rightXStart},${y1.toFixed(1)} L${rightXStart},${(y1 + thickness).toFixed(1)} C${midX},${(y1 + thickness).toFixed(1)} ${midX},${(y0 + thickness).toFixed(1)} ${leftXEnd},${(y0 + thickness).toFixed(1)} Z`;
       const opacity = s.pending ? 0.28 : 0.62;
       ribbonsSvg += `<path d="${d}" fill="${colorOf[s.from_id]}" opacity="${opacity}"><title>${escapeHtml(s.from)} → ${escapeHtml(s.to)}: ${formatEuro(s.amount)}${s.pending ? " (wartet auf Bestätigung)" : ""}</title></path>`;
+
+      const labelY = (y0 + y1) / 2 + thickness / 2;
+      const pendingSuffix = s.pending ? " ⏳" : "";
+      labelsSvg += `<text class="money-flow-edge-label" x="${midX.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="middle">${formatEuro(s.amount)}${pendingSuffix}</text>`;
     });
 
   const fullH = plotH + 2 * MARGIN_Y;
-  return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}</svg>`;
+  return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}${labelsSvg}</svg>`;
 }
 
 function renderMoneyFlowDiagram(settlements) {
@@ -1962,13 +2464,13 @@ function openConfirmSettleModal(s) {
     submitLabel: "Ja, überwiesen",
     bodyHtml: `
       <p class="muted">
-        An <strong>${escapeHtml(s.to)}</strong>. Offen sind insgesamt ${formatEuro(s.amount)} — du kannst auch nur
+        An <strong>${nameTag(s.to)}</strong>. Offen sind insgesamt ${formatEuro(s.amount)} — du kannst auch nur
         einen Teilbetrag als überwiesen markieren, der Rest bleibt dann offen.
       </p>
       <label>Überwiesener Betrag
         <input type="number" step="0.01" min="0.01" max="${s.amount}" inputmode="decimal" id="settleAmountInput" value="${s.amount.toFixed(2)}" required>
       </label>
-      <p class="muted">${escapeHtml(s.to)} sieht das jetzt hier in der App und muss den Empfang bestätigen — sobald das passiert, siehst auch du es hier und der Betrag gilt als beglichen.</p>
+      <p class="muted">${nameTag(s.to)} sieht das jetzt hier in der App und muss den Empfang bestätigen — sobald das passiert, siehst auch du es hier und der Betrag gilt als beglichen.</p>
       <p id="settleModalError" class="error-text hidden"></p>
     `,
     onSubmit: async () => {
@@ -2006,13 +2508,13 @@ function renderSettlementItem(s, isMine) {
   card.className = "list-card";
   let actionHtml = "";
   if (isMine && s.pending) {
-    actionHtml = `<div class="list-card-actions"><span class="pill">Warten auf Bestätigung von ${escapeHtml(s.to)}</span></div>`;
+    actionHtml = `<div class="list-card-actions"><span class="pill">Warten auf Bestätigung von ${nameTag(s.to)}</span></div>`;
   } else if (isMine) {
     actionHtml = `<div class="list-card-actions"><button type="button" class="tiny settle-btn">Als bezahlt markieren</button></div>`;
   }
   card.innerHTML = `
     <div class="list-card-text">
-      <p class="list-card-title">${escapeHtml(s.from)} → ${escapeHtml(s.to)}</p>
+      <p class="list-card-title">${nameTag(s.from)} → ${nameTag(s.to)}</p>
       <p class="list-card-meta">${formatEuro(s.amount)}</p>
     </div>
     ${actionHtml}
@@ -2060,7 +2562,7 @@ function renderReceivedItem(r) {
   card.className = "list-card";
   card.innerHTML = `
     <div class="list-card-text">
-      <p class="list-card-title">${escapeHtml(r.from)} behauptet: ${formatEuro(r.amount)} überwiesen</p>
+      <p class="list-card-title">${nameTag(r.from)} behauptet: ${formatEuro(r.amount)} überwiesen</p>
       <p class="list-card-meta">${formatDate(r.datum)} · Betrag zur Bestätigung eintippen</p>
       <div class="form-stack">
         <input type="number" step="0.01" min="0.01" inputmode="decimal" class="received-amount-input" placeholder="z. B. ${r.amount.toFixed(2).replace(".", ",")}">
@@ -2105,12 +2607,24 @@ function renderReceivedItem(r) {
 
 let lastReceivedSignature = null;
 
+// Rote Zahl an "Kosten" (Bottom-Nav) und am "Erhaltene Zahlungen"-Tab, solange
+// mindestens eine Zahlung auf Bestätigung wartet — auf einen Blick ersichtlich,
+// dass hier etwas zu tun ist.
+function updateReceivedBadge(count) {
+  [document.getElementById("costsNavBadge"), document.getElementById("receivedTabBadge")].forEach((el) => {
+    if (!el) return;
+    el.textContent = String(count);
+    el.classList.toggle("hidden", count === 0);
+  });
+}
+
 async function loadReceivedPayments() {
   if (!receivedListEl) return;
   try {
     const res = await fetch("/api/expenses/received");
     if (!res.ok) throw new Error("Fehler beim Laden");
     const received = await res.json();
+    updateReceivedBadge(received.length);
 
     // Wichtig: ohne diesen Vergleich würde das Polling das Eingabefeld
     // hier bei jedem Tick neu aufbauen und man könnte nie eine Zahl eintippen,
@@ -2182,6 +2696,10 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(loadPlanList, 5000);
   loadTodayPlan();
   setInterval(loadTodayPlan, 5000);
+  loadActivityFeed();
+  setInterval(loadActivityFeed, 5000);
+  loadWeather();
+  setInterval(loadWeather, 600000);
   pollCostsViews();
   setInterval(pollCostsViews, 3000);
   setInterval(checkAppVersion, 60000);

@@ -39,6 +39,18 @@
           </div>
         </div>
 
+        <div id="weatherCard" class="card weather-card hidden"></div>
+
+        <div id="activityFeedSection" class="hidden">
+          <div class="section-heading">
+            <div>
+              <div class="eyebrow">Für dich</div>
+              <h2>Neu für dich</h2>
+            </div>
+          </div>
+          <div id="activityFeed" class="stack"></div>
+        </div>
+
         <div class="section-heading">
           <div>
             <div class="eyebrow">Dashboard</div>
@@ -87,22 +99,24 @@
           </div>
         </div>
 
-        <div class="filter-row" id="costsViewRow">
-          <button type="button" class="filter active" data-view="entry">Ausgaben & Saldo</button>
+        <div class="filter-row two-row" id="costsViewRow">
+          <button type="button" class="filter active" data-view="entry">Ausgaben</button>
           <button type="button" class="filter" data-view="open">Offene Zahlungen</button>
-          <button type="button" class="filter" data-view="received">Erhaltene Zahlungen</button>
+          <button type="button" class="filter" data-view="received">Erhaltene Zahlungen<span id="receivedTabBadge" class="nav-badge hidden">0</span></button>
           <button type="button" class="filter" data-view="leaderboard">Leaderboard</button>
         </div>
 
-        <div id="balanceHero" class="hero-card mini-hero">
-          <div class="muted">Noch keine Ausgaben erfasst.</div>
-        </div>
-
-        <div id="myExpensesHero" class="hero-card mini-hero">
-          <div class="muted">Noch keine Ausgaben erfasst.</div>
-        </div>
-
         <div id="costsViewEntry" class="costs-view">
+          <div id="myExpensesHero" class="hero-card mini-hero compact-hero">
+            <div class="muted">Noch keine Ausgaben erfasst.</div>
+          </div>
+
+          <div id="budgetProjection" class="card budget-projection hidden">
+            <div class="eyebrow">Budget-Hochrechnung</div>
+            <div id="budgetProjectionValue" class="task-stats-value">–</div>
+            <p id="budgetProjectionDetail" class="muted"></p>
+          </div>
+
           <h3>Alle Ausgaben</h3>
           <select id="expenseFilterSelect" class="sort-select">
             <option value="">Alle</option>
@@ -115,12 +129,14 @@
         </div>
 
         <div id="costsViewOpen" class="costs-view hidden">
-          <h3>Offene Zahlungen</h3>
+          <div class="view-heading-row">
+            <h3>Offene Zahlungen</h3>
+            <div id="balanceHero" class="balance-chip"></div>
+          </div>
           <p class="muted">Minimale Anzahl an Überweisungen, um alle offenen Schulden auszugleichen.</p>
 
           <div id="moneyFlowCard" class="card money-flow-card hidden">
             <div id="moneyFlowDiagram" class="money-flow-diagram"></div>
-            <p class="muted money-flow-caption">Dicke der Linie = Höhe des Betrags · blass = schon als überwiesen gemeldet, wartet auf Bestätigung</p>
           </div>
 
           <div id="openSettlementsList" class="stack">
@@ -177,11 +193,12 @@
           </div>
           <div id="taskStatsBar" class="task-stats-bar"></div>
           <div id="taskStatsLegend" class="task-stats-legend"></div>
+          <p class="muted task-stats-weight-note">Gewichtet nach geschätztem Aufwand (ohne Angabe: 15 Min).</p>
 
-          <p class="task-stats-subhead">Offene Aufgaben nach Kategorie</p>
+          <p class="task-stats-subhead">Offene Arbeit nach Kategorie</p>
           <div id="taskStatsByCategory" class="task-stats-breakdown"></div>
 
-          <p class="task-stats-subhead">Offene Aufgaben nach Person</p>
+          <p class="task-stats-subhead">Offene Arbeit nach Person</p>
           <div id="taskStatsByPerson" class="task-stats-breakdown"></div>
         </div>
 
@@ -209,9 +226,9 @@
   <nav id="bottomNav" class="bottom-nav">
     <button class="nav-item active" data-screen="home"><span>⌂</span>Heute</button>
     <button class="nav-item" data-screen="plan"><span>▣</span>Plan</button>
-    <button class="nav-item" data-screen="costs"><span>€</span>Kosten</button>
+    <button class="nav-item" data-screen="costs"><span>€</span>Kosten<span id="costsNavBadge" class="nav-badge hidden">0</span></button>
     <button class="nav-item" data-screen="shopping"><span>✓</span>Einkauf</button>
-    <button class="nav-item" data-screen="more"><span>•••</span>Mehr</button>
+    <button class="nav-item" data-screen="more"><span>☑</span>Aufgaben</button>
   </nav>
 
   <dialog id="modal">
