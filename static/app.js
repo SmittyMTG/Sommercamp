@@ -1840,6 +1840,118 @@ if (costsViewRow) {
   });
 }
 
+/* ---------- Kosten: Geldfluss-Diagramm (wer zahlt an wen) ---------- */
+const moneyFlowCardEl = document.getElementById("moneyFlowCard");
+const moneyFlowDiagramEl = document.getElementById("moneyFlowDiagram");
+const FLOW_COLOR_VARS = ["--flow-1", "--flow-2", "--flow-3", "--flow-4", "--flow-5", "--flow-6", "--flow-7", "--flow-8"];
+
+// Sankey-artiges Flussdiagramm: links Schuldner, rechts Gläubiger, Bandbreite
+// = Betrag. Farbe folgt dem Schuldner (Absender) und bleibt fest pro Person
+// (alphabetisch zugewiesen, nie nach Betrag/Rang) — die Empfänger-Knoten
+// bleiben bewusst neutral, da bei ihnen mehrere Farben zusammenlaufen.
+function buildMoneyFlowSvg(settlements) {
+  if (settlements.length === 0) return "";
+  const totalAmount = settlements.reduce((sum, s) => sum + s.amount, 0);
+  if (totalAmount <= 0.005) return "";
+
+  const LABEL_W = 92;
+  const NODE_W = 10;
+  const MID_W = 150;
+  const GAP = 10;
+  const TARGET_H = 210;
+  const MARGIN_Y = 10;
+  const VW = LABEL_W + NODE_W + MID_W + NODE_W + LABEL_W;
+  const leftXEnd = LABEL_W + NODE_W;
+  const rightXStart = VW - LABEL_W - NODE_W;
+  const midX = (leftXEnd + rightXStart) / 2;
+
+  const names = {};
+  settlements.forEach((s) => {
+    names[s.from_id] = s.from;
+    names[s.to_id] = s.to;
+  });
+  const colorOf = {};
+  Array.from(new Set(settlements.map((s) => s.from_id)))
+    .sort((a, b) => names[a].localeCompare(names[b], "de"))
+    .forEach((id, i) => {
+      colorOf[id] = `var(${FLOW_COLOR_VARS[i % FLOW_COLOR_VARS.length]})`;
+    });
+
+  function buildNodes(idKey) {
+    const totals = new Map();
+    settlements.forEach((s) => totals.set(s[idKey], (totals.get(s[idKey]) || 0) + s.amount));
+    return Array.from(totals, ([id, total]) => ({ id, name: names[id], total })).sort(
+      (a, b) => b.total - a.total
+    );
+  }
+  const leftNodes = buildNodes("from_id");
+  const rightNodes = buildNodes("to_id");
+
+  const scaleFor = (nodes) => (TARGET_H - Math.max(0, nodes.length - 1) * GAP) / totalAmount;
+  const scale = Math.max(0.01, Math.min(scaleFor(leftNodes), scaleFor(rightNodes)));
+
+  function layout(nodes) {
+    const heights = nodes.map((n) => Math.max(3, n.total * scale));
+    const columnHeight = heights.reduce((a, b) => a + b, 0) + Math.max(0, nodes.length - 1) * GAP;
+    const positions = {};
+    let y = 0;
+    nodes.forEach((n, i) => {
+      positions[n.id] = { y, h: heights[i], cursor: y };
+      y += heights[i] + GAP;
+    });
+    return { positions, columnHeight };
+  }
+  const left = layout(leftNodes);
+  const right = layout(rightNodes);
+  const plotH = Math.max(left.columnHeight, right.columnHeight);
+  const leftOffset = MARGIN_Y + (plotH - left.columnHeight) / 2;
+  const rightOffset = MARGIN_Y + (plotH - right.columnHeight) / 2;
+
+  let nodesSvg = "";
+  leftNodes.forEach((n) => {
+    const pos = left.positions[n.id];
+    const y = pos.y + leftOffset;
+    nodesSvg += `<rect x="${LABEL_W}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
+    nodesSvg += `<text class="money-flow-node-label" x="${LABEL_W - 8}" y="${(y + pos.h / 2 - 3).toFixed(1)}" text-anchor="end">${escapeHtml(n.name)}</text>`;
+    nodesSvg += `<text class="money-flow-node-amount" x="${LABEL_W - 8}" y="${(y + pos.h / 2 + 9).toFixed(1)}" text-anchor="end">${formatEuro(n.total)}</text>`;
+  });
+  rightNodes.forEach((n) => {
+    const pos = right.positions[n.id];
+    const y = pos.y + rightOffset;
+    nodesSvg += `<rect x="${rightXStart.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="var(--yellow)"/>`;
+    nodesSvg += `<text class="money-flow-node-label" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(y + pos.h / 2 - 3).toFixed(1)}" text-anchor="start">${escapeHtml(n.name)}</text>`;
+    nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(y + pos.h / 2 + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
+  });
+
+  // Größte Bänder zuerst zeichnen, damit dünnere beim Überlappen sichtbar bleiben.
+  let ribbonsSvg = "";
+  settlements
+    .slice()
+    .sort((a, b) => b.amount - a.amount)
+    .forEach((s) => {
+      const thickness = Math.max(3, s.amount * scale);
+      const lp = left.positions[s.from_id];
+      const rp = right.positions[s.to_id];
+      const y0 = lp.cursor + leftOffset;
+      const y1 = rp.cursor + rightOffset;
+      lp.cursor += thickness;
+      rp.cursor += thickness;
+      const d = `M${leftXEnd},${y0.toFixed(1)} C${midX},${y0.toFixed(1)} ${midX},${y1.toFixed(1)} ${rightXStart},${y1.toFixed(1)} L${rightXStart},${(y1 + thickness).toFixed(1)} C${midX},${(y1 + thickness).toFixed(1)} ${midX},${(y0 + thickness).toFixed(1)} ${leftXEnd},${(y0 + thickness).toFixed(1)} Z`;
+      const opacity = s.pending ? 0.28 : 0.62;
+      ribbonsSvg += `<path d="${d}" fill="${colorOf[s.from_id]}" opacity="${opacity}"><title>${escapeHtml(s.from)} → ${escapeHtml(s.to)}: ${formatEuro(s.amount)}${s.pending ? " (wartet auf Bestätigung)" : ""}</title></path>`;
+    });
+
+  const fullH = plotH + 2 * MARGIN_Y;
+  return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}</svg>`;
+}
+
+function renderMoneyFlowDiagram(settlements) {
+  if (!moneyFlowCardEl || !moneyFlowDiagramEl) return;
+  const svg = buildMoneyFlowSvg(settlements);
+  moneyFlowCardEl.classList.toggle("hidden", !svg);
+  if (svg) moneyFlowDiagramEl.innerHTML = svg;
+}
+
 /* ---------- Kosten: Offene Zahlungen ---------- */
 const openSettlementsListEl = document.getElementById("openSettlementsList");
 
@@ -1924,6 +2036,8 @@ async function loadOpenSettlements() {
     const signature = JSON.stringify(settlements);
     if (signature === lastOpenSettlementsSignature) return;
     lastOpenSettlementsSignature = signature;
+
+    renderMoneyFlowDiagram(settlements);
 
     openSettlementsListEl.innerHTML = "";
     if (settlements.length === 0) {
