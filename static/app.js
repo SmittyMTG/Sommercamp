@@ -121,19 +121,44 @@ const modalSubmit = document.getElementById("modalSubmit");
 
 let modalSubmitHandler = null;
 
+// Schnappschuss aller Feldwerte im Modal, um beim Schließen zu erkennen, ob
+// sich seit dem Öffnen etwas geändert hat (siehe hasUnsavedModalChanges).
+function snapshotModalFormState() {
+  return Array.from(modalBody.querySelectorAll("input, textarea, select"))
+    .map((el) => (el.type === "checkbox" || el.type === "radio" ? (el.checked ? "1" : "0") : el.value))
+    .join("|");
+}
+
+let initialModalSnapshot = null;
+let modalOpenToken = 0;
+
 function openModal({ eyebrow, title, bodyHtml, onSubmit, submitLabel, danger }) {
   modalEyebrow.textContent = eyebrow || "";
   modalTitle.textContent = title || "";
   modalBody.innerHTML = bodyHtml || "";
   modalSubmitHandler = onSubmit;
   modalSubmit.textContent = submitLabel || "Speichern";
-  
+
   modal.classList.toggle("delete-dialog", !!danger);
   modalSubmit.classList.toggle("danger", !!danger);
-  
+
   modal.showModal();
   const firstInput = modalBody.querySelector("input, textarea, select");
   if (firstInput) firstInput.focus();
+
+  // Erst NACH eventuellem Nach-Wiring (z. B. wireExpenseForm(), das nach
+  // openModal() noch synchron weitere Felder befüllt) den Ausgangszustand
+  // festhalten — per Timeout, damit der ganze aufrufende Code vorher durchläuft.
+  initialModalSnapshot = null;
+  modalOpenToken += 1;
+  const token = modalOpenToken;
+  setTimeout(() => {
+    if (token === modalOpenToken) initialModalSnapshot = snapshotModalFormState();
+  }, 0);
+}
+
+function hasUnsavedModalChanges() {
+  return initialModalSnapshot !== null && snapshotModalFormState() !== initialModalSnapshot;
 }
 
 function closeModal() {
@@ -141,13 +166,34 @@ function closeModal() {
   modal.classList.remove("delete-dialog");
   modalForm.reset();
   modalSubmitHandler = null;
+  initialModalSnapshot = null;
   modalSubmit.classList.remove("danger");
 }
 
-document.getElementById("modalClose").addEventListener("click", closeModal);
-document.getElementById("modalCancel").addEventListener("click", closeModal);
+// Fragt bei ungespeicherten Eingaben nach, bevor wirklich geschlossen wird —
+// verhindert versehentlichen Datenverlust durch Wegklicken/Zurück/ESC.
+function requestCloseModal() {
+  if (hasUnsavedModalChanges() && !confirm("Eingaben verwerfen? Was du eingegeben hast, geht sonst verloren.")) {
+    return;
+  }
+  closeModal();
+}
+
+document.getElementById("modalClose").addEventListener("click", requestCloseModal);
+document.getElementById("modalCancel").addEventListener("click", requestCloseModal);
 modal.addEventListener("click", (e) => {
-  if (e.target === modal) closeModal();
+  if (e.target === modal) requestCloseModal();
+});
+// "cancel" feuert, wenn der Dialog nativ per ESC geschlossen werden soll —
+// preventDefault() stoppt das native Schließen, damit auch dieser Weg über
+// requestCloseModal läuft statt die Bestätigung zu umgehen.
+modal.addEventListener("cancel", (e) => {
+  if (hasUnsavedModalChanges()) {
+    e.preventDefault();
+    if (confirm("Eingaben verwerfen? Was du eingegeben hast, geht sonst verloren.")) {
+      closeModal();
+    }
+  }
 });
 
 modalForm.addEventListener("submit", async (e) => {
@@ -1301,24 +1347,23 @@ function renderExpenseGroup(group, isAdmin) {
   return card;
 }
 
-/* ---------- Kosten: Ausgaben nach Person filtern ---------- */
+/* ---------- Kosten: Ausgaben nach Zahler filtern ---------- */
 const expenseFilterSelect = document.getElementById("expenseFilterSelect");
 let lastExpenses = [];
 let lastExpensesIsAdmin = false;
-let lastExpensesMeId = null;
-let expenseFilterUserId = null; // null = alle Personen, "mine_paid" = nur eigene Zahlungen
+let expenseFilterUserId = null; // null = alle Personen
 let expenseFilterOptionsPopulated = false;
 
 async function populateExpenseFilterOptions() {
   if (expenseFilterOptionsPopulated || !expenseFilterSelect) return;
-  const { users } = await fetchUsersAndMe();
+  const { users, me } = await fetchUsersAndMe();
   users
     .slice()
     .sort((a, b) => a.username.localeCompare(b.username, "de"))
     .forEach((u) => {
       const opt = document.createElement("option");
       opt.value = u.id;
-      opt.textContent = u.username;
+      opt.textContent = me && u.id === me.id ? "Nur von dir bezahlt" : `Nur von ${u.username} bezahlt`;
       expenseFilterSelect.appendChild(opt);
     });
   expenseFilterOptionsPopulated = true;
@@ -1328,21 +1373,18 @@ if (expenseFilterSelect) {
   populateExpenseFilterOptions();
   expenseFilterSelect.addEventListener("change", () => {
     const val = expenseFilterSelect.value;
-    expenseFilterUserId = val === "" ? null : val === "mine_paid" ? "mine_paid" : parseInt(val, 10);
+    expenseFilterUserId = val ? parseInt(val, 10) : null;
     renderExpenseList();
   });
 }
 
-// Zeigt nur Ausgaben-Vorgänge, an denen die gewählte Person als Zahler ODER
-// als Beteiligter (auch bei sich selbst) beteiligt war. "mine_paid" ist enger:
-// nur Vorgänge, die man selbst tatsächlich bezahlt hat (zum Nachrechnen).
+// Zeigt nur Ausgaben-Vorgänge, die die gewählte Person tatsächlich bezahlt hat
+// (nicht nur "war beteiligt") — für jede Person einzeln zum Nachrechnen.
 function renderExpenseList() {
   if (!expenseListEl) return;
-  const groups = groupExpenses(lastExpenses).filter((g) => {
-    if (expenseFilterUserId === null) return true;
-    if (expenseFilterUserId === "mine_paid") return g.glaubigerId === lastExpensesMeId;
-    return g.glaubigerId === expenseFilterUserId || g.beneficiaryIds.has(expenseFilterUserId);
-  });
+  const groups = groupExpenses(lastExpenses).filter(
+    (g) => expenseFilterUserId === null || g.glaubigerId === expenseFilterUserId
+  );
 
   expenseListEl.innerHTML = "";
   if (groups.length === 0) {
@@ -1372,7 +1414,6 @@ async function loadExpenses() {
 
     const { me } = await fetchUsersAndMe();
     lastExpensesIsAdmin = !!me && isAdminRole(me.role);
-    lastExpensesMeId = me ? me.id : null;
 
     renderExpenseList();
   } catch (err) {
@@ -1720,7 +1761,7 @@ if (resetExpensesButton) {
 }
 
 /* ---------- Kosten: Ansicht wechseln ---------- */
-const costsViewSelect = document.getElementById("costsViewSelect");
+const costsViewRow = document.getElementById("costsViewRow");
 const costsViews = {
   entry: document.getElementById("costsViewEntry"),
   open: document.getElementById("costsViewOpen"),
@@ -1736,8 +1777,14 @@ function switchCostsView(view) {
   if (view === "received") loadReceivedPayments();
 }
 
-if (costsViewSelect) {
-  costsViewSelect.addEventListener("change", () => switchCostsView(costsViewSelect.value));
+if (costsViewRow) {
+  costsViewRow.querySelectorAll(".filter").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      costsViewRow.querySelectorAll(".filter").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      switchCostsView(btn.dataset.view);
+    });
+  });
 }
 
 /* ---------- Kosten: Offene Zahlungen ---------- */

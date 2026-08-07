@@ -88,6 +88,13 @@
           </div>
         </div>
 
+        <div class="filter-row" id="costsViewRow">
+          <button type="button" class="filter active" data-view="entry">Ausgaben & Saldo</button>
+          <button type="button" class="filter" data-view="open">Offene Zahlungen</button>
+          <button type="button" class="filter" data-view="received">Erhaltene Zahlungen</button>
+          <button type="button" class="filter" data-view="leaderboard">Leaderboard</button>
+        </div>
+
         <div id="balanceHero" class="hero-card mini-hero">
           <div class="muted">Noch keine Ausgaben erfasst.</div>
         </div>
@@ -96,18 +103,10 @@
           <div class="muted">Noch keine Ausgaben erfasst.</div>
         </div>
 
-        <select id="costsViewSelect" class="costs-view-select">
-          <option value="entry">Ausgaben und Saldo</option>
-          <option value="open">Offene Zahlungen</option>
-          <option value="received">Erhaltene Zahlungen</option>
-          <option value="leaderboard">Leaderboard</option>
-        </select>
-
         <div id="costsViewEntry" class="costs-view">
           <h3>Alle Ausgaben</h3>
           <select id="expenseFilterSelect" class="sort-select">
             <option value="">Alle Personen</option>
-            <option value="mine_paid">Nur von dir bezahlt</option>
           </select>
           <div id="expenseList" class="stack">
             <div class="empty-state">
