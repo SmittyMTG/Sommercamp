@@ -777,57 +777,21 @@ async function renderFilteredSortedTasks() {
   }
 
   renderMyOpenTasks(me);
-  renderTaskStats();
+  updateMyTasksBadge(me);
 }
 
-/* ---------- Aufgaben-Statistik ---------- */
-// Kompaktes Aufgaben-Dashboard: nur noch pro Person (+ "Für alle") eine Zeile
-// mit Mini-Balken erledigt/offen und Zahl — bewusst ohne Kategorie-Aufschlüsselung
-// und ohne Aufwands-Gewichtung, um es klein und auf einen Blick lesbar zu halten.
-function renderTaskPersonRow(entry) {
-  const total = entry.done + entry.open;
-  const overdueBadge = entry.overdue > 0 ? `<span class="task-stats-person-overdue" title="${entry.overdue} überfällig">⚠️</span>` : "";
-  return `
-    <div class="task-stats-person-row">
-      <span class="task-stats-person-name">${escapeHtml(entry.label)}</span>
-      <div class="task-stats-person-bar">
-        ${entry.done > 0 ? `<span class="seg seg-done" style="flex:${entry.done}"></span>` : ""}
-        ${entry.open > 0 ? `<span class="seg seg-open" style="flex:${entry.open}"></span>` : ""}
-      </div>
-      <span class="task-stats-person-count">${entry.done}/${total}${overdueBadge}</span>
-    </div>
-  `;
-}
-
-function renderTaskStats() {
-  const totalEl = document.getElementById("taskStatsTotal");
-  const byPersonEl = document.getElementById("taskStatsByPerson");
-  if (!totalEl || !byPersonEl) return;
-
-  const total = lastTaskItems.length;
-  const doneCount = lastTaskItems.filter((t) => t.done).length;
-  totalEl.textContent = total ? `${doneCount}/${total} erledigt` : "–";
-
-  if (total === 0) {
-    byPersonEl.innerHTML = `<p class="muted">Noch keine Aufgaben angelegt.</p>`;
-    return;
-  }
-
-  const byPerson = new Map();
-  lastTaskItems.forEach((t) => {
-    const label = t.assignees.length ? t.assignees[0].username : "Für alle";
-    const entry = byPerson.get(label) || { label, done: 0, open: 0, overdue: 0 };
-    if (t.done) {
-      entry.done += 1;
-    } else {
-      entry.open += 1;
-      if (isTaskOverdue(t)) entry.overdue += 1;
-    }
-    byPerson.set(label, entry);
-  });
-
-  const entries = Array.from(byPerson.values()).sort((a, b) => b.done + b.open - (a.done + a.open));
-  byPersonEl.innerHTML = entries.map(renderTaskPersonRow).join("");
+// Rote Zahl am "Aufgaben"-Icon in der Bottom-Nav, solange mindestens eine
+// offene Aufgabe explizit dir zugewiesen ist ("für alle"-Aufgaben ohne
+// Zuweisung zählen bewusst nicht mit) — auf einen Blick ersichtlich, dass
+// hier etwas für dich persönlich zu tun ist.
+function updateMyTasksBadge(me) {
+  const el = document.getElementById("myTasksNavBadge");
+  if (!el) return;
+  const count = me
+    ? lastTaskItems.filter((t) => !t.done && t.assignees.some((a) => a.id === me.id)).length
+    : 0;
+  el.textContent = String(count);
+  el.classList.toggle("hidden", count === 0);
 }
 
 /* ---------- Dashboard: Wetter am Camp (echte Daten von Open-Meteo) ---------- */
@@ -2651,8 +2615,29 @@ function explainMergeRow(m) {
 // tatsächlichen Zahlungsvorschläge liefern (/api/expenses/open/explain nutzt
 // intern exakt dieselbe Berechnung wie /api/expenses/open) — so kann die
 // Erklärung nie von der echten Liste abweichen.
+function explainExampleDirection(fromName, toName, dir) {
+  const itemsHtml = dir.items
+    .map(
+      (it) => `
+    <div class="explain-example-item">
+      <span>${escapeHtml(it.betreff)}${it.tilgung ? ` <span class="explain-example-tag">Rückzahlung</span>` : ""}</span>
+      <span>${formatEuro(it.cash)}</span>
+    </div>
+  `
+    )
+    .join("");
+  const moreHtml = dir.more > 0 ? `<div class="explain-example-more">+ ${dir.more} weitere Ausgabe${dir.more === 1 ? "" : "n"}</div>` : "";
+  return `
+    <div class="explain-example-block">
+      <p class="explain-example-direction-title">${nameTag(fromName)} schuldet ${nameTag(toName)}:</p>
+      ${dir.items.length ? itemsHtml + moreHtml : `<p class="muted">–</p>`}
+      <div class="explain-example-sum">= ${formatEuro(dir.total)}</div>
+    </div>
+  `;
+}
+
 function buildExplainSlides(data) {
-  const { pairs, netted_pairs, merges, steps } = data;
+  const { pairs, netted_pairs, merges, steps, example } = data;
 
   const slides = [];
 
@@ -2662,6 +2647,18 @@ function buildExplainSlides(data) {
       <p>Zuerst wird das <strong>nur zwischen den zwei beteiligten Personen</strong> verrechnet. Ergibt sich daraus eine Kette (A schuldet B, B schuldet C), wird die Kette danach aufgelöst, damit möglichst wenige Überweisungen nötig sind.</p>
     </div>
   `);
+
+  if (example) {
+    slides.push(() => `
+      <div class="explain-slide">
+        <p class="explain-slide-label">Beispiel — ${nameTag(example.a)} und ${nameTag(example.b)}</p>
+        <p>Jede einzelne gemeinsame Ausgabe der beiden wird gezählt: wer bezahlt hat, bekommt ein Guthaben — wer beteiligt war, schuldet seinen Anteil. Das summiert sich, getrennt nach Richtung:</p>
+        ${explainExampleDirection(example.a, example.b, example.a_to_b)}
+        ${explainExampleDirection(example.b, example.a, example.b_to_a)}
+        <p class="muted">Genau diese beiden Summen siehst du gleich für jedes Paar in Schritt 1 wieder.</p>
+      </div>
+    `);
+  }
 
   slides.push(() => `
     <div class="explain-slide">

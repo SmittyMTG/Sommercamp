@@ -101,6 +101,12 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .explain-bar{position:absolute;top:0;bottom:0;left:0;border-radius:999px;transition:width .5s ease}
 .explain-bar.pos{background:var(--green)}.explain-bar.neg{background:var(--red)}
 .explain-bar-value{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+.explain-example-block{background:var(--surface2);border-radius:14px;padding:10px 12px;margin-bottom:10px}
+.explain-example-direction-title{font-size:12px;font-weight:800;margin-bottom:8px!important}
+.explain-example-item{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0;color:var(--muted)}
+.explain-example-tag{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:1px 6px;font-size:10px;font-weight:700;color:var(--text)}
+.explain-example-more{font-size:11px;color:var(--muted);padding:3px 0;font-style:italic}
+.explain-example-sum{text-align:right;font-weight:900;font-size:13px;margin-top:6px;padding-top:6px;border-top:1px solid var(--line)}
 .explain-pair-raw{background:var(--surface2);border-radius:14px;padding:10px 12px;margin-bottom:8px}
 .explain-pair-raw-title{font-size:12px;font-weight:800;margin-bottom:8px!important}
 .explain-pair-raw .explain-bar-row{margin-bottom:6px}
@@ -125,20 +131,6 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .explain-dot{width:6px;height:6px;border-radius:50%;background:var(--line)}
 .explain-dot.active{background:var(--yellow)}
 
-/* Aufgaben-Dashboard — sehr kompakt: eine Zeile pro Person mit Mini-Balken
-   erledigt/offen, keine große Kopfzahl mehr. */
-.task-stats{margin-bottom:16px;padding:14px 16px}
-.task-stats-value{font-size:20px;font-weight:800}
-.task-stats-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-.task-stats-total{font-size:12px;font-weight:800;color:var(--muted)}
-.task-stats-person-list{display:grid;gap:7px}
-.task-stats-person-row{display:grid;grid-template-columns:64px 1fr 44px;align-items:center;gap:8px;font-size:12px}
-.task-stats-person-name{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.task-stats-person-bar{display:flex;height:6px;border-radius:999px;overflow:hidden;background:var(--surface2);gap:1px}
-.task-stats-person-bar .seg-done{background:var(--green);opacity:.85}
-.task-stats-person-bar .seg-open{background:var(--muted);opacity:.55}
-.task-stats-person-count{text-align:right;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
-.task-stats-person-overdue{margin-left:3px;font-size:10px}
 
 /* Geldfluss-Diagramm (Offene Zahlungen) */
 .money-flow-card{margin-bottom:16px}

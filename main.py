@@ -1153,6 +1153,43 @@ def _pairwise_raw_breakdown(db: Session) -> list[dict]:
     return pairs
 
 
+def _pairwise_example(db: Session) -> dict | None:
+    """Konkretes Beispielpaar mit den einzelnen zugrundeliegenden Ausgaben-Zeilen
+    (nicht nur der Summe) für die Erklär-Animation — zeigt anschaulich, wie sich
+    ein a_to_b/b_to_a-Wert aus Schritt 1 tatsächlich zusammensetzt. Wählt das
+    Paar mit den meisten Einzel-Positionen (interessantestes Beispiel); die
+    Summen entsprechen exakt denen aus _pairwise_raw_breakdown für dieses Paar,
+    nur die Anzeige der Einzelposten ist auf ein paar Beispiele begrenzt."""
+    rows = (
+        db.query(Ausgabe)
+        .filter(Ausgabe.schuldner_id != Ausgabe.glaubiger_id, Ausgabe.status != "pending")
+        .order_by(Ausgabe.created_at)
+        .all()
+    )
+    by_pair: dict[frozenset, list[Ausgabe]] = {}
+    for r in rows:
+        by_pair.setdefault(frozenset((r.schuldner_id, r.glaubiger_id)), []).append(r)
+    if not by_pair:
+        return None
+    pair, pair_rows = max(by_pair.items(), key=lambda kv: len(kv[1]))
+    a_id, b_id = tuple(pair)
+
+    usernames = {u.id: u.username for u in db.query(User).all()}
+    a_to_b_rows = [r for r in pair_rows if r.schuldner_id == a_id]
+    b_to_a_rows = [r for r in pair_rows if r.schuldner_id == b_id]
+
+    def summarize(rows_: list[Ausgabe], limit: int = 3) -> dict:
+        shown = [{"betreff": r.betreff, "cash": float(r.cash), "tilgung": r.status == "getilgt"} for r in rows_[:limit]]
+        return {"items": shown, "more": max(0, len(rows_) - limit), "total": round(sum(float(r.cash) for r in rows_), 2)}
+
+    return {
+        "a_id": a_id, "a": usernames.get(a_id, "?"),
+        "b_id": b_id, "b": usernames.get(b_id, "?"),
+        "a_to_b": summarize(a_to_b_rows),
+        "b_to_a": summarize(b_to_a_rows),
+    }
+
+
 def _compute_pairwise_debts(db: Session) -> list[tuple[int, int, float]]:
     """Netto-Schuld je Personenpaar als (from_id, to_id, amount)-Liste, sortiert
     absteigend nach Betrag — direkt aus _pairwise_raw_breakdown abgeleitet,
@@ -1343,7 +1380,9 @@ def get_open_settlements_explain(request: Request, db: Session = Depends(get_db)
         for from_id, to_id, amount in settlements
     ]
 
-    return {"pairs": pairs, "netted_pairs": netted_pairs, "merges": merges, "steps": steps}
+    example = _pairwise_example(db)
+
+    return {"pairs": pairs, "netted_pairs": netted_pairs, "merges": merges, "steps": steps, "example": example}
 
 
 @app.post("/api/expenses/settle")

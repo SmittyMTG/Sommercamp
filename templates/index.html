@@ -182,14 +182,6 @@
           <button id="addTaskButton" class="primary compact">＋ Aufgabe</button>
         </div>
 
-        <div class="card task-stats">
-          <div class="task-stats-top">
-            <span class="eyebrow">Aufgaben</span>
-            <span id="taskStatsTotal" class="task-stats-total">–</span>
-          </div>
-          <div id="taskStatsByPerson" class="task-stats-person-list"></div>
-        </div>
-
         <div class="filter-row" id="taskFilterRow">
           <button type="button" class="filter active" data-filter="alle">Alle</button>
           <button type="button" class="filter" data-filter="meine">Meine</button>
@@ -216,7 +208,7 @@
     <button class="nav-item" data-screen="plan"><span>▣</span>Plan</button>
     <button class="nav-item" data-screen="costs"><span>€</span>Kosten<span id="costsNavBadge" class="nav-badge hidden">0</span></button>
     <button class="nav-item" data-screen="shopping"><span>✓</span>Einkauf</button>
-    <button class="nav-item" data-screen="more"><span>☑</span>Aufgaben</button>
+    <button class="nav-item" data-screen="more"><span>☑</span>Aufgaben<span id="myTasksNavBadge" class="nav-badge hidden">0</span></button>
   </nav>
 
   <dialog id="modal">
