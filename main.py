@@ -886,6 +886,7 @@ def list_expenses(request: Request, db: Session = Depends(get_db)):
     # eignet sich daher nicht als verlässliche Sortiergrundlage.
     rows = (
         db.query(Ausgabe)
+        .filter(Ausgabe.status == "offen")
         .order_by(Ausgabe.created_at.desc())
         .all()
     )

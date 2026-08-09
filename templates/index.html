@@ -111,12 +111,6 @@
             <div class="muted">Noch keine Ausgaben erfasst.</div>
           </div>
 
-          <div id="budgetProjection" class="card budget-projection hidden">
-            <div class="eyebrow">Budget-Hochrechnung</div>
-            <div id="budgetProjectionValue" class="task-stats-value">–</div>
-            <p id="budgetProjectionDetail" class="muted"></p>
-          </div>
-
           <h3>Alle Ausgaben</h3>
           <select id="expenseFilterSelect" class="sort-select">
             <option value="">Alle</option>
@@ -187,19 +181,11 @@
         </div>
 
         <div class="card task-stats">
-          <div class="task-stats-headline">
-            <span id="taskStatsHeadline" class="task-stats-value">–</span>
-            <span class="muted">erledigt</span>
+          <div class="task-stats-top">
+            <span class="eyebrow">Aufgaben</span>
+            <span id="taskStatsTotal" class="task-stats-total">–</span>
           </div>
-          <div id="taskStatsBar" class="task-stats-bar"></div>
-          <div id="taskStatsLegend" class="task-stats-legend"></div>
-          <p class="muted task-stats-weight-note">Gewichtet nach geschätztem Aufwand (ohne Angabe: 15 Min).</p>
-
-          <p class="task-stats-subhead">Offene Arbeit nach Kategorie</p>
-          <div id="taskStatsByCategory" class="task-stats-breakdown"></div>
-
-          <p class="task-stats-subhead">Offene Arbeit nach Person</p>
-          <div id="taskStatsByPerson" class="task-stats-breakdown"></div>
+          <div id="taskStatsByPerson" class="task-stats-person-list"></div>
         </div>
 
         <div class="filter-row" id="taskFilterRow">

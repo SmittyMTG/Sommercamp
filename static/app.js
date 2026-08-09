@@ -660,7 +660,7 @@ function renderTaskItem(task) {
   }
 
   const categoryTag = task.category
-    ? `<span class="source-tag" style="background:${escapeHtml(task.category.farbe)}">${escapeHtml(task.category.bezeichnung)}</span>`
+    ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
     : "";
   const recurringTag = task.recurring ? `<span class="recurring-tag">🔁 wiederkehrend</span>` : "";
 
@@ -781,117 +781,53 @@ async function renderFilteredSortedTasks() {
 }
 
 /* ---------- Aufgaben-Statistik ---------- */
-// Baut eine Zeile pro Eintrag (Label, Balken, Anzahl) — für die Kategorie- und
-// Personen-Aufschlüsselung der offenen Aufgaben. Ein Balken pro Zeile, die
-// Länge ist relativ zum größten Wert (magnitude, eine Farbe).
-// Aufgaben ohne eigene Aufwandsschätzung zählen trotzdem mit einem Standardwert
-// mit, statt in der gewichteten Statistik komplett zu verschwinden.
-const DEFAULT_TASK_WEIGHT_MIN = 15;
-function taskWeight(t) {
-  return t.aufwand_min != null ? t.aufwand_min : DEFAULT_TASK_WEIGHT_MIN;
-}
-
-function formatTaskMinutes(min) {
-  if (min < 60) return `${Math.round(min)} Min`;
-  const h = Math.floor(min / 60);
-  const m = Math.round(min % 60);
-  return m ? `${h} Std ${m} Min` : `${h} Std`;
-}
-
-function renderTaskStatBars(container, entries, emptyText) {
-  if (!container) return;
-  if (entries.length === 0) {
-    container.innerHTML = `<p class="muted">${emptyText}</p>`;
-    return;
-  }
-  const max = Math.max(...entries.map((e) => e.minutes));
-  container.innerHTML = entries
-    .map(
-      (e) => `
-        <div class="task-stat-row">
-          <span class="task-stat-label">${escapeHtml(e.label)}</span>
-          <div class="task-stat-track"><div class="task-stat-fill" style="width:${Math.max(6, (e.minutes / max) * 100)}%"></div></div>
-          <span class="task-stat-count">${formatTaskMinutes(e.minutes)}</span>
-        </div>
-      `
-    )
-    .join("");
+// Kompaktes Aufgaben-Dashboard: nur noch pro Person (+ "Für alle") eine Zeile
+// mit Mini-Balken erledigt/offen und Zahl — bewusst ohne Kategorie-Aufschlüsselung
+// und ohne Aufwands-Gewichtung, um es klein und auf einen Blick lesbar zu halten.
+function renderTaskPersonRow(entry) {
+  const total = entry.done + entry.open;
+  const overdueBadge = entry.overdue > 0 ? `<span class="task-stats-person-overdue" title="${entry.overdue} überfällig">⚠️</span>` : "";
+  return `
+    <div class="task-stats-person-row">
+      <span class="task-stats-person-name">${escapeHtml(entry.label)}</span>
+      <div class="task-stats-person-bar">
+        ${entry.done > 0 ? `<span class="seg seg-done" style="flex:${entry.done}"></span>` : ""}
+        ${entry.open > 0 ? `<span class="seg seg-open" style="flex:${entry.open}"></span>` : ""}
+      </div>
+      <span class="task-stats-person-count">${entry.done}/${total}${overdueBadge}</span>
+    </div>
+  `;
 }
 
 function renderTaskStats() {
-  const headlineEl = document.getElementById("taskStatsHeadline");
-  const barEl = document.getElementById("taskStatsBar");
-  const legendEl = document.getElementById("taskStatsLegend");
-  const byCategoryEl = document.getElementById("taskStatsByCategory");
+  const totalEl = document.getElementById("taskStatsTotal");
   const byPersonEl = document.getElementById("taskStatsByPerson");
-  if (!headlineEl) return;
+  if (!totalEl || !byPersonEl) return;
 
   const total = lastTaskItems.length;
-  const doneItems = lastTaskItems.filter((t) => t.done);
-  const openItems = lastTaskItems.filter((t) => !t.done);
-  const overdueItems = openItems.filter((t) => isTaskOverdue(t));
-  const openNotOverdueItems = openItems.filter((t) => !isTaskOverdue(t));
-  const pct = total ? Math.round((doneItems.length / total) * 100) : 0;
-
-  headlineEl.textContent = total ? `${doneItems.length} von ${total} Aufgaben (${pct}%)` : "–";
-
-  const sumWeight = (items) => items.reduce((s, t) => s + taskWeight(t), 0);
-  const doneMin = sumWeight(doneItems);
-  const openMin = sumWeight(openNotOverdueItems);
-  const overdueMin = sumWeight(overdueItems);
+  const doneCount = lastTaskItems.filter((t) => t.done).length;
+  totalEl.textContent = total ? `${doneCount}/${total} erledigt` : "–";
 
   if (total === 0) {
-    barEl.innerHTML = "";
-    legendEl.innerHTML = `<p class="muted">Noch keine Aufgaben angelegt.</p>`;
-  } else {
-    const segments = [
-      ["done", doneMin],
-      ["open", openMin],
-      ["overdue", overdueMin],
-    ].filter(([, m]) => m > 0);
-    barEl.innerHTML = segments
-      .map(([cls, m]) => `<span class="task-stats-seg task-stats-seg--${cls}" style="flex:${m}"></span>`)
-      .join("");
-    legendEl.innerHTML = `
-      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--done"></span>✓ Erledigt: ${doneItems.length} (${formatTaskMinutes(doneMin)})</span>
-      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--open"></span>Offen: ${openNotOverdueItems.length} (${formatTaskMinutes(openMin)})</span>
-      <span class="task-stats-legend-item"><span class="task-stats-dot task-stats-dot--overdue"></span>⚠️ Überfällig: ${overdueItems.length} (${formatTaskMinutes(overdueMin)})</span>
-    `;
+    byPersonEl.innerHTML = `<p class="muted">Noch keine Aufgaben angelegt.</p>`;
+    return;
   }
 
-  // Nur offene Aufgaben, gewichtet nach Aufwand (Minuten) statt nach reiner
-  // Anzahl — zeigt, wo aktuell wie viel Arbeit liegt, nicht nur wie viele Zettel.
-  const categoryMinutes = new Map();
-  let uncategorized = 0;
-  openItems.forEach((t) => {
-    const w = taskWeight(t);
-    if (t.category) {
-      categoryMinutes.set(t.category.bezeichnung, (categoryMinutes.get(t.category.bezeichnung) || 0) + w);
+  const byPerson = new Map();
+  lastTaskItems.forEach((t) => {
+    const label = t.assignees.length ? t.assignees[0].username : "Für alle";
+    const entry = byPerson.get(label) || { label, done: 0, open: 0, overdue: 0 };
+    if (t.done) {
+      entry.done += 1;
     } else {
-      uncategorized += w;
+      entry.open += 1;
+      if (isTaskOverdue(t)) entry.overdue += 1;
     }
+    byPerson.set(label, entry);
   });
-  const categoryEntries = Array.from(categoryMinutes, ([label, minutes]) => ({ label, minutes })).sort(
-    (a, b) => b.minutes - a.minutes
-  );
-  if (uncategorized > 0) categoryEntries.push({ label: "Ohne Kategorie", minutes: uncategorized });
-  renderTaskStatBars(byCategoryEl, categoryEntries, "Keine offenen Aufgaben.");
 
-  const personMinutes = new Map();
-  let forAll = 0;
-  openItems.forEach((t) => {
-    const w = taskWeight(t);
-    if (t.assignees.length) {
-      personMinutes.set(t.assignees[0].username, (personMinutes.get(t.assignees[0].username) || 0) + w);
-    } else {
-      forAll += w;
-    }
-  });
-  const personEntries = Array.from(personMinutes, ([label, minutes]) => ({ label, minutes })).sort(
-    (a, b) => b.minutes - a.minutes
-  );
-  if (forAll > 0) personEntries.push({ label: "Für alle", minutes: forAll });
-  renderTaskStatBars(byPersonEl, personEntries, "Keine offenen Aufgaben.");
+  const entries = Array.from(byPerson.values()).sort((a, b) => b.done + b.open - (a.done + a.open));
+  byPersonEl.innerHTML = entries.map(renderTaskPersonRow).join("");
 }
 
 /* ---------- Dashboard: Wetter am Camp (echte Daten von Open-Meteo) ---------- */
@@ -955,6 +891,29 @@ function groupWeatherWarnings(warnings) {
   });
 }
 
+// Klartext statt Stunde-für-Stunde-Prozentzahlen — 4 % Regenwahrscheinlichkeit
+// ist Rauschen und niemandem eine eigene Zeile wert. Ab 30 % gilt es als
+// relevant; zusammenhängende Regenstunden werden zu einem Zeitfenster zusammengefasst.
+function computePrecipSummary(hourly) {
+  const THRESHOLD = 30;
+  if (!hourly.length) return "";
+
+  const startIdx = hourly.findIndex((h) => (h.precip_prob || 0) >= THRESHOLD);
+  if (startIdx === -1) return "☀️ Bleibt voraussichtlich trocken";
+
+  let endIdx = startIdx;
+  while (endIdx + 1 < hourly.length && (hourly[endIdx + 1].precip_prob || 0) >= THRESHOLD) {
+    endIdx += 1;
+  }
+  const window = hourly.slice(startIdx, endIdx + 1);
+  const maxProb = Math.max(...window.map((h) => h.precip_prob || 0));
+
+  const start = new Date(hourly[startIdx].time);
+  const isToday = start.toDateString() === new Date().toDateString();
+  const dayPrefix = isToday ? "" : start.toLocaleDateString("de-DE", { weekday: "long" }) + ", ";
+  return `🌧️ Regen ab ${dayPrefix}${start.getHours()} Uhr möglich (${Math.round(maxProb)} %)`;
+}
+
 function renderWeather(data) {
   const el = document.getElementById("weatherCard");
   if (!el) return;
@@ -973,21 +932,7 @@ function renderWeather(data) {
         .join("")
     : "";
 
-  const hourly = (data.hourly || []).slice(0, 12);
-  const hourlyHtml = hourly
-    .map((h, i) => {
-      const hour = new Date(h.time).getHours();
-      const prob = h.precip_prob || 0;
-      const heightPct = Math.max(4, prob);
-      return `
-        <div class="weather-hour">
-          <span class="weather-hour-prob">${prob > 9 ? prob + "%" : ""}</span>
-          <div class="weather-hour-track"><div class="weather-hour-fill" style="height:${heightPct}%"></div></div>
-          <span class="weather-hour-label">${i % 3 === 0 ? hour + "h" : ""}</span>
-        </div>
-      `;
-    })
-    .join("");
+  const precipSummary = computePrecipSummary(data.hourly || []);
 
   const dailyHtml = (data.daily || [])
     .map((d) => {
@@ -1012,8 +957,7 @@ function renderWeather(data) {
       </div>
     </div>
     ${warningsHtml}
-    <p class="weather-subhead">Niederschlag — nächste Stunden</p>
-    <div class="weather-hourly">${hourlyHtml}</div>
+    <p class="weather-precip-summary">${precipSummary}</p>
     <div class="weather-wind-row">💨 ${Math.round(cur.wind_speed_10m)} km/h aus ${windDirLabel(cur.wind_direction_10m)}, Böen bis ${Math.round(cur.wind_gusts_10m)} km/h</div>
     <p class="weather-subhead">Ausblick</p>
     <div class="weather-daily">${dailyHtml}</div>
@@ -1109,7 +1053,7 @@ function renderMyOpenTaskCard(task) {
   }
   const metaHtml = metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : "";
   const categoryTag = task.category
-    ? `<span class="source-tag" style="background:${escapeHtml(task.category.farbe)}">${escapeHtml(task.category.bezeichnung)}</span>`
+    ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
     : "";
 
   card.innerHTML = `
@@ -1522,8 +1466,16 @@ function formatWeekdayDate(isoDate) {
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 }
 
+// Reiner Text wie "Camp" liefert bei Google Maps eine unzuverlässige Suche
+// (irgendein Ort namens "Camp" irgendwo) — daher fest auf die echten
+// Koordinaten des Camp-Standorts verdrahtet, in jeder Schreibweise
+// ("Camp", "camp", " Camp " …), erkannt nach Entfernen aller Leerzeichen.
+const CAMP_LOCATION_COORDS = "47.6738659,9.7418924";
+
 function mapsUrl(location) {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+  const isCampPlaceholder = location.replace(/\s+/g, "").toLowerCase() === "camp";
+  const query = isCampPlaceholder ? CAMP_LOCATION_COORDS : location;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
 function groupPlanEvents(events) {
@@ -1839,8 +1791,7 @@ function renderExpenseGroup(group, isAdmin) {
         onSubmit: async () => {
           const res = await fetch(`/api/expenses/batch/${group.batchId}`, { method: "DELETE" });
           if (res.ok) {
-            loadExpenses();
-            loadBalance();
+            refreshAllCostsData();
           }
           closeModal();
         },
@@ -1988,7 +1939,12 @@ function computeFilteredExpenseTotal() {
     return lastExpenses.reduce((sum, e) => sum + e.cash, 0);
   }
   if (expenseFilterMode === "von") {
-    return lastExpenses.filter((e) => e.glaubiger_id === expenseFilterUserId).reduce((s, e) => s + e.cash, 0);
+    // Eigenkäufe (X ist Zahler UND einziger Beteiligter) zählen bewusst NICHT
+    // mit — "Von X" soll zeigen, was X für ANDERE vorgestreckt hat, nicht was
+    // X insgesamt bezahlt hat (siehe Absprache).
+    return lastExpenses
+      .filter((e) => e.glaubiger_id === expenseFilterUserId && e.schuldner_id !== e.glaubiger_id)
+      .reduce((s, e) => s + e.cash, 0);
   }
   return lastExpenses.filter((e) => e.schuldner_id === expenseFilterUserId).reduce((s, e) => s + e.cash, 0);
 }
@@ -2010,40 +1966,48 @@ function updateExpensesHeroCard() {
   }
 
   const total = computeFilteredExpenseTotal();
+
+  // Wenn nach einer bestimmten Person gefiltert ist: Dreisatz-Hochrechnung,
+  // was das Camp insgesamt gekostet hätte, wenn ALLE (Gruppengröße) so viel
+  // verbraucht/ausgegeben hätten wie diese eine Person — reine "was wäre
+  // wenn"-Kennzahl, nutzt dieselbe Zeitbasis wie die Budget-Hochrechnung.
+  let hypotheticalHtml = "";
+  if (expenseFilterUserId !== null && cachedUsers && cachedUsers.length > 0) {
+    const timeBase = projectionTimeBase();
+    if (timeBase) {
+      const { elapsedDays, totalProjectionDays } = timeBase;
+      const personProjected = (total / elapsedDays) * totalProjectionDays;
+      const hypothetical = personProjected * cachedUsers.length;
+      hypotheticalHtml = `
+        <div class="muted" style="margin-top:4px;">
+          Wenn alle ${cachedUsers.length} so viel verbraucht hätten: ${formatEuro(hypothetical)}
+        </div>
+      `;
+    }
+  }
+
   myExpensesHeroEl.innerHTML = `
     <div class="eyebrow">${title}</div>
     <div class="countdown">${formatEuro(total)}</div>
+    ${hypotheticalHtml}
   `;
-
-  renderBudgetProjection();
 }
 
-// Lineare Hochrechnung (Dreisatz) der eigenen Gesamtausgaben auf die volle
-// Camp-Länge: bisher Ausgegebenes / bisherige Camp-Tage * Camp-Gesamttage.
-// Bewusst immer auf die eigene Person bezogen, unabhängig vom Ausgaben-Filter
-// oben — "eigene Ausgaben" heißt hier wirklich "meine", nicht "gefilterte".
-function renderBudgetProjection() {
-  const el = document.getElementById("budgetProjection");
-  const valueEl = document.getElementById("budgetProjectionValue");
-  const detailEl = document.getElementById("budgetProjectionDetail");
-  if (!el || !valueEl || !detailEl || !cachedMe) return;
+// Rechenstart bewusst schon der 1. August, nicht CAMP_START (5.8.) — viele
+// Ausgaben (Ausrüstung, Vorbereitung) fallen vor den eigentlichen Camp-Beginn
+// und würden sonst als "vor Beginn" aus der Hochrechnung rausfallen bzw. den
+// Tag-1-Wert künstlich aufblähen. Alles vor dem 1.8. zählt so, als wäre es am
+// 1.8. angefallen (elapsedDays wird nie kleiner als 0).
+const PROJECTION_START = new Date("2026-08-01T00:00:00");
 
-  const totalCampDays = (CAMP_END - CAMP_START) / 86400000;
+// Für den Dreisatz gemeinsam genutzte Zeitbasis (elapsedDays/totalProjectionDays) —
+// wird von der Personen-Hochrechnung im Filter-Modus verwendet.
+function projectionTimeBase() {
+  const totalProjectionDays = (CAMP_END - PROJECTION_START) / 86400000;
   const now = new Date();
-  if (now < CAMP_START || totalCampDays <= 0) {
-    el.classList.add("hidden");
-    return;
-  }
-
-  const elapsedDays = Math.max(Math.min(now - CAMP_START, CAMP_END - CAMP_START) / 86400000, 1 / 24);
-  const spent = lastExpenses
-    .filter((e) => e.schuldner_id === cachedMe.id)
-    .reduce((sum, e) => sum + e.cash, 0);
-  const projected = (spent / elapsedDays) * totalCampDays;
-
-  el.classList.remove("hidden");
-  valueEl.textContent = formatEuro(projected);
-  detailEl.textContent = `Hochgerechnet auf alle ${Math.round(totalCampDays)} Camp-Tage, basierend auf ${formatEuro(spent)} bisher (Tag ${Math.max(1, Math.round(elapsedDays))} von ${Math.round(totalCampDays)}).`;
+  if (now < PROJECTION_START || totalProjectionDays <= 0) return null;
+  const elapsedDays = Math.max(Math.min(now - PROJECTION_START, CAMP_END - PROJECTION_START) / 86400000, 1 / 24);
+  return { elapsedDays, totalProjectionDays };
 }
 
 function expenseModalBodyHtml(users, me, prefill = {}) {
@@ -2247,8 +2211,7 @@ async function openAddExpenseModal() {
 
       if (res.ok) {
         closeModal();
-        loadExpenses();
-        loadBalance();
+        refreshAllCostsData();
       }
     },
   });
@@ -2283,8 +2246,7 @@ async function openEditExpenseModal(group) {
 
       if (res.ok) {
         closeModal();
-        loadExpenses();
-        loadBalance();
+        refreshAllCostsData();
       }
     },
   });
@@ -2492,8 +2454,7 @@ function openConfirmSettleModal(s) {
       });
       if (res.ok) {
         closeModal();
-        loadOpenSettlements();
-        loadBalance();
+        refreshAllCostsData();
       } else {
         const data = await res.json().catch(() => ({}));
         errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
@@ -2593,8 +2554,7 @@ function renderReceivedItem(r) {
     });
 
     if (res.ok) {
-      loadReceivedPayments();
-      loadBalance();
+      refreshAllCostsData();
     } else {
       const data = await res.json().catch(() => ({}));
       errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
@@ -2656,6 +2616,24 @@ async function loadReceivedPayments() {
 function pollCostsViews() {
   loadBalance();
   loadExpenses();
+  loadOpenSettlements();
+  loadReceivedPayments();
+}
+
+// Nach JEDER Änderung an Ausgaben (anlegen/bearbeiten/löschen/Zahlung
+// senden/bestätigen) müssen alle davon abhängigen Ansichten neu gerechnet
+// werden — nicht nur Liste + Saldo, sondern auch offene Zahlungen, erhaltene
+// Zahlungen und das Geldfluss-Diagramm. Die Signaturen werden dafür bewusst
+// zurückgesetzt, damit der "nur bei echter Änderung neu rendern"-Vergleich
+// nicht fälschlich glaubt, es habe sich nichts geändert (z. B. wenn ein
+// Poll-Tick zwischendurch schon denselben Endzustand gesehen hat).
+function refreshAllCostsData() {
+  lastExpensesSignature = null;
+  lastBalanceSignature = null;
+  lastOpenSettlementsSignature = null;
+  lastReceivedSignature = null;
+  loadExpenses();
+  loadBalance();
   loadOpenSettlements();
   loadReceivedPayments();
 }
