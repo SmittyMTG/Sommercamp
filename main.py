@@ -933,20 +933,10 @@ def get_expense_balance(request: Request, db: Session = Depends(get_db)):
         db.query(func.sum(Ausgabe.cash)).filter(Ausgabe.schuldner_id == me.id, open_others).scalar()
         or 0
     )
-    # Eigene Ausgaben insgesamt (auch selbst bezahlte, ohne Schuldverhältnis) —
-    # unabhängig vom Saldo, rein informativ für "was habe ich insgesamt an
-    # Kosten verursacht". Gleiche Grundlage wie im Leaderboard.
-    my_total = (
-        db.query(func.sum(Ausgabe.cash))
-        .filter(Ausgabe.schuldner_id == me.id, Ausgabe.status == "offen")
-        .scalar()
-        or 0
-    )
     return {
         "owed_to_me": float(owed_to_me),
         "i_owe": float(i_owe),
         "net": float(owed_to_me) - float(i_owe),
-        "my_total": float(my_total),
     }
 
 
