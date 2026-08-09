@@ -2340,8 +2340,42 @@ function buildMoneyFlowSvg(settlements) {
       (a, b) => b.total - a.total
     );
   }
-  const leftNodes = buildNodes("from_id");
-  const rightNodes = buildNodes("to_id");
+  let leftNodes = buildNodes("from_id");
+  let rightNodes = buildNodes("to_id");
+
+  // Barycenter-Heuristik gegen unnötige Diagonalen/Kreuzungen: eine Seite wird
+  // an der (betragsgewichteten) Durchschnittsposition ihrer Gegenstellen
+  // ausgerichtet, statt beide Seiten unabhängig nach Betrag zu sortieren —
+  // sonst rutscht z. B. ein kleiner Betrag von ganz oben links nach ganz
+  // unten rechts und kreuzt dabei alle anderen Bänder unnötig.
+  function barycenter(nodeId, key, otherIndex) {
+    const otherKey = key === "from_id" ? "to_id" : "from_id";
+    let weightedSum = 0;
+    let weightTotal = 0;
+    settlements.forEach((s) => {
+      if (s[key] !== nodeId) return;
+      const idx = otherIndex.get(s[otherKey]);
+      if (idx === undefined) return;
+      weightedSum += idx * s.amount;
+      weightTotal += s.amount;
+    });
+    return weightTotal > 0 ? weightedSum / weightTotal : otherIndex.size / 2;
+  }
+  for (let pass = 0; pass < 3; pass++) {
+    const leftIdx = new Map(leftNodes.map((n, i) => [n.id, i]));
+    rightNodes = rightNodes
+      .map((n) => ({ n, bary: barycenter(n.id, "to_id", leftIdx) }))
+      .sort((a, b) => a.bary - b.bary)
+      .map((x) => x.n);
+
+    const rightIdx = new Map(rightNodes.map((n, i) => [n.id, i]));
+    leftNodes = leftNodes
+      .map((n) => ({ n, bary: barycenter(n.id, "from_id", rightIdx) }))
+      .sort((a, b) => a.bary - b.bary)
+      .map((x) => x.n);
+  }
+  const leftIndex = new Map(leftNodes.map((n, i) => [n.id, i]));
+  const rightIndex = new Map(rightNodes.map((n, i) => [n.id, i]));
 
   const scaleFor = (nodes) => (TARGET_H - Math.max(0, nodes.length - 1) * GAP) / totalAmount;
   const scale = Math.max(0.01, Math.min(scaleFor(leftNodes), scaleFor(rightNodes)));
@@ -2379,33 +2413,73 @@ function buildMoneyFlowSvg(settlements) {
     nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(y + pos.h / 2 + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
   });
 
+  // y0 (Startposition je Band am linken Knoten) und y1 (am rechten Knoten)
+  // getrennt berechnen: die Bänder EINES Knotens werden nach dem Rang ihres
+  // jeweiligen Gegenknotens einsortiert (nicht nach globalem Betrag) — sonst
+  // verdrehen sich mehrere Bänder desselben Knotens unnötig ineinander.
+  const y0Map = new Map();
+  settlements
+    .slice()
+    .sort((a, b) => (rightIndex.get(a.to_id) ?? 0) - (rightIndex.get(b.to_id) ?? 0))
+    .forEach((s) => {
+      const pos = left.positions[s.from_id];
+      const thickness = Math.max(3, s.amount * scale);
+      y0Map.set(s, pos.cursor + leftOffset);
+      pos.cursor += thickness;
+    });
+  const y1Map = new Map();
+  settlements
+    .slice()
+    .sort((a, b) => (leftIndex.get(a.from_id) ?? 0) - (leftIndex.get(b.from_id) ?? 0))
+    .forEach((s) => {
+      const pos = right.positions[s.to_id];
+      const thickness = Math.max(3, s.amount * scale);
+      y1Map.set(s, pos.cursor + rightOffset);
+      pos.cursor += thickness;
+    });
+
   // Größte Bänder zuerst zeichnen, damit dünnere beim Überlappen sichtbar bleiben.
   // Jedes Band bekommt seinen Betrag direkt als Label an der schmalsten Stelle
   // (Bandmitte) — damit ist im Chart selbst schon alles ablesbar, ganz ohne
   // die Liste darunter zu Rate ziehen zu müssen.
   let ribbonsSvg = "";
-  let labelsSvg = "";
+  const labelEntries = [];
   settlements
     .slice()
     .sort((a, b) => b.amount - a.amount)
     .forEach((s) => {
       const thickness = Math.max(3, s.amount * scale);
-      const lp = left.positions[s.from_id];
-      const rp = right.positions[s.to_id];
-      const y0 = lp.cursor + leftOffset;
-      const y1 = rp.cursor + rightOffset;
-      lp.cursor += thickness;
-      rp.cursor += thickness;
+      const y0 = y0Map.get(s);
+      const y1 = y1Map.get(s);
       const d = `M${leftXEnd},${y0.toFixed(1)} C${midX},${y0.toFixed(1)} ${midX},${y1.toFixed(1)} ${rightXStart},${y1.toFixed(1)} L${rightXStart},${(y1 + thickness).toFixed(1)} C${midX},${(y1 + thickness).toFixed(1)} ${midX},${(y0 + thickness).toFixed(1)} ${leftXEnd},${(y0 + thickness).toFixed(1)} Z`;
       const opacity = s.pending ? 0.28 : 0.62;
       ribbonsSvg += `<path d="${d}" fill="${colorOf[s.from_id]}" opacity="${opacity}"><title>${escapeHtml(s.from)} → ${escapeHtml(s.to)}: ${formatEuro(s.amount)}${s.pending ? " (wartet auf Bestätigung)" : ""}</title></path>`;
 
-      const labelY = (y0 + y1) / 2 + thickness / 2;
       const pendingSuffix = s.pending ? " ⏳" : "";
-      labelsSvg += `<text class="money-flow-edge-label" x="${midX.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="middle">${formatEuro(s.amount)}${pendingSuffix}</text>`;
+      labelEntries.push({
+        y: (y0 + y1) / 2 + thickness / 2,
+        text: `${formatEuro(s.amount)}${pendingSuffix}`,
+      });
     });
 
-  const fullH = plotH + 2 * MARGIN_Y;
+  // Kreuzen sich zwei Bänder in der Mitte, liegen ihre Labels sonst an fast
+  // derselben Stelle übereinander (unlesbar) — hier per Mindestabstand
+  // auseinandergeschoben, von oben nach unten durchsortiert.
+  const MIN_LABEL_GAP = 13;
+  labelEntries.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labelEntries.length; i++) {
+    const minY = labelEntries[i - 1].y + MIN_LABEL_GAP;
+    if (labelEntries[i].y < minY) labelEntries[i].y = minY;
+  }
+  const labelsSvg = labelEntries
+    .map((l) => `<text class="money-flow-edge-label" x="${midX.toFixed(1)}" y="${l.y.toFixed(1)}" text-anchor="middle">${l.text}</text>`)
+    .join("");
+
+  // Falls das Auseinanderschieben Labels über den ursprünglich berechneten
+  // Plot-Bereich hinausdrückt, das viewBox entsprechend mitwachsen lassen —
+  // sonst würden die untersten Labels abgeschnitten.
+  const maxLabelY = labelEntries.length ? labelEntries[labelEntries.length - 1].y : 0;
+  const fullH = Math.max(plotH + 2 * MARGIN_Y, maxLabelY + MARGIN_Y);
   return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}${labelsSvg}</svg>`;
 }
 
@@ -2564,19 +2638,28 @@ function explainPairNetRow(p) {
   `;
 }
 
+function explainMergeRow(m) {
+  return `
+    <div class="explain-pair-net-row">
+      <span class="explain-pair-net-names">${nameTag(m.u)} → ${nameTag(m.m)} → ${nameTag(m.v)}</span>
+      <span class="explain-pair-net-calc">wird zu <strong>${escapeHtml(m.u)} → ${escapeHtml(m.v)}: ${formatEuro(m.amount)}</strong> (${escapeHtml(m.m)} fällt raus)</span>
+    </div>
+  `;
+}
+
 // Baut die einzelnen "Folien" der Animation aus denselben Daten, die auch die
 // tatsächlichen Zahlungsvorschläge liefern (/api/expenses/open/explain nutzt
-// intern exakt dieselbe paarweise Verrechnung wie /api/expenses/open) — so
-// kann die Erklärung nie von der echten Liste abweichen.
+// intern exakt dieselbe Berechnung wie /api/expenses/open) — so kann die
+// Erklärung nie von der echten Liste abweichen.
 function buildExplainSlides(data) {
-  const { pairs, steps } = data;
+  const { pairs, netted_pairs, merges, steps } = data;
 
   const slides = [];
 
   slides.push(() => `
     <div class="explain-slide">
       <p>Jede gemeinsame Ausgabe erzeugt eine direkte Schuld: der Beteiligte schuldet dem Zahler seinen Anteil.</p>
-      <p>Es wird bewusst <strong>nicht global über alle Personen</strong> verrechnet, sondern <strong>nur zwischen genau den zwei Personen</strong>, die auch wirklich etwas zusammen hatten.</p>
+      <p>Zuerst wird das <strong>nur zwischen den zwei beteiligten Personen</strong> verrechnet. Ergibt sich daraus eine Kette (A schuldet B, B schuldet C), wird die Kette danach aufgelöst, damit möglichst wenige Überweisungen nötig sind.</p>
     </div>
   `);
 
@@ -2595,29 +2678,15 @@ function buildExplainSlides(data) {
     </div>
   `);
 
-  steps.forEach((s, idx) => {
-    const pair = pairs.find(
-      (p) => (p.a_id === s.from_id && p.b_id === s.to_id) || (p.a_id === s.to_id && p.b_id === s.from_id)
-    );
+  if (merges.length) {
     slides.push(() => `
       <div class="explain-slide">
-        <p class="explain-slide-label">Ergebnis ${idx + 1} von ${steps.length}</p>
-        <div class="explain-transfer">
-          <div class="explain-transfer-person">
-            <span class="explain-transfer-name">${nameTag(s.from)}</span>
-          </div>
-          <div class="explain-transfer-arrow">
-            <span class="explain-transfer-amount">${formatEuro(s.amount)}</span>
-            <div class="explain-arrow-line"><span class="explain-arrow-head">→</span></div>
-          </div>
-          <div class="explain-transfer-person">
-            <span class="explain-transfer-name">${nameTag(s.to)}</span>
-          </div>
-        </div>
-        ${pair ? `<p class="explain-transfer-calc">${formatEuro(pair.a_to_b)} − ${formatEuro(pair.b_to_a)} = ${formatEuro(s.amount)}</p>` : ""}
+        <p class="explain-slide-label">Schritt 3 — Ketten auflösen</p>
+        ${merges.map((m) => explainMergeRow(m)).join("")}
+        <p class="muted">Wo eine Person nur "durchreicht" (schuldet UND bekommt was), wird sie so weit wie möglich übersprungen — das spart Überweisungen, führt aber dazu, dass am Ende auch an Personen gezahlt wird, mit denen man nichts direkt hatte.</p>
       </div>
     `);
-  });
+  }
 
   slides.push(() => `
     <div class="explain-slide">
@@ -2635,7 +2704,7 @@ function buildExplainSlides(data) {
             : `<p class="muted">Alles ausgeglichen.</p>`
         }
       </div>
-      <p class="muted">Genau diese ${steps.length} Überweisung${steps.length === 1 ? "" : "en"} siehst du unter "Offene Zahlungen" — jede davon direkt zwischen Personen, die auch wirklich etwas zusammen hatten.</p>
+      <p class="muted">Genau diese ${steps.length} Überweisung${steps.length === 1 ? "" : "en"} siehst du unter "Offene Zahlungen" — von ursprünglich ${netted_pairs.length} Paar-Zahlung${netted_pairs.length === 1 ? "" : "en"} über Ketten auf ${steps.length} reduziert.</p>
     </div>
   `);
 

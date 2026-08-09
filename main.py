@@ -1167,14 +1167,74 @@ def _compute_pairwise_debts(db: Session) -> list[tuple[int, int, float]]:
     return result
 
 
+def _resolve_debt_chains(db: Session) -> tuple[list[tuple[int, int, float]], list[dict]]:
+    """Löst Ketten in den paarweisen Schulden auf: schuldet A dem B etwas UND B
+    wiederum C, wird der überlappende Betrag direkt von A an C verschoben (B
+    fällt für genau diesen Betrag als Zwischenstation raus) — reduziert die
+    Anzahl der Überweisungen. Arbeitet nur entlang tatsächlich existierender
+    Schuld-Kanten (aus _compute_pairwise_debts), nicht global über beliebige
+    Personen hinweg wie die frühere Greedy-Minimierung.
+
+    Gibt die reduzierte Kantenliste zurück sowie ein Protokoll der einzelnen
+    Verschiebungen (für die animierte Erklärung im Frontend)."""
+    edges: dict[tuple[int, int], float] = {
+        (from_id, to_id): amount for from_id, to_id, amount in _compute_pairwise_debts(db)
+    }
+
+    def find_chain():
+        for (u, m), amt_in in edges.items():
+            if amt_in <= 0.005:
+                continue
+            for (m2, v), amt_out in edges.items():
+                if m2 != m or v == u or amt_out <= 0.005:
+                    continue
+                return u, m, v
+        return None
+
+    merges: list[dict] = []
+    while True:
+        chain = find_chain()
+        if not chain:
+            break
+        u, m, v = chain
+        amt_in = edges.get((u, m), 0.0)
+        amt_out = edges.get((m, v), 0.0)
+        shift = round(min(amt_in, amt_out), 2)
+        if shift <= 0.005:
+            break
+        edges[(u, m)] = round(amt_in - shift, 2)
+        edges[(m, v)] = round(amt_out - shift, 2)
+        fwd = edges.get((u, v), 0.0) + shift
+        rev = edges.get((v, u), 0.0)
+        net = round(fwd - rev, 2)
+        if net >= 0:
+            edges[(u, v)] = net
+            edges[(v, u)] = 0.0
+        else:
+            edges[(v, u)] = round(-net, 2)
+            edges[(u, v)] = 0.0
+        merges.append({"u_id": u, "m_id": m, "v_id": v, "amount": shift})
+        edges = {k: val for k, val in edges.items() if val > 0.005}
+
+    result = [(from_id, to_id, amount) for (from_id, to_id), amount in edges.items() if amount > 0.005]
+    result.sort(key=lambda x: (-x[2], x[0], x[1]))
+    return result, merges
+
+
+def _compute_settlements(db: Session) -> list[tuple[int, int, float]]:
+    settlements, _ = _resolve_debt_chains(db)
+    return settlements
+
+
 @app.get("/api/expenses/open")
 def get_open_settlements(request: Request, db: Session = Depends(get_db)):
     """
     Schlägt vor, wer an wen zahlen soll, um alle offenen Schulden auszugleichen —
-    paarweise verrechnet (siehe _compute_pairwise_debts): jede Person zahlt nur
-    an Personen, mit denen sie tatsächlich eine gemeinsame Ausgabe hatte, nicht
-    global über alle Salden hinweg minimiert. Die Berechnung ist deterministisch,
-    solange sich die zugrunde liegenden (nicht-pending) Beträge nicht ändern.
+    paarweise verrechnet (siehe _compute_pairwise_debts) und anschließend über
+    Ketten reduziert (siehe _resolve_debt_chains): schuldet A dem B etwas UND B
+    wiederum C, zahlt A den überlappenden Betrag direkt an C statt über B.
+    Die Berechnung ist deterministisch, solange sich die zugrunde liegenden
+    (nicht-pending) Beträge nicht ändern.
 
     "pending" Tilgungseinträge zählen bewusst NICHT in die Berechnung hinein
     (sonst würde die Kachel sofort verschwinden, bevor der Gläubiger bestätigt
@@ -1185,7 +1245,7 @@ def get_open_settlements(request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     usernames = {u.id: u.username for u in db.query(User).all()}
-    min_settlements = _compute_pairwise_debts(db)
+    min_settlements = _compute_settlements(db)
 
     pending_by_pair = {
         (r.glaubiger_id, r.schuldner_id): float(r.cash)
@@ -1245,7 +1305,7 @@ def get_open_settlements_explain(request: Request, db: Session = Depends(get_db)
         for p in raw_pairs
     ]
 
-    steps = []
+    netted_pairs = []
     for p in raw_pairs:
         if p["net"] > 0.005:
             from_id, to_id, amount = p["a_id"], p["b_id"], p["net"]
@@ -1253,18 +1313,37 @@ def get_open_settlements_explain(request: Request, db: Session = Depends(get_db)
             from_id, to_id, amount = p["b_id"], p["a_id"], -p["net"]
         else:
             continue
-        steps.append(
-            {
-                "from_id": from_id,
-                "from": usernames.get(from_id, "?"),
-                "to_id": to_id,
-                "to": usernames.get(to_id, "?"),
-                "amount": amount,
-            }
+        netted_pairs.append(
+            {"from_id": from_id, "from": usernames.get(from_id, "?"), "to_id": to_id, "to": usernames.get(to_id, "?"), "amount": amount}
         )
-    steps.sort(key=lambda s: -s["amount"])
+    netted_pairs.sort(key=lambda s: -s["amount"])
 
-    return {"pairs": pairs, "steps": steps}
+    settlements, merges_raw = _resolve_debt_chains(db)
+
+    # Dieselbe Kette (identischer Schuldner, Zwischenstation und Gläubiger) kann
+    # im Algorithmus in mehreren Einzelschritten auftauchen (z. B. weil erst ein
+    # Teilbetrag über eine andere Kette verschoben wird) — für die Anzeige zu
+    # EINER Zeile mit dem Gesamtbetrag zusammenfassen, statt zwei Zeilen mit
+    # Teilbeträgen zu zeigen.
+    merges_by_triple: dict[tuple[int, int, int], float] = {}
+    for m in merges_raw:
+        key = (m["u_id"], m["m_id"], m["v_id"])
+        merges_by_triple[key] = merges_by_triple.get(key, 0.0) + m["amount"]
+    merges = [
+        {
+            "u_id": u_id, "u": usernames.get(u_id, "?"),
+            "m_id": m_id, "m": usernames.get(m_id, "?"),
+            "v_id": v_id, "v": usernames.get(v_id, "?"),
+            "amount": round(amount, 2),
+        }
+        for (u_id, m_id, v_id), amount in sorted(merges_by_triple.items(), key=lambda kv: -kv[1])
+    ]
+    steps = [
+        {"from_id": from_id, "from": usernames.get(from_id, "?"), "to_id": to_id, "to": usernames.get(to_id, "?"), "amount": amount}
+        for from_id, to_id, amount in settlements
+    ]
+
+    return {"pairs": pairs, "netted_pairs": netted_pairs, "merges": merges, "steps": steps}
 
 
 @app.post("/api/expenses/settle")
@@ -1280,11 +1359,12 @@ def settle_expenses(
     bis dahin bleibt der offene Betrag sichtbar, nur als "wartend" markiert (siehe
     /api/expenses/open), damit man parallel an mehrere Personen etwas schicken kann.
 
-    Der maximal mögliche Betrag wird über dieselbe paarweise Verrechnung wie
-    /api/expenses/open ermittelt (siehe _compute_pairwise_debts), basiert also
-    auf der direkten Historie zwischen genau diesen beiden Personen. payload.amount
-    ist optional und erlaubt Teilzahlungen bis zu diesem Maximum — der Rest bleibt
-    offen und fließt beim nächsten Abruf ganz normal wieder in die Berechnung ein.
+    Der maximal mögliche Betrag wird über dieselbe Berechnung wie /api/expenses/open
+    ermittelt (siehe _compute_settlements: paarweise Verrechnung + Ketten-Auflösung),
+    kann also auch eine über eine Kette (A->B->C) reduzierte Zahlung sein, nicht nur
+    direkte Historie. payload.amount ist optional und erlaubt Teilzahlungen bis zu
+    diesem Maximum — der Rest bleibt offen und fließt beim nächsten Abruf ganz normal
+    wieder in die Berechnung ein.
     """
     username = get_current_user(request)
     if not username:
@@ -1308,7 +1388,7 @@ def settle_expenses(
             content={"error": "Diese Zahlung wurde bereits als gesendet markiert und wartet auf Bestätigung"},
         )
 
-    min_settlements = _compute_pairwise_debts(db)
+    min_settlements = _compute_settlements(db)
     match = next(
         (amount for deb_id, cred_id, amount in min_settlements if deb_id == me.id and cred_id == creditor.id),
         None,
