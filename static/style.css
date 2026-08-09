@@ -134,7 +134,7 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .money-flow-diagram svg{display:block;width:100%;height:auto}
 .money-flow-node-label{font-size:11px;font-weight:700;fill:var(--text)}
 .money-flow-node-amount{font-size:10px;fill:var(--muted)}
-.money-flow-edge-label{font-size:10px;font-weight:800;fill:#fff;paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
+.money-flow-edge-label{font-size:10px;font-weight:800;paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
 
 /* Wetter */
 .weather-card{margin-bottom:16px}

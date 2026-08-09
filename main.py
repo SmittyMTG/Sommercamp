@@ -1600,6 +1600,37 @@ def confirm_received_payment(
     return {"ok": True}
 
 
+@app.get("/api/expenses/settled")
+def get_settled_payments(request: Request, db: Session = Depends(get_db)):
+    """Bereits bestätigte Rückzahlungen (status='getilgt') — reine Historie,
+    zeigt wer wann wie viel an wen gezahlt hat und bereits bestätigt wurde.
+    Im Tilgungseintrag ist glaubiger_id der ursprüngliche Absender (Schuldner)
+    und schuldner_id der Empfänger, der bestätigt hat (siehe settle_expenses/
+    confirm_received_payment) — für die Anzeige also "from"=glaubiger."""
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    usernames = {u.id: u.username for u in db.query(User).all()}
+    rows = (
+        db.query(Ausgabe)
+        .filter(Ausgabe.status == "getilgt")
+        .order_by(Ausgabe.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "from_id": r.glaubiger_id,
+            "from": usernames.get(r.glaubiger_id, "?"),
+            "to_id": r.schuldner_id,
+            "to": usernames.get(r.schuldner_id, "?"),
+            "amount": float(r.cash),
+            "date": r.datum.isoformat(),
+        }
+        for r in rows
+    ]
+
+
 @app.get("/api/expenses/leaderboard")
 def get_expense_leaderboard(request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)

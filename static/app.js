@@ -2392,9 +2392,12 @@ function buildMoneyFlowSvg(settlements) {
     });
 
   // Größte Bänder zuerst zeichnen, damit dünnere beim Überlappen sichtbar bleiben.
-  // Jedes Band bekommt seinen Betrag direkt als Label an der schmalsten Stelle
-  // (Bandmitte) — damit ist im Chart selbst schon alles ablesbar, ganz ohne
-  // die Liste darunter zu Rate ziehen zu müssen.
+  // Jedes Band bekommt seinen Betrag als Label direkt an seinem Ursprung beim
+  // Schuldner (linksbündig, in dessen Farbe) statt an der Kreuzungsstelle in
+  // der Mitte — dort können sich mehrere Bänder überlagern und es ist nicht
+  // auf Anhieb erkennbar, wer zahlen muss. An der Startposition beim Schuldner
+  // sind die Bänder eines Knotens durch die Stapel-Reihenfolge garantiert
+  // überlappungsfrei (siehe y0Map).
   let ribbonsSvg = "";
   const labelEntries = [];
   settlements
@@ -2410,27 +2413,29 @@ function buildMoneyFlowSvg(settlements) {
 
       const pendingSuffix = s.pending ? " ⏳" : "";
       labelEntries.push({
-        y: (y0 + y1) / 2 + thickness / 2,
+        y: y0 + thickness / 2 + 3,
         text: `${formatEuro(s.amount)}${pendingSuffix}`,
+        color: colorOf[s.from_id],
       });
     });
 
-  // Kreuzen sich zwei Bänder in der Mitte, liegen ihre Labels sonst an fast
-  // derselben Stelle übereinander (unlesbar) — hier per Mindestabstand
-  // auseinandergeschoben, von oben nach unten durchsortiert.
-  const MIN_LABEL_GAP = 13;
+  // Bei sehr kleinen Beträgen (Band nur 3px dick) reicht die eigene Stapel-
+  // Position allein nicht als Abstand für den Text — hier zusätzlich ein
+  // Mindestabstand erzwungen (nach y sortiert, damit "vorheriger Eintrag"
+  // wirklich der vertikal vorherige ist).
+  const MIN_LABEL_GAP = 12;
   labelEntries.sort((a, b) => a.y - b.y);
   for (let i = 1; i < labelEntries.length; i++) {
     const minY = labelEntries[i - 1].y + MIN_LABEL_GAP;
     if (labelEntries[i].y < minY) labelEntries[i].y = minY;
   }
   const labelsSvg = labelEntries
-    .map((l) => `<text class="money-flow-edge-label" x="${midX.toFixed(1)}" y="${l.y.toFixed(1)}" text-anchor="middle">${l.text}</text>`)
+    .map(
+      (l) =>
+        `<text class="money-flow-edge-label" x="${(leftXEnd + 6).toFixed(1)}" y="${l.y.toFixed(1)}" text-anchor="start" fill="${l.color}">${l.text}</text>`
+    )
     .join("");
 
-  // Falls das Auseinanderschieben Labels über den ursprünglich berechneten
-  // Plot-Bereich hinausdrückt, das viewBox entsprechend mitwachsen lassen —
-  // sonst würden die untersten Labels abgeschnitten.
   const maxLabelY = labelEntries.length ? labelEntries[labelEntries.length - 1].y : 0;
   const fullH = Math.max(plotH + 2 * MARGIN_Y, maxLabelY + MARGIN_Y);
   return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}${labelsSvg}</svg>`;
@@ -2540,6 +2545,62 @@ async function loadOpenSettlements() {
     }
   } catch (err) {
     openSettlementsListEl.innerHTML = `<div class="empty"><p>Konnte nicht geladen werden.</p></div>`;
+  }
+}
+
+/* ---------- Offene Zahlungen: bereits getilgte Rückzahlungen (Historie) ---------- */
+const settledToggleBtn = document.getElementById("settledToggleBtn");
+const settledListEl = document.getElementById("settledList");
+let lastSettledPayments = [];
+let settledListExpanded = false;
+
+function renderSettledItem(s) {
+  const card = document.createElement("div");
+  card.className = "list-card";
+  card.innerHTML = `
+    <div class="list-card-text">
+      <p class="list-card-title">${nameTag(s.from)} → ${nameTag(s.to)}</p>
+      <p class="list-card-meta">${formatEuro(s.amount)} · ${formatDate(s.date)}</p>
+    </div>
+    <div class="list-card-actions"><span class="pill">✓ bestätigt</span></div>
+  `;
+  return card;
+}
+
+function renderSettledList() {
+  if (!settledListEl || !settledToggleBtn) return;
+  settledToggleBtn.classList.toggle("hidden", lastSettledPayments.length === 0);
+  settledToggleBtn.textContent = settledListExpanded
+    ? "Bereits getilgt ausblenden"
+    : `Bereits getilgt anzeigen (${lastSettledPayments.length})`;
+  settledListEl.classList.toggle("hidden", !settledListExpanded);
+  if (!settledListExpanded) return;
+  settledListEl.innerHTML = "";
+  lastSettledPayments.forEach((s) => settledListEl.appendChild(renderSettledItem(s)));
+}
+
+if (settledToggleBtn) {
+  settledToggleBtn.addEventListener("click", () => {
+    settledListExpanded = !settledListExpanded;
+    renderSettledList();
+  });
+}
+
+let lastSettledSignature = null;
+
+async function loadSettledPayments() {
+  if (!settledListEl) return;
+  try {
+    const res = await fetch("/api/expenses/settled");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const payments = await res.json();
+    const signature = JSON.stringify(payments);
+    if (signature === lastSettledSignature) return;
+    lastSettledSignature = signature;
+    lastSettledPayments = payments;
+    renderSettledList();
+  } catch (err) {
+    // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
   }
 }
 
@@ -2947,6 +3008,7 @@ function pollCostsViews() {
   loadExpenses();
   loadOpenSettlements();
   loadReceivedPayments();
+  loadSettledPayments();
 }
 
 // Nach JEDER Änderung an Ausgaben (anlegen/bearbeiten/löschen/Zahlung
@@ -2961,10 +3023,12 @@ function refreshAllCostsData() {
   lastBalanceSignature = null;
   lastOpenSettlementsSignature = null;
   lastReceivedSignature = null;
+  lastSettledSignature = null;
   loadExpenses();
   loadBalance();
   loadOpenSettlements();
   loadReceivedPayments();
+  loadSettledPayments();
 }
 
 /* ---------- Auto-Update: neuen Deploy selbstständig erkennen und neu laden ---------- */
