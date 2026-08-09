@@ -88,6 +88,43 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .delete-dialog .modal-card{border-left:4px solid var(--red)}.delete-dialog .warning-text{color:var(--red);margin:12px 0;font-weight:700}
 .profile-line{display:flex;justify-content:space-between;gap:10px;align-items:center}.role{color:var(--yellow);font-weight:900}
 
+/* Offene Zahlungen: animierter Rechenweg */
+.link-button{background:none;border:none;color:var(--yellow);font-weight:800;font-size:13px;padding:0;margin-left:4px;cursor:pointer;text-decoration:underline}
+.explain-body{min-height:220px;padding:6px 2px}
+.explain-slide{opacity:0;transform:translateY(8px);transition:opacity .25s ease,transform .25s ease}
+.explain-slide.in{opacity:1;transform:translateY(0)}
+.explain-slide p{margin:0 0 10px}
+.explain-slide-label{text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-weight:850;color:var(--muted);margin-bottom:12px!important}
+.explain-bar-row{display:grid;grid-template-columns:64px 1fr 64px;align-items:center;gap:8px;margin-bottom:8px;font-size:12px}
+.explain-bar-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.explain-bar-track{position:relative;height:14px;background:var(--surface2);border-radius:999px;overflow:hidden}
+.explain-bar{position:absolute;top:0;bottom:0;left:0;border-radius:999px;transition:width .5s ease}
+.explain-bar.pos{background:var(--green)}.explain-bar.neg{background:var(--red)}
+.explain-bar-value{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+.explain-pair-raw{background:var(--surface2);border-radius:14px;padding:10px 12px;margin-bottom:8px}
+.explain-pair-raw-title{font-size:12px;font-weight:800;margin-bottom:8px!important}
+.explain-pair-raw .explain-bar-row{margin-bottom:6px}
+.explain-pair-raw .explain-bar-row:last-child{margin-bottom:0}
+.explain-pair-net-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px}
+.explain-pair-net-row:last-of-type{border-bottom:none}
+.explain-pair-net-names{font-size:12px}
+.explain-pair-net-calc{font-family:monospace;color:var(--muted)}
+.explain-pair-net-calc strong{color:var(--text);font-family:inherit}
+.explain-transfer{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.explain-transfer-person{flex:1;display:flex;flex-direction:column;gap:3px;font-size:12px;min-width:0}
+.explain-transfer-name{font-size:14px}
+.explain-transfer-arrow{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1.4}
+.explain-transfer-amount{font-weight:900;color:var(--yellow);font-size:15px}
+.explain-arrow-line{position:relative;width:100%;height:2px;background:var(--line)}
+.explain-arrow-head{position:absolute;right:-2px;top:50%;transform:translateY(-50%);font-size:16px;color:var(--line)}
+.explain-transfer-calc{font-family:monospace;font-size:12px;color:var(--muted);text-align:center}
+.explain-result-row{background:var(--surface2);border-radius:12px;padding:10px 12px;font-size:13px}
+.explain-controls{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:16px}
+.explain-controls button{flex:none}
+.explain-dots{display:flex;gap:5px}
+.explain-dot{width:6px;height:6px;border-radius:50%;background:var(--line)}
+.explain-dot.active{background:var(--yellow)}
+
 /* Aufgaben-Dashboard — sehr kompakt: eine Zeile pro Person mit Mini-Balken
    erledigt/offen, keine große Kopfzahl mehr. */
 .task-stats{margin-bottom:16px;padding:14px 16px}

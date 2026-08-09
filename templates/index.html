@@ -127,7 +127,9 @@
             <h3>Offene Zahlungen</h3>
             <div id="balanceHero" class="balance-chip"></div>
           </div>
-          <p class="muted">Minimale Anzahl an Überweisungen, um alle offenen Schulden auszugleichen.</p>
+          <p class="muted">Minimale Anzahl an Überweisungen, um alle offenen Schulden auszugleichen.
+            <button type="button" id="explainSettlementsBtn" class="link-button">🎬 Wie kommt das zustande?</button>
+          </p>
 
           <div id="moneyFlowCard" class="card money-flow-card hidden">
             <div id="moneyFlowDiagram" class="money-flow-diagram"></div>
@@ -232,6 +234,24 @@
         <button type="submit" id="modalSubmit" class="primary">Speichern</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="settlementExplainDialog">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <div class="eyebrow">Offene Zahlungen</div>
+          <h2>Wie kommt das zustande?</h2>
+        </div>
+        <button type="button" id="settlementExplainClose" class="icon-button" aria-label="Schließen">×</button>
+      </div>
+      <div id="settlementExplainBody" class="explain-body"></div>
+      <div class="explain-controls">
+        <button type="button" id="settlementExplainPrev" class="secondary compact">‹ Zurück</button>
+        <div id="settlementExplainDots" class="explain-dots"></div>
+        <button type="button" id="settlementExplainNext" class="primary compact">Weiter ›</button>
+      </div>
+    </div>
   </dialog>
 
   <script>window.APP_VERSION = "{{ app_version() }}";</script>

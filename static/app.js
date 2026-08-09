@@ -2515,6 +2515,202 @@ async function loadOpenSettlements() {
   }
 }
 
+/* ---------- Offene Zahlungen: animierter Rechenweg ---------- */
+const explainSettlementsBtn = document.getElementById("explainSettlementsBtn");
+const settlementExplainDialog = document.getElementById("settlementExplainDialog");
+const settlementExplainCloseBtn = document.getElementById("settlementExplainClose");
+const settlementExplainBodyEl = document.getElementById("settlementExplainBody");
+const settlementExplainDotsEl = document.getElementById("settlementExplainDots");
+const settlementExplainPrevBtn = document.getElementById("settlementExplainPrev");
+const settlementExplainNextBtn = document.getElementById("settlementExplainNext");
+
+let explainSlides = [];
+let explainSlideIndex = 0;
+
+function explainPairRawRow(p) {
+  const max = Math.max(p.a_to_b, p.b_to_a, 1);
+  const wA = Math.max((p.a_to_b / max) * 100, 2);
+  const wB = Math.max((p.b_to_a / max) * 100, 2);
+  return `
+    <div class="explain-pair-raw">
+      <p class="explain-pair-raw-title">${nameTag(p.a_username)} ⇄ ${nameTag(p.b_username)}</p>
+      <div class="explain-bar-row">
+        <span class="explain-bar-name">${escapeHtml(p.a_username)} →</span>
+        <div class="explain-bar-track"><div class="explain-bar neg" style="width:${wA}%"></div></div>
+        <span class="explain-bar-value">${formatEuro(p.a_to_b)}</span>
+      </div>
+      <div class="explain-bar-row">
+        <span class="explain-bar-name">${escapeHtml(p.b_username)} →</span>
+        <div class="explain-bar-track"><div class="explain-bar neg" style="width:${wB}%"></div></div>
+        <span class="explain-bar-value">${formatEuro(p.b_to_a)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function explainPairNetRow(p) {
+  const netAbs = Math.abs(p.net);
+  const settled = netAbs <= 0.005;
+  const fromName = p.net >= 0 ? p.a_username : p.b_username;
+  const toName = p.net >= 0 ? p.b_username : p.a_username;
+  return `
+    <div class="explain-pair-net-row">
+      <span class="explain-pair-net-names">${nameTag(p.a_username)} ⇄ ${nameTag(p.b_username)}</span>
+      <span class="explain-pair-net-calc">
+        ${formatEuro(p.a_to_b)} − ${formatEuro(p.b_to_a)} =
+        ${settled ? `<em>ausgeglichen</em>` : `<strong>${escapeHtml(fromName)} → ${escapeHtml(toName)}: ${formatEuro(netAbs)}</strong>`}
+      </span>
+    </div>
+  `;
+}
+
+// Baut die einzelnen "Folien" der Animation aus denselben Daten, die auch die
+// tatsächlichen Zahlungsvorschläge liefern (/api/expenses/open/explain nutzt
+// intern exakt dieselbe paarweise Verrechnung wie /api/expenses/open) — so
+// kann die Erklärung nie von der echten Liste abweichen.
+function buildExplainSlides(data) {
+  const { pairs, steps } = data;
+
+  const slides = [];
+
+  slides.push(() => `
+    <div class="explain-slide">
+      <p>Jede gemeinsame Ausgabe erzeugt eine direkte Schuld: der Beteiligte schuldet dem Zahler seinen Anteil.</p>
+      <p>Es wird bewusst <strong>nicht global über alle Personen</strong> verrechnet, sondern <strong>nur zwischen genau den zwei Personen</strong>, die auch wirklich etwas zusammen hatten.</p>
+    </div>
+  `);
+
+  slides.push(() => `
+    <div class="explain-slide">
+      <p class="explain-slide-label">Schritt 1 — Rohe Summen je Personenpaar (vor jeder Verrechnung)</p>
+      ${pairs.length ? pairs.map((p) => explainPairRawRow(p)).join("") : `<p class="muted">Keine gemeinsamen Ausgaben.</p>`}
+    </div>
+  `);
+
+  slides.push(() => `
+    <div class="explain-slide">
+      <p class="explain-slide-label">Schritt 2 — Pro Paar verrechnet</p>
+      ${pairs.length ? pairs.map((p) => explainPairNetRow(p)).join("") : `<p class="muted">–</p>`}
+      <p class="muted">Beide Richtungen werden gegeneinander aufgerechnet — übrig bleibt eine Zahlung pro Paar (oder gar keine, wenn es sich deckt).</p>
+    </div>
+  `);
+
+  steps.forEach((s, idx) => {
+    const pair = pairs.find(
+      (p) => (p.a_id === s.from_id && p.b_id === s.to_id) || (p.a_id === s.to_id && p.b_id === s.from_id)
+    );
+    slides.push(() => `
+      <div class="explain-slide">
+        <p class="explain-slide-label">Ergebnis ${idx + 1} von ${steps.length}</p>
+        <div class="explain-transfer">
+          <div class="explain-transfer-person">
+            <span class="explain-transfer-name">${nameTag(s.from)}</span>
+          </div>
+          <div class="explain-transfer-arrow">
+            <span class="explain-transfer-amount">${formatEuro(s.amount)}</span>
+            <div class="explain-arrow-line"><span class="explain-arrow-head">→</span></div>
+          </div>
+          <div class="explain-transfer-person">
+            <span class="explain-transfer-name">${nameTag(s.to)}</span>
+          </div>
+        </div>
+        ${pair ? `<p class="explain-transfer-calc">${formatEuro(pair.a_to_b)} − ${formatEuro(pair.b_to_a)} = ${formatEuro(s.amount)}</p>` : ""}
+      </div>
+    `);
+  });
+
+  slides.push(() => `
+    <div class="explain-slide">
+      <p class="explain-slide-label">Ergebnis</p>
+      <div class="stack">
+        ${
+          steps.length
+            ? steps
+                .map(
+                  (s) => `
+          <div class="explain-result-row">${nameTag(s.from)} → ${nameTag(s.to)}: <strong>${formatEuro(s.amount)}</strong></div>
+        `
+                )
+                .join("")
+            : `<p class="muted">Alles ausgeglichen.</p>`
+        }
+      </div>
+      <p class="muted">Genau diese ${steps.length} Überweisung${steps.length === 1 ? "" : "en"} siehst du unter "Offene Zahlungen" — jede davon direkt zwischen Personen, die auch wirklich etwas zusammen hatten.</p>
+    </div>
+  `);
+
+  return slides;
+}
+
+function renderExplainSlide() {
+  if (!settlementExplainBodyEl) return;
+  settlementExplainBodyEl.innerHTML = explainSlides[explainSlideIndex]();
+  requestAnimationFrame(() => {
+    const slideEl = settlementExplainBodyEl.querySelector(".explain-slide");
+    if (slideEl) requestAnimationFrame(() => slideEl.classList.add("in"));
+  });
+
+  if (settlementExplainDotsEl) {
+    settlementExplainDotsEl.innerHTML = explainSlides
+      .map((_, i) => `<span class="explain-dot${i === explainSlideIndex ? " active" : ""}"></span>`)
+      .join("");
+  }
+  if (settlementExplainPrevBtn) settlementExplainPrevBtn.disabled = explainSlideIndex === 0;
+  if (settlementExplainNextBtn) {
+    settlementExplainNextBtn.textContent = explainSlideIndex === explainSlides.length - 1 ? "Fertig" : "Weiter ›";
+  }
+}
+
+async function openSettlementExplain() {
+  if (!settlementExplainDialog || !settlementExplainBodyEl) return;
+  settlementExplainBodyEl.innerHTML = `<p class="muted">Lädt …</p>`;
+  if (settlementExplainDotsEl) settlementExplainDotsEl.innerHTML = "";
+  if (settlementExplainPrevBtn) settlementExplainPrevBtn.disabled = true;
+  if (settlementExplainNextBtn) settlementExplainNextBtn.textContent = "Fertig";
+  settlementExplainDialog.showModal();
+
+  try {
+    const res = await fetch("/api/expenses/open/explain");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    const data = await res.json();
+
+    if (!data.steps || data.steps.length === 0) {
+      settlementExplainBodyEl.innerHTML = `<div class="explain-slide in"><p class="muted">Aktuell ist nichts offen — alles ausgeglichen! 🎉</p></div>`;
+      explainSlides = [];
+      return;
+    }
+
+    explainSlides = buildExplainSlides(data);
+    explainSlideIndex = 0;
+    renderExplainSlide();
+  } catch (err) {
+    settlementExplainBodyEl.innerHTML = `<p class="muted">Konnte nicht geladen werden.</p>`;
+  }
+}
+
+if (explainSettlementsBtn) explainSettlementsBtn.addEventListener("click", openSettlementExplain);
+if (settlementExplainCloseBtn) {
+  settlementExplainCloseBtn.addEventListener("click", () => settlementExplainDialog.close());
+}
+if (settlementExplainNextBtn) {
+  settlementExplainNextBtn.addEventListener("click", () => {
+    if (explainSlideIndex >= explainSlides.length - 1) {
+      settlementExplainDialog.close();
+      return;
+    }
+    explainSlideIndex += 1;
+    renderExplainSlide();
+  });
+}
+if (settlementExplainPrevBtn) {
+  settlementExplainPrevBtn.addEventListener("click", () => {
+    if (explainSlideIndex > 0) {
+      explainSlideIndex -= 1;
+      renderExplainSlide();
+    }
+  });
+}
+
 /* ---------- Kosten: Erhaltene Zahlungen ---------- */
 const receivedListEl = document.getElementById("receivedList");
 

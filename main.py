@@ -1117,61 +1117,64 @@ def delete_expense_batch(batch_id: str, request: Request, db: Session = Depends(
     return {"ok": True, "deleted": deleted}
 
 
-def _compute_net_balances(db: Session) -> dict[int, float]:
-    """Netto-Saldo je Person aus allen Ausgaben + bereits getilgten Tilgungen.
-    "pending" Tilgungen zählen bewusst nicht mit — die würden sonst die Zahlen
-    verschieben, bevor der Gläubiger überhaupt bestätigt hat."""
+def _pairwise_raw_breakdown(db: Session) -> list[dict]:
+    """Für jedes Personenpaar, das tatsächlich mindestens eine gemeinsame
+    Ausgabe hatte: die rohen Summen je Richtung (a->b und b->a, vor der
+    Verrechnung) plus den daraus resultierenden Netto-Betrag. Eigenkäufe
+    (schuldner_id == glaubiger_id) und "pending"-Tilgungen fließen bewusst
+    nicht ein — Eigenkäufe erzeugen kein Schuldverhältnis, pending-Tilgungen
+    würden die Zahlen verschieben, bevor der Gläubiger bestätigt hat.
+
+    Bewusst PAARWEISE statt global verrechnet (Absprache): jede Person soll nur
+    an Personen zahlen, mit denen sie wirklich eine gemeinsame Ausgabe hatte —
+    nachvollziehbarer als eine global minimierte Anzahl Überweisungen, auch
+    wenn das im Ergebnis mehr einzelne Zahlungen bedeuten kann."""
     rows = (
         db.query(Ausgabe)
         .filter(Ausgabe.schuldner_id != Ausgabe.glaubiger_id, Ausgabe.status != "pending")
         .all()
     )
-    net: dict[int, float] = {}
+    directed: dict[tuple[int, int], float] = {}
     for r in rows:
-        cash = float(r.cash)
-        net[r.glaubiger_id] = net.get(r.glaubiger_id, 0.0) + cash
-        net[r.schuldner_id] = net.get(r.schuldner_id, 0.0) - cash
-    return net
+        key = (r.schuldner_id, r.glaubiger_id)
+        directed[key] = directed.get(key, 0.0) + float(r.cash)
+
+    seen: set[frozenset] = set()
+    pairs: list[dict] = []
+    for a, b in directed.keys():
+        pair_key = frozenset((a, b))
+        if pair_key in seen:
+            continue
+        seen.add(pair_key)
+        a_to_b = round(directed.get((a, b), 0.0), 2)
+        b_to_a = round(directed.get((b, a), 0.0), 2)
+        pairs.append({"a_id": a, "b_id": b, "a_to_b": a_to_b, "b_to_a": b_to_a, "net": round(a_to_b - b_to_a, 2)})
+    pairs.sort(key=lambda p: -abs(p["net"]))
+    return pairs
 
 
-def _compute_min_settlements(net: dict[int, float]) -> list[tuple[int, int, float]]:
-    """Greedy-Minimierung: größter Schuldner tilgt größten Gläubiger, bis alle
-    Salden ~0 sind. Stabil sortiert (Betrag, dann User-ID), damit das Ergebnis bei
-    unveränderten Netto-Salden IMMER identisch ausfällt — sonst würde das
-    Bestätigen einer Zahlung die Vorschläge für alle anderen verschieben."""
-    creditors = sorted(
-        ([uid, amt] for uid, amt in net.items() if amt > 0.005), key=lambda x: (-x[1], x[0])
-    )
-    debtors = sorted(
-        ([uid, -amt] for uid, amt in net.items() if amt < -0.005), key=lambda x: (-x[1], x[0])
-    )
-
+def _compute_pairwise_debts(db: Session) -> list[tuple[int, int, float]]:
+    """Netto-Schuld je Personenpaar als (from_id, to_id, amount)-Liste, sortiert
+    absteigend nach Betrag — direkt aus _pairwise_raw_breakdown abgeleitet,
+    damit /open, /explain und /settle garantiert dieselben Zahlen liefern."""
     result: list[tuple[int, int, float]] = []
-    i = j = 0
-    while i < len(creditors) and j < len(debtors):
-        cred_id, cred_amt = creditors[i]
-        deb_id, deb_amt = debtors[j]
-        amount = round(min(cred_amt, deb_amt), 2)
-        if amount > 0.005:
-            result.append((deb_id, cred_id, amount))
-        creditors[i][1] -= amount
-        debtors[j][1] -= amount
-        if creditors[i][1] <= 0.005:
-            i += 1
-        if debtors[j][1] <= 0.005:
-            j += 1
+    for p in _pairwise_raw_breakdown(db):
+        if p["net"] > 0.005:
+            result.append((p["a_id"], p["b_id"], p["net"]))
+        elif p["net"] < -0.005:
+            result.append((p["b_id"], p["a_id"], -p["net"]))
+    result.sort(key=lambda x: (-x[2], x[0], x[1]))
     return result
 
 
 @app.get("/api/expenses/open")
 def get_open_settlements(request: Request, db: Session = Depends(get_db)):
     """
-    Schlägt die minimale Anzahl an Überweisungen vor, um alle offenen Schulden
-    auszugleichen (Greedy-Minimierung über alle Netto-Salden, siehe
-    _compute_min_settlements). Die Berechnung ist deterministisch, solange sich
-    die zugrunde liegenden (nicht-pending) Salden nicht ändern — das Bestätigen
-    einer einzelnen Zahlung verschiebt die Vorschläge für andere Personen daher
-    nie, egal wie viele Zahlungen gleichzeitig unterwegs sind.
+    Schlägt vor, wer an wen zahlen soll, um alle offenen Schulden auszugleichen —
+    paarweise verrechnet (siehe _compute_pairwise_debts): jede Person zahlt nur
+    an Personen, mit denen sie tatsächlich eine gemeinsame Ausgabe hatte, nicht
+    global über alle Salden hinweg minimiert. Die Berechnung ist deterministisch,
+    solange sich die zugrunde liegenden (nicht-pending) Beträge nicht ändern.
 
     "pending" Tilgungseinträge zählen bewusst NICHT in die Berechnung hinein
     (sonst würde die Kachel sofort verschwinden, bevor der Gläubiger bestätigt
@@ -1182,8 +1185,7 @@ def get_open_settlements(request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     usernames = {u.id: u.username for u in db.query(User).all()}
-    net = _compute_net_balances(db)
-    min_settlements = _compute_min_settlements(net)
+    min_settlements = _compute_pairwise_debts(db)
 
     pending_by_pair = {
         (r.glaubiger_id, r.schuldner_id): float(r.cash)
@@ -1226,6 +1228,45 @@ def get_open_settlements(request: Request, db: Session = Depends(get_db)):
     return settlements
 
 
+@app.get("/api/expenses/open/explain")
+def get_open_settlements_explain(request: Request, db: Session = Depends(get_db)):
+    """Liefert den kompletten Rechenweg hinter /api/expenses/open für die
+    animierte Erklärung im Frontend: erst die rohen Ausgaben-Summen je
+    Personenpaar (vor jeder Verrechnung), dann die daraus verrechneten
+    Netto-Beträge je Paar — das sind exakt die tatsächlichen Zahlungsvorschläge."""
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    usernames = {u.id: u.username for u in db.query(User).all()}
+    raw_pairs = _pairwise_raw_breakdown(db)
+
+    pairs = [
+        {**p, "a_username": usernames.get(p["a_id"], "?"), "b_username": usernames.get(p["b_id"], "?")}
+        for p in raw_pairs
+    ]
+
+    steps = []
+    for p in raw_pairs:
+        if p["net"] > 0.005:
+            from_id, to_id, amount = p["a_id"], p["b_id"], p["net"]
+        elif p["net"] < -0.005:
+            from_id, to_id, amount = p["b_id"], p["a_id"], -p["net"]
+        else:
+            continue
+        steps.append(
+            {
+                "from_id": from_id,
+                "from": usernames.get(from_id, "?"),
+                "to_id": to_id,
+                "to": usernames.get(to_id, "?"),
+                "amount": amount,
+            }
+        )
+    steps.sort(key=lambda s: -s["amount"])
+
+    return {"pairs": pairs, "steps": steps}
+
+
 @app.post("/api/expenses/settle")
 def settle_expenses(
     request: Request, payload: SettleRequest, db: Session = Depends(get_db)
@@ -1239,13 +1280,11 @@ def settle_expenses(
     bis dahin bleibt der offene Betrag sichtbar, nur als "wartend" markiert (siehe
     /api/expenses/open), damit man parallel an mehrere Personen etwas schicken kann.
 
-    Der maximal mögliche Betrag wird über dieselbe Minimierungs-Berechnung wie
-    /api/expenses/open ermittelt (nicht aus der direkten Historie zwischen den
-    beiden), damit auch global optimierte Zahlungsvorschläge bestätigt werden
-    können, die keine direkte gemeinsame Ausgabe haben. payload.amount ist
-    optional und erlaubt Teilzahlungen bis zu diesem Maximum — der Rest bleibt
-    offen und fließt beim nächsten Abruf ganz normal wieder in die
-    Netto-Saldo-Berechnung ein.
+    Der maximal mögliche Betrag wird über dieselbe paarweise Verrechnung wie
+    /api/expenses/open ermittelt (siehe _compute_pairwise_debts), basiert also
+    auf der direkten Historie zwischen genau diesen beiden Personen. payload.amount
+    ist optional und erlaubt Teilzahlungen bis zu diesem Maximum — der Rest bleibt
+    offen und fließt beim nächsten Abruf ganz normal wieder in die Berechnung ein.
     """
     username = get_current_user(request)
     if not username:
@@ -1269,8 +1308,7 @@ def settle_expenses(
             content={"error": "Diese Zahlung wurde bereits als gesendet markiert und wartet auf Bestätigung"},
         )
 
-    net = _compute_net_balances(db)
-    min_settlements = _compute_min_settlements(net)
+    min_settlements = _compute_pairwise_debts(db)
     match = next(
         (amount for deb_id, cred_id, amount in min_settlements if deb_id == me.id and cred_id == creditor.id),
         None,
