@@ -144,12 +144,15 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .weather-temp{font-size:32px;font-weight:900}
 .weather-warning{display:flex;align-items:center;gap:6px;background:rgba(255,98,98,.15);border:1px solid var(--red);color:var(--red);border-radius:12px;padding:8px 10px;font-size:12px;font-weight:800;margin-top:10px}
 .weather-subhead{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 8px}
-.weather-precip-summary{font-size:14px;font-weight:700;margin:10px 0 0}
 .weather-wind-row{font-size:13px;color:var(--text);background:var(--surface2);border-radius:12px;padding:8px 10px;margin-top:8px}
-.weather-daily{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.weather-day{display:flex;flex-direction:column;align-items:center;gap:2px;background:var(--surface2);border-radius:12px;padding:8px 4px;font-size:12px}
-.weather-day-name{color:var(--muted);text-transform:capitalize}
-.weather-day-icon{font-size:20px}
-.weather-day-temp{font-weight:800;font-size:11px}
+.weather-forecast-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.weather-forecast-day{background:var(--surface2);border-radius:14px;padding:10px 8px;display:flex;flex-direction:column;gap:6px}
+.weather-forecast-day-head{display:flex;justify-content:space-between;align-items:baseline;font-size:12px}
+.weather-forecast-day-label{font-weight:800}
+.weather-forecast-day-temp{color:var(--muted);font-size:11px}
+.weather-forecast-day-status{display:flex;flex-direction:column;align-items:flex-start;gap:2px;font-size:12px;font-weight:700}
+.weather-forecast-icon{font-size:20px}
+.weather-forecast-thunder{color:var(--red);font-size:11px;font-weight:800}
+.weather-forecast-day-wind{font-size:11px;color:var(--muted)}
 
 @media(min-width:650px){.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}

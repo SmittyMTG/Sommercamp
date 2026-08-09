@@ -1639,6 +1639,20 @@ CAMP_LON = 9.7418924
 WEATHER_CACHE_SECONDS = 600  # 10 Minuten — genug Aktualität, schont die kostenlose API
 THUNDERSTORM_CODES = {95, 96, 99}
 STORM_GUST_THRESHOLD_KMH = 70
+# WMO-Wettercodes zu Niederschlags-Intensität gruppiert — unabhängig von
+# Gewitter (das wird separat über THUNDERSTORM_CODES geflaggt, damit "Regen"/
+# "Starkregen" rein die Intensität beschreiben und Gewitter ein eigenes,
+# zusätzliches Signal bleibt).
+HEAVY_RAIN_CODES = {65, 67, 82, 86, 96, 99}
+RAIN_CODES = {51, 53, 55, 56, 57, 61, 63, 66, 71, 73, 75, 77, 80, 81, 85, 95}
+
+
+def _classify_precip_status(code: int) -> str:
+    if code in HEAVY_RAIN_CODES:
+        return "starkregen"
+    if code in RAIN_CODES:
+        return "regen"
+    return "trocken"
 
 _weather_cache = {"data": None, "fetched_at": 0.0}
 
@@ -1675,7 +1689,7 @@ def _fetch_weather_raw() -> dict:
 def get_weather(request: Request):
     """Kein Standort-Handling nötig — der Camp-Standort ist fix. Ableitung von
     Gewitter-/Sturmwarnungen passiert hier aus den echten Open-Meteo-Rohdaten
-    (Wettercode 95/96/99 bzw. Böen ab 70 km/h in den nächsten 24h) — das ist
+    (Wettercode 95/96/99 bzw. Böen ab 70 km/h in den nächsten 72h) — das ist
     keine offizielle DWD-Unwetterwarnung, sondern eine eigene, transparente
     Schwellenwert-Auswertung auf Basis echter Vorhersagedaten."""
     if not get_current_user(request):
@@ -1696,7 +1710,10 @@ def get_weather(request: Request):
     # chronologisch, daher reicht ">=" um die nächste kommende Stunde zu finden.
     current_time = data.get("current", {}).get("time") or ""
     start_idx = next((i for i, t in enumerate(times) if t >= current_time), 0)
-    end_idx = min(start_idx + 24, len(times))
+    # 72h statt nur 24h: die 3-Tage-Prognose (heute/morgen/übermorgen) braucht
+    # stündliche Auflösung für alle drei Tage, nicht nur für den ersten, sonst
+    # lässt sich für Tag 2/3 keine Uhrzeit für Regen/Böen angeben.
+    end_idx = min(start_idx + 72, len(times))
 
     warnings = []
     for i in range(start_idx, end_idx):
@@ -1736,10 +1753,60 @@ def get_weather(request: Request):
         for i in range(len(daily.get("time", [])))
     ]
 
+    # Fokussierte 3-Tage-Prognose (heute/morgen/übermorgen) mit genau den vier
+    # relevanten Signalen: Niederschlags-Intensität (trocken/regen/starkregen)
+    # MIT Uhrzeit-Fenster, Gewitter, Windgeschwindigkeit mit Böen-Spitze samt
+    # Uhrzeit. Bewusst aus den STÜNDLICHEN Daten abgeleitet (nicht aus dem
+    # einzelnen Tages-Code) — so bleibt die Einstufung immer konsistent mit der
+    # angezeigten Uhrzeit, statt wie vorher zwei unabhängige Signale zu zeigen,
+    # die sich scheinbar widersprechen konnten.
+    precips = hourly.get("precipitation", [])
+    precip_probs = hourly.get("precipitation_probability", [])
+
+    day_groups: dict[str, list[int]] = {}
+    for i in range(start_idx, end_idx):
+        day_groups.setdefault(times[i][:10], []).append(i)
+
+    forecast = []
+    for date, idxs in list(day_groups.items())[:3]:
+        rain_idxs = [
+            i
+            for i in idxs
+            if (precips[i] if i < len(precips) else 0) >= 0.1
+            or (precip_probs[i] if i < len(precip_probs) else 0) >= 30
+        ]
+        if rain_idxs:
+            status = "starkregen" if any(codes[i] in HEAVY_RAIN_CODES for i in rain_idxs) else "regen"
+            rain_from = int(times[rain_idxs[0]][11:13])
+            rain_to = int(times[rain_idxs[-1]][11:13])
+        else:
+            status = "trocken"
+            rain_from = None
+            rain_to = None
+
+        gust_peak_idx = max(idxs, key=lambda i: gusts[i] if i < len(gusts) else 0)
+        day_info = next((d for d in daily_out if d["date"] == date), None)
+
+        forecast.append(
+            {
+                "date": date,
+                "status": status,
+                "rain_from": rain_from,
+                "rain_to": rain_to,
+                "thunderstorm": any(codes[i] in THUNDERSTORM_CODES for i in idxs),
+                "wind_max": round(day_info["wind_max"]) if day_info else None,
+                "gust_max": round(gusts[gust_peak_idx]),
+                "gust_peak_hour": int(times[gust_peak_idx][11:13]),
+                "temp_max": round(day_info["temp_max"]) if day_info else None,
+                "temp_min": round(day_info["temp_min"]) if day_info else None,
+            }
+        )
+
     return {
         "current": data.get("current"),
         "hourly": hourly_out,
         "daily": daily_out,
+        "forecast": forecast,
         "warnings": warnings,
         "fetched_at": _weather_cache["fetched_at"],
     }

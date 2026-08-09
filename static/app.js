@@ -732,6 +732,13 @@ function renderTaskItem(task) {
       checkbox.classList.toggle("checked", data.done);
       card.classList.toggle("done", data.done);
       task.done = data.done;
+      // Badge (rote Zahl am Aufgaben-Icon) und "Deine Aufgaben" auf der
+      // Startseite hängen sonst am nächsten Poll-Takt (bis zu 3s) statt sich
+      // sofort mit dem Klick zu aktualisieren.
+      loadTasks(true);
+      // Kann einen Activity-Feed-Eintrag auslösen ("hat deine Aufgabe
+      // abgeschlossen") — sonst erst nach bis zu 5s im "Neu für dich"-Feed sichtbar.
+      loadActivityFeed();
     }
   });
 
@@ -855,27 +862,39 @@ function groupWeatherWarnings(warnings) {
   });
 }
 
-// Klartext statt Stunde-für-Stunde-Prozentzahlen — 4 % Regenwahrscheinlichkeit
-// ist Rauschen und niemandem eine eigene Zeile wert. Ab 30 % gilt es als
-// relevant; zusammenhängende Regenstunden werden zu einem Zeitfenster zusammengefasst.
-function computePrecipSummary(hourly) {
-  const THRESHOLD = 30;
-  if (!hourly.length) return "";
+// Trocken/Regen/Starkregen kommt direkt vom Backend (aus dem WMO-Tagescode
+// abgeleitet, siehe _classify_precip_status) — Gewitter ist ein eigenes,
+// zusätzliches Flag, unabhängig von der Niederschlags-Einstufung.
+const FORECAST_STATUS_INFO = {
+  trocken: { icon: "☀️", label: "Trocken" },
+  regen: { icon: "🌧️", label: "Regen" },
+  starkregen: { icon: "⛈️", label: "Starkregen" },
+};
+const FORECAST_DAY_LABELS = ["Heute", "Morgen", "Übermorgen"];
 
-  const startIdx = hourly.findIndex((h) => (h.precip_prob || 0) >= THRESHOLD);
-  if (startIdx === -1) return "☀️ Bleibt voraussichtlich trocken";
-
-  let endIdx = startIdx;
-  while (endIdx + 1 < hourly.length && (hourly[endIdx + 1].precip_prob || 0) >= THRESHOLD) {
-    endIdx += 1;
-  }
-  const window = hourly.slice(startIdx, endIdx + 1);
-  const maxProb = Math.max(...window.map((h) => h.precip_prob || 0));
-
-  const start = new Date(hourly[startIdx].time);
-  const isToday = start.toDateString() === new Date().toDateString();
-  const dayPrefix = isToday ? "" : start.toLocaleDateString("de-DE", { weekday: "long" }) + ", ";
-  return `🌧️ Regen ab ${dayPrefix}${start.getHours()} Uhr möglich (${Math.round(maxProb)} %)`;
+function renderForecastDay(day, idx) {
+  const label = FORECAST_DAY_LABELS[idx] || new Date(day.date).toLocaleDateString("de-DE", { weekday: "long" });
+  const status = FORECAST_STATUS_INFO[day.status] || FORECAST_STATUS_INFO.trocken;
+  const rainTimeText =
+    day.rain_from != null
+      ? day.rain_from === day.rain_to
+        ? ` ca. ${day.rain_from} Uhr`
+        : ` ca. ${day.rain_from}–${day.rain_to} Uhr`
+      : "";
+  return `
+    <div class="weather-forecast-day">
+      <div class="weather-forecast-day-head">
+        <span class="weather-forecast-day-label">${label}</span>
+        <span class="weather-forecast-day-temp">${day.temp_max}°/${day.temp_min}°</span>
+      </div>
+      <div class="weather-forecast-day-status">
+        <span class="weather-forecast-icon">${status.icon}</span>
+        <span>${status.label}${rainTimeText}</span>
+        ${day.thunderstorm ? `<span class="weather-forecast-thunder">⚡ Gewitter</span>` : ""}
+      </div>
+      <div class="weather-forecast-day-wind">💨 ${day.wind_max} km/h, Böen bis ${day.gust_max} km/h${day.gust_max >= 40 ? ` (Spitze ca. ${day.gust_peak_hour} Uhr)` : ""}</div>
+    </div>
+  `;
 }
 
 function renderWeather(data) {
@@ -896,21 +915,7 @@ function renderWeather(data) {
         .join("")
     : "";
 
-  const precipSummary = computePrecipSummary(data.hourly || []);
-
-  const dailyHtml = (data.daily || [])
-    .map((d) => {
-      const dInfo = weatherInfo(d.code);
-      const dayLabel = new Date(d.date).toLocaleDateString("de-DE", { weekday: "short" });
-      return `
-        <div class="weather-day">
-          <span class="weather-day-name">${dayLabel}</span>
-          <span class="weather-day-icon">${dInfo.icon}</span>
-          <span class="weather-day-temp">${Math.round(d.temp_max)}°/${Math.round(d.temp_min)}°</span>
-        </div>
-      `;
-    })
-    .join("");
+  const forecastHtml = (data.forecast || []).map((d, i) => renderForecastDay(d, i)).join("");
 
   el.innerHTML = `
     <div class="weather-header">
@@ -921,10 +926,9 @@ function renderWeather(data) {
       </div>
     </div>
     ${warningsHtml}
-    <p class="weather-precip-summary">${precipSummary}</p>
     <div class="weather-wind-row">💨 ${Math.round(cur.wind_speed_10m)} km/h aus ${windDirLabel(cur.wind_direction_10m)}, Böen bis ${Math.round(cur.wind_gusts_10m)} km/h</div>
-    <p class="weather-subhead">Ausblick</p>
-    <div class="weather-daily">${dailyHtml}</div>
+    <p class="weather-subhead">Heute, morgen, übermorgen</p>
+    <div class="weather-forecast-row">${forecastHtml}</div>
   `;
 }
 
@@ -1380,6 +1384,7 @@ async function openAddTaskModal() {
       if (res.ok) {
         closeModal();
         loadTasks(true);
+        loadActivityFeed();
       }
     },
   });
@@ -1493,7 +1498,12 @@ function renderPlanEvent(event, isAdmin) {
         danger: true,
         onSubmit: async () => {
           const res = await fetch(`/api/plan/${event.id}`, { method: "DELETE" });
-          if (res.ok) loadPlanList(true);
+          if (res.ok) {
+            loadPlanList(true);
+            // "Heute geplant" auf der Startseite hat ein eigenes Poll-Intervall
+            // (5s) und würde die Löschung sonst erst mit Verzögerung zeigen.
+            loadTodayPlan();
+          }
           closeModal();
         },
       });
@@ -1620,6 +1630,9 @@ async function submitPlanForm(url, method) {
   if (res.ok) {
     closeModal();
     loadPlanList(true);
+    // "Heute geplant" auf der Startseite hat ein eigenes Poll-Intervall (5s)
+    // und würde neue/geänderte Termine sonst erst mit Verzögerung zeigen.
+    loadTodayPlan();
   } else {
     const data = await res.json().catch(() => ({}));
     const errEl = document.querySelector(".plan-modal-error");
@@ -1922,7 +1935,7 @@ function updateExpensesHeroCard() {
     const isMe = person && cachedMe && person.id === cachedMe.id;
     if (person) {
       if (expenseFilterMode === "von") {
-        title = isMe ? "Deine Ausgaben" : `Ausgaben von ${nameTag(person.username)}`;
+        title = isMe ? "Deine Ausgaben" : `Von ${nameTag(person.username)} gezahlt`;
       } else {
         title = isMe ? "Für dich ausgegeben" : `Für ${nameTag(person.username)} ausgegeben`;
       }
@@ -1931,47 +1944,10 @@ function updateExpensesHeroCard() {
 
   const total = computeFilteredExpenseTotal();
 
-  // Wenn nach einer bestimmten Person gefiltert ist: Dreisatz-Hochrechnung,
-  // was das Camp insgesamt gekostet hätte, wenn ALLE (Gruppengröße) so viel
-  // verbraucht/ausgegeben hätten wie diese eine Person — reine "was wäre
-  // wenn"-Kennzahl, nutzt dieselbe Zeitbasis wie die Budget-Hochrechnung.
-  let hypotheticalHtml = "";
-  if (expenseFilterUserId !== null && cachedUsers && cachedUsers.length > 0) {
-    const timeBase = projectionTimeBase();
-    if (timeBase) {
-      const { elapsedDays, totalProjectionDays } = timeBase;
-      const personProjected = (total / elapsedDays) * totalProjectionDays;
-      const hypothetical = personProjected * cachedUsers.length;
-      hypotheticalHtml = `
-        <div class="muted" style="margin-top:4px;">
-          Wenn alle ${cachedUsers.length} so viel verbraucht hätten: ${formatEuro(hypothetical)}
-        </div>
-      `;
-    }
-  }
-
   myExpensesHeroEl.innerHTML = `
     <div class="eyebrow">${title}</div>
     <div class="countdown">${formatEuro(total)}</div>
-    ${hypotheticalHtml}
   `;
-}
-
-// Rechenstart bewusst schon der 1. August, nicht CAMP_START (5.8.) — viele
-// Ausgaben (Ausrüstung, Vorbereitung) fallen vor den eigentlichen Camp-Beginn
-// und würden sonst als "vor Beginn" aus der Hochrechnung rausfallen bzw. den
-// Tag-1-Wert künstlich aufblähen. Alles vor dem 1.8. zählt so, als wäre es am
-// 1.8. angefallen (elapsedDays wird nie kleiner als 0).
-const PROJECTION_START = new Date("2026-08-01T00:00:00");
-
-// Für den Dreisatz gemeinsam genutzte Zeitbasis (elapsedDays/totalProjectionDays) —
-// wird von der Personen-Hochrechnung im Filter-Modus verwendet.
-function projectionTimeBase() {
-  const totalProjectionDays = (CAMP_END - PROJECTION_START) / 86400000;
-  const now = new Date();
-  if (now < PROJECTION_START || totalProjectionDays <= 0) return null;
-  const elapsedDays = Math.max(Math.min(now - PROJECTION_START, CAMP_END - PROJECTION_START) / 86400000, 1 / 24);
-  return { elapsedDays, totalProjectionDays };
 }
 
 function expenseModalBodyHtml(users, me, prefill = {}) {
@@ -2176,6 +2152,7 @@ async function openAddExpenseModal() {
       if (res.ok) {
         closeModal();
         refreshAllCostsData();
+        loadActivityFeed();
       }
     },
   });
@@ -2268,7 +2245,7 @@ function buildMoneyFlowSvg(settlements) {
   const totalAmount = settlements.reduce((sum, s) => sum + s.amount, 0);
   if (totalAmount <= 0.005) return "";
 
-  const LABEL_W = 92;
+  const LABEL_W = 78;
   const NODE_W = 10;
   const MID_W = 150;
   const GAP = 10;
@@ -2344,8 +2321,20 @@ function buildMoneyFlowSvg(settlements) {
   const scaleFor = (nodes) => (TARGET_H - Math.max(0, nodes.length - 1) * GAP) / totalAmount;
   const scale = Math.max(0.01, Math.min(scaleFor(leftNodes), scaleFor(rightNodes)));
 
-  function layout(nodes) {
-    const heights = nodes.map((n) => Math.max(3, n.total * scale));
+  // Knotenhöhe = Summe der TATSÄCHLICHEN Banddicken (jedes Band einzeln mit
+  // 3px-Mindestdicke), nicht aus dem Gesamtbetrag des Knotens berechnet — sonst
+  // reicht die Knotenhöhe nicht, sobald eine Person an mehrere Personen zahlt
+  // und einer der Beträge so klein ist, dass sein Band auf die Mindestdicke
+  // angehoben wird (die Summe der Bänder wäre dann größer als der Knoten).
+  function layout(nodes, idKey) {
+    const heights = nodes.map((n) =>
+      Math.max(
+        3,
+        settlements
+          .filter((s) => s[idKey] === n.id)
+          .reduce((sum, s) => sum + Math.max(3, s.amount * scale), 0)
+      )
+    );
     const columnHeight = heights.reduce((a, b) => a + b, 0) + Math.max(0, nodes.length - 1) * GAP;
     const positions = {};
     let y = 0;
@@ -2355,8 +2344,8 @@ function buildMoneyFlowSvg(settlements) {
     });
     return { positions, columnHeight };
   }
-  const left = layout(leftNodes);
-  const right = layout(rightNodes);
+  const left = layout(leftNodes, "from_id");
+  const right = layout(rightNodes, "to_id");
   const plotH = Math.max(left.columnHeight, right.columnHeight);
   const leftOffset = MARGIN_Y + (plotH - left.columnHeight) / 2;
   const rightOffset = MARGIN_Y + (plotH - right.columnHeight) / 2;
@@ -2493,6 +2482,7 @@ function openConfirmSettleModal(s) {
       if (res.ok) {
         closeModal();
         refreshAllCostsData();
+        loadActivityFeed();
       } else {
         const data = await res.json().catch(() => ({}));
         errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
@@ -2893,6 +2883,7 @@ function renderReceivedItem(r) {
 
     if (res.ok) {
       refreshAllCostsData();
+      loadActivityFeed();
     } else {
       const data = await res.json().catch(() => ({}));
       errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
