@@ -2635,32 +2635,41 @@ function explainMergeSlide(m, idx, total) {
   `;
 }
 
-function explainLedgerEntry(e) {
+function explainLedgerEntry(e, fromName, toName) {
   if (e.type === "direct") {
     return `
       <div class="explain-ledger-row">
-        <span>Direkt aus Schritt 2</span>
+        <span>${escapeHtml(fromName)} schuldete ${escapeHtml(toName)} schon direkt aus eigenen Ausgaben (Schritt 2)</span>
         <span class="explain-ledger-plus">+${formatEuro(e.amount)}</span>
       </div>
     `;
   }
   const isAdd = e.type === "chain_add";
+  const label = isAdd
+    ? `Kette ${escapeHtml(e.u)} → ${escapeHtml(e.m)} → ${escapeHtml(e.v)} verschoben hierher (Schritt 3.${e.step})`
+    : `Diese Verbindung als Zwischenstation für Kette ${escapeHtml(e.u)} → ${escapeHtml(e.m)} → ${escapeHtml(e.v)} verbraucht (Schritt 3.${e.step})`;
   return `
     <div class="explain-ledger-row">
-      <span>Kette ${escapeHtml(e.u)} → ${escapeHtml(e.m)} → ${escapeHtml(e.v)} (Schritt 3.${e.step})${isAdd ? "" : " — hier selbst verbraucht"}</span>
+      <span>${label}</span>
       <span class="${isAdd ? "explain-ledger-plus" : "explain-ledger-minus"}">${isAdd ? "+" : ""}${formatEuro(e.amount)}</span>
     </div>
   `;
 }
 
 function explainLedgerSlide(l) {
+  const hasDirect = l.entries.some((e) => e.type === "direct");
   return `
     <div class="explain-slide">
       <p class="explain-slide-label">${nameTag(l.from)} → ${nameTag(l.to)}</p>
       <div class="explain-example-block">
-        ${l.entries.map(explainLedgerEntry).join("")}
+        ${l.entries.map((e) => explainLedgerEntry(e, l.from, l.to)).join("")}
         <div class="explain-example-sum">= ${formatEuro(l.amount)}</div>
       </div>
+      ${
+        hasDirect
+          ? `<p class="muted">Der Startwert ist das, was ${escapeHtml(l.from)} und ${escapeHtml(l.to)} schon aus ihren eigenen gemeinsamen Ausgaben direkt geschuldet haben — unabhängig von jeder Kette. Ketten verändern diesen Wert danach nur noch.</p>`
+          : ""
+      }
     </div>
   `;
 }
