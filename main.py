@@ -1250,7 +1250,12 @@ def _resolve_debt_chains(db: Session) -> tuple[list[tuple[int, int, float]], lis
         else:
             edges[(v, u)] = round(-net, 2)
             edges[(u, v)] = 0.0
-        merges.append({"u_id": u, "m_id": m, "v_id": v, "amount": shift})
+        merges.append(
+            {
+                "u_id": u, "m_id": m, "v_id": v, "amount": shift,
+                "amt_in": round(amt_in, 2), "amt_out": round(amt_out, 2),
+            }
+        )
         edges = {k: val for k, val in edges.items() if val > 0.005}
 
     result = [(from_id, to_id, amount) for (from_id, to_id), amount in edges.items() if amount > 0.005]
@@ -1261,6 +1266,62 @@ def _resolve_debt_chains(db: Session) -> tuple[list[tuple[int, int, float]], lis
 def _compute_settlements(db: Session) -> list[tuple[int, int, float]]:
     settlements, _ = _resolve_debt_chains(db)
     return settlements
+
+
+def _settlement_ledgers(db: Session) -> list[dict]:
+    """Für jede finale Zahlung die vollständige Herleitung: der direkte Betrag aus
+    Schritt 2 (falls vorhanden) plus jeder Kettenschritt, der genau diese
+    Verbindung entweder ERHÖHT hat (sie war das Ziel einer Kette, also u->v)
+    oder VERRINGERT hat (sie wurde selbst als Zwischen-Kante einer anderen,
+    späteren Kette verbraucht, also als deren u->m oder m->v) — läuft exakt auf
+    den finalen Betrag hinaus, weil es dieselben Werte sind, die
+    _resolve_debt_chains ohnehin schon verrechnet hat."""
+    usernames = {u.id: u.username for u in db.query(User).all()}
+    initial = {(f, t): amt for f, t, amt in _compute_pairwise_debts(db)}
+    settlements, merges = _resolve_debt_chains(db)
+
+    ledgers = []
+    for from_id, to_id, amount in settlements:
+        entries = []
+        running = initial.get((from_id, to_id), 0.0)
+        if running > 0.005:
+            entries.append({"type": "direct", "amount": round(running, 2)})
+        for idx, m in enumerate(merges):
+            if m["u_id"] == from_id and m["v_id"] == to_id:
+                running += m["amount"]
+                entries.append(
+                    {
+                        "type": "chain_add", "step": idx + 1,
+                        "u": usernames.get(m["u_id"], "?"), "m": usernames.get(m["m_id"], "?"), "v": usernames.get(m["v_id"], "?"),
+                        "amount": round(m["amount"], 2),
+                    }
+                )
+            elif m["u_id"] == from_id and m["m_id"] == to_id:
+                running -= m["amount"]
+                entries.append(
+                    {
+                        "type": "chain_consumed", "step": idx + 1,
+                        "u": usernames.get(m["u_id"], "?"), "m": usernames.get(m["m_id"], "?"), "v": usernames.get(m["v_id"], "?"),
+                        "amount": round(-m["amount"], 2),
+                    }
+                )
+            elif m["m_id"] == from_id and m["v_id"] == to_id:
+                running -= m["amount"]
+                entries.append(
+                    {
+                        "type": "chain_consumed", "step": idx + 1,
+                        "u": usernames.get(m["u_id"], "?"), "m": usernames.get(m["m_id"], "?"), "v": usernames.get(m["v_id"], "?"),
+                        "amount": round(-m["amount"], 2),
+                    }
+                )
+        ledgers.append(
+            {
+                "from_id": from_id, "from": usernames.get(from_id, "?"),
+                "to_id": to_id, "to": usernames.get(to_id, "?"),
+                "amount": amount, "entries": entries,
+            }
+        )
+    return ledgers
 
 
 @app.get("/api/expenses/open")
@@ -1357,23 +1418,22 @@ def get_open_settlements_explain(request: Request, db: Session = Depends(get_db)
 
     settlements, merges_raw = _resolve_debt_chains(db)
 
-    # Dieselbe Kette (identischer Schuldner, Zwischenstation und Gläubiger) kann
-    # im Algorithmus in mehreren Einzelschritten auftauchen (z. B. weil erst ein
-    # Teilbetrag über eine andere Kette verschoben wird) — für die Anzeige zu
-    # EINER Zeile mit dem Gesamtbetrag zusammenfassen, statt zwei Zeilen mit
-    # Teilbeträgen zu zeigen.
-    merges_by_triple: dict[tuple[int, int, int], float] = {}
-    for m in merges_raw:
-        key = (m["u_id"], m["m_id"], m["v_id"])
-        merges_by_triple[key] = merges_by_triple.get(key, 0.0) + m["amount"]
+    # Jeder einzelne Kettenschritt bleibt für die Erklärung erhalten (statt wie
+    # zuvor zu einer Summe pro Dreier-Kette zusammengefasst) — inklusive der
+    # Beträge VOR der Verschiebung (amt_in/amt_out), damit im Frontend die
+    # tatsächliche min(...)-Rechnung pro Schritt gezeigt werden kann. Dieselbe
+    # Kette kann dabei mehrfach auftauchen (z. B. weil ein Teilbetrag erst durch
+    # eine andere Kette freigeschoben wird) — das zeigt der Ablauf bewusst so an.
     merges = [
         {
-            "u_id": u_id, "u": usernames.get(u_id, "?"),
-            "m_id": m_id, "m": usernames.get(m_id, "?"),
-            "v_id": v_id, "v": usernames.get(v_id, "?"),
-            "amount": round(amount, 2),
+            "u_id": m["u_id"], "u": usernames.get(m["u_id"], "?"),
+            "m_id": m["m_id"], "m": usernames.get(m["m_id"], "?"),
+            "v_id": m["v_id"], "v": usernames.get(m["v_id"], "?"),
+            "amount": m["amount"],
+            "amt_in": m["amt_in"],
+            "amt_out": m["amt_out"],
         }
-        for (u_id, m_id, v_id), amount in sorted(merges_by_triple.items(), key=lambda kv: -kv[1])
+        for m in merges_raw
     ]
     steps = [
         {"from_id": from_id, "from": usernames.get(from_id, "?"), "to_id": to_id, "to": usernames.get(to_id, "?"), "amount": amount}
@@ -1381,8 +1441,9 @@ def get_open_settlements_explain(request: Request, db: Session = Depends(get_db)
     ]
 
     example = _pairwise_example(db)
+    ledgers = _settlement_ledgers(db)
 
-    return {"pairs": pairs, "netted_pairs": netted_pairs, "merges": merges, "steps": steps, "example": example}
+    return {"pairs": pairs, "netted_pairs": netted_pairs, "merges": merges, "steps": steps, "example": example, "ledgers": ledgers}
 
 
 @app.post("/api/expenses/settle")

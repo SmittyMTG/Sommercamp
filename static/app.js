@@ -2602,11 +2602,65 @@ function explainPairNetRow(p) {
   `;
 }
 
-function explainMergeRow(m) {
+function explainChainHop(amount) {
   return `
-    <div class="explain-pair-net-row">
-      <span class="explain-pair-net-names">${nameTag(m.u)} → ${nameTag(m.m)} → ${nameTag(m.v)}</span>
-      <span class="explain-pair-net-calc">wird zu <strong>${escapeHtml(m.u)} → ${escapeHtml(m.v)}: ${formatEuro(m.amount)}</strong> (${escapeHtml(m.m)} fällt raus)</span>
+    <div class="explain-chain-arrow">
+      <span class="explain-chain-amount">${formatEuro(amount)}</span>
+      <div class="explain-arrow-line"><span class="explain-arrow-head">→</span></div>
+    </div>
+  `;
+}
+
+function explainMergeSlide(m, idx, total) {
+  const inAfter = Math.max(0, m.amt_in - m.amount);
+  const outAfter = Math.max(0, m.amt_out - m.amount);
+  return `
+    <div class="explain-slide">
+      <p class="explain-slide-label">Schritt 3.${idx + 1} — Kette auflösen (${idx + 1} von ${total})</p>
+      <div class="explain-chain">
+        <div class="explain-chain-node">${nameTag(m.u)}</div>
+        ${explainChainHop(m.amt_in)}
+        <div class="explain-chain-node">${nameTag(m.m)}</div>
+        ${explainChainHop(m.amt_out)}
+        <div class="explain-chain-node">${nameTag(m.v)}</div>
+      </div>
+      <p class="explain-transfer-calc">min(${formatEuro(m.amt_in)}, ${formatEuro(m.amt_out)}) = ${formatEuro(m.amount)}</p>
+      <div class="explain-example-block">
+        <p class="explain-example-direction-title">${formatEuro(m.amount)} wird direkt ${escapeHtml(m.u)} → ${escapeHtml(m.v)} verschoben — ${escapeHtml(m.m)} wird dafür übersprungen:</p>
+        <div class="explain-example-item"><span>${escapeHtml(m.u)} → ${escapeHtml(m.m)}</span><span>${formatEuro(m.amt_in)} → ${formatEuro(inAfter)}</span></div>
+        <div class="explain-example-item"><span>${escapeHtml(m.m)} → ${escapeHtml(m.v)}</span><span>${formatEuro(m.amt_out)} → ${formatEuro(outAfter)}</span></div>
+        <div class="explain-example-item"><span>${escapeHtml(m.u)} → ${escapeHtml(m.v)}</span><span>+${formatEuro(m.amount)}</span></div>
+      </div>
+    </div>
+  `;
+}
+
+function explainLedgerEntry(e) {
+  if (e.type === "direct") {
+    return `
+      <div class="explain-ledger-row">
+        <span>Direkt aus Schritt 2</span>
+        <span class="explain-ledger-plus">+${formatEuro(e.amount)}</span>
+      </div>
+    `;
+  }
+  const isAdd = e.type === "chain_add";
+  return `
+    <div class="explain-ledger-row">
+      <span>Kette ${escapeHtml(e.u)} → ${escapeHtml(e.m)} → ${escapeHtml(e.v)} (Schritt 3.${e.step})${isAdd ? "" : " — hier selbst verbraucht"}</span>
+      <span class="${isAdd ? "explain-ledger-plus" : "explain-ledger-minus"}">${isAdd ? "+" : ""}${formatEuro(e.amount)}</span>
+    </div>
+  `;
+}
+
+function explainLedgerSlide(l) {
+  return `
+    <div class="explain-slide">
+      <p class="explain-slide-label">${nameTag(l.from)} → ${nameTag(l.to)}</p>
+      <div class="explain-example-block">
+        ${l.entries.map(explainLedgerEntry).join("")}
+        <div class="explain-example-sum">= ${formatEuro(l.amount)}</div>
+      </div>
     </div>
   `;
 }
@@ -2679,10 +2733,23 @@ function buildExplainSlides(data) {
     slides.push(() => `
       <div class="explain-slide">
         <p class="explain-slide-label">Schritt 3 — Ketten auflösen</p>
-        ${merges.map((m) => explainMergeRow(m)).join("")}
-        <p class="muted">Wo eine Person nur "durchreicht" (schuldet UND bekommt was), wird sie so weit wie möglich übersprungen — das spart Überweisungen, führt aber dazu, dass am Ende auch an Personen gezahlt wird, mit denen man nichts direkt hatte.</p>
+        <p>Wo eine Person nur "durchreicht" (schuldet UND bekommt was), wird sie so weit wie möglich übersprungen — das spart Überweisungen, führt aber dazu, dass am Ende auch an Personen gezahlt wird, mit denen man nichts direkt hatte.</p>
+        <p class="muted">${merges.length} Kettenschritt${merges.length === 1 ? "" : "e"} im Detail auf den nächsten Folien.</p>
       </div>
     `);
+    merges.forEach((m, idx) => slides.push(() => explainMergeSlide(m, idx, merges.length)));
+  }
+
+  const ledgers = data.ledgers || [];
+  if (ledgers.length) {
+    slides.push(() => `
+      <div class="explain-slide">
+        <p class="explain-slide-label">Schritt 4 — Wie sich die Ergebnisse aufsummieren</p>
+        <p>Jede finale Zahlung ist die Summe aus dem direkten Betrag (Schritt 2) plus allen Kettenschritten, die genau diese Verbindung erhöht haben — abzüglich der Schritte, in denen sie selbst wieder als Zwischenstation für eine andere Kette verbraucht wurde.</p>
+        <p class="muted">Die Herleitung für jede der ${ledgers.length} finalen Zahlung${ledgers.length === 1 ? "" : "en"} auf den nächsten Folien.</p>
+      </div>
+    `);
+    ledgers.forEach((l) => slides.push(() => explainLedgerSlide(l)));
   }
 
   slides.push(() => `
