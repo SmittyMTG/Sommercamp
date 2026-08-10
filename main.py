@@ -212,6 +212,8 @@ def create_shopping_item(
     name = item.name.strip()
     if not name:
         return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+    if len(name) > 80:
+        return JSONResponse(status_code=400, content={"error": "Name darf maximal 80 Zeichen haben"})
 
     woher = None
     if item.woher_id is not None:
@@ -241,6 +243,8 @@ def update_shopping_item(
     name = item.name.strip()
     if not name:
         return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+    if len(name) > 80:
+        return JSONResponse(status_code=400, content={"error": "Name darf maximal 80 Zeichen haben"})
 
     woher = None
     if item.woher_id is not None:
@@ -943,10 +947,11 @@ def get_expense_balance(request: Request, db: Session = Depends(get_db)):
 
 def _validate_expense_payload(payload: ExpenseCreate, db: Session):
     """Validiert eine Ausgabe für Anlegen UND Bearbeiten. Gibt entweder ein Tupel
-    (glaubiger_id, beneficiary_ids, betreff, expense_date, amounts) oder eine
-    fertige JSONResponse mit Fehlermeldung zurück. amounts ist eine dict[user_id,
+    (glaubiger_id, beneficiary_ids, betreff, expense_date, amounts, fixed_ids) oder
+    eine fertige JSONResponse mit Fehlermeldung zurück. amounts ist eine dict[user_id,
     Betrag] mit dem finalen Betrag pro Person: fixed_amounts wird 1:1 übernommen,
-    alle übrigen ausgewählten Personen teilen sich den Rest gleichmäßig auf."""
+    alle übrigen ausgewählten Personen teilen sich den Rest gleichmäßig auf.
+    fixed_ids sind die user_ids, deren Betrag fest war (Rest war "auto")."""
     betreff = payload.betreff.strip()
     if not betreff:
         return JSONResponse(status_code=400, content={"error": "Betreff darf nicht leer sein"})
@@ -970,6 +975,11 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
             expense_date = date.fromisoformat(payload.datum)
         except ValueError:
             return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
+        # Verhindert, dass die Liste (sortiert nach "datum") durch ein frei erfundenes
+        # Zukunftsdatum dauerhaft verzerrt wird. Beliebig weit zurückliegende Daten
+        # bleiben erlaubt (Nacherfassen älterer Ausgaben).
+        if expense_date > date.today():
+            return JSONResponse(status_code=400, content={"error": "Datum darf nicht in der Zukunft liegen"})
     else:
         expense_date = date.today()
 
@@ -998,11 +1008,19 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
     # Ein Eintrag pro ausgewählter Person, auch für den Zahler selbst (z. B. eigener
     # Snackkauf ohne Beteiligte). schuldner_id == glaubiger_id ist keine echte Schuld,
     # zählt aber fürs Leaderboard mit und wird in Saldo/Offene-Zahlungen ausgeblendet.
+    # Cent-genau aufteilen statt jeden Anteil einzeln zu runden: sonst kann die
+    # Summe der gespeicherten Beträge vom tatsächlichen Gesamtbetrag abweichen
+    # (z. B. 100 € / 3 Personen -> 33,33 € x 3 = 99,99 €), was Salden schleichend
+    # verfälscht. Der Rest-Cent wird deterministisch auf die ersten Personen
+    # (nach sortierter user_id) verteilt.
     amounts = dict(fixed)
     if remaining_ids:
-        share = round(remaining_total / len(remaining_ids), 2)
-        for uid in remaining_ids:
-            amounts[uid] = share
+        total_cents = round(remaining_total * 100)
+        n = len(remaining_ids)
+        base_cents, extra_cents = divmod(total_cents, n)
+        for idx, uid in enumerate(remaining_ids):
+            cents = base_cents + (1 if idx < extra_cents else 0)
+            amounts[uid] = cents / 100
 
     fixed_ids = set(fixed)
     return payload.glaubiger_id, beneficiary_ids, betreff, expense_date, amounts, fixed_ids
@@ -1748,7 +1766,10 @@ def get_weather(request: Request):
     # 72h statt nur 24h: die 3-Tage-Prognose (heute/morgen/übermorgen) braucht
     # stündliche Auflösung für alle drei Tage, nicht nur für den ersten, sonst
     # lässt sich für Tag 2/3 keine Uhrzeit für Regen/Böen angeben.
-    end_idx = min(start_idx + 72, len(times))
+    # codes/gusts können bei einer degradierten Open-Meteo-Antwort kürzer als
+    # times sein — end_idx muss auch das begrenzen, sonst crasht codes[i]/gusts[i]
+    # weiter unten ungefangen mit IndexError.
+    end_idx = min(start_idx + 72, len(times), len(codes), len(gusts))
 
     warnings = []
     for i in range(start_idx, end_idx):

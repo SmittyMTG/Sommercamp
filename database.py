@@ -143,17 +143,20 @@ class PlanEvent(Base):
 class Ausgabe(Base):
     __tablename__ = "ausgaben"
     id = Column(Integer, primary_key=True, index=True)
-    glaubiger_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    schuldner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # index=True: glaubiger_id/schuldner_id/status/datum werden bei jedem 3-Sekunden
+    # Kosten-Poll gefiltert bzw. gruppiert (list_expenses, get_expense_balance u.a.)
+    # — ohne Index wäre das ab wachsender Ausgaben-Historie ein Full-Table-Scan pro Poll.
+    glaubiger_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    schuldner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     cash = Column(Numeric(10, 2), nullable=False)
     betreff = Column(String(40), nullable=False)
-    datum = Column(Date, nullable=False, default=date.today)
+    datum = Column(Date, nullable=False, default=date.today, index=True)
     gezahlt = Column(Boolean, nullable=False, default=False)
     # Normale Ausgaben behalten für immer status="offen" (Default) und werden nie
     # angefasst. Nur Tilgungseinträge (Rückzahlungen, erzeugt beim Bestätigen einer
     # offenen Zahlung) durchlaufen "pending" -> "getilgt", sobald der Gläubiger den
     # Empfang bestätigt hat.
-    status = Column(String(20), nullable=False, default="offen")
+    status = Column(String(20), nullable=False, default="offen", index=True)
     # Verbindet alle Zeilen, die in einem einzigen "Ausgabe hinzufügen"-Vorgang
     # entstanden sind (ein Eintrag pro betroffener Person). Ermöglicht Bearbeiten/
     # Löschen der ganzen Ausgabe statt nur einer einzelnen Schuldner-Zeile.
@@ -206,6 +209,22 @@ _ensure_column("tasks", "recurring", "BOOLEAN", "DEFAULT 0")
 _ensure_column("tasks", "aufwand_min", "INTEGER")
 
 
+# Analoge Selbst-Migration für Indizes: index=True auf einer Column wirkt nur bei
+# create_all für neue Tabellen, holt auf bereits bestehenden Tabellen (wie oben bei
+# _ensure_column) nichts nach. CREATE INDEX IF NOT EXISTS ist gefahrlos erneut
+# ausführbar, daher kein Existenz-Check nötig.
+def _ensure_index(name: str, table: str, column: str):
+    with engine.connect() as conn:
+        conn.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({column})")
+        conn.commit()
+
+
+_ensure_index("ix_ausgaben_glaubiger_id", "ausgaben", "glaubiger_id")
+_ensure_index("ix_ausgaben_schuldner_id", "ausgaben", "schuldner_id")
+_ensure_index("ix_ausgaben_status", "ausgaben", "status")
+_ensure_index("ix_ausgaben_datum", "ausgaben", "datum")
+
+
 def _backfill_expense_batch_ids():
     """Einmaliger Nachtrag für Ausgaben, die vor Einführung von batch_id angelegt
     wurden: gruppiert anhand (glaubiger_id, datum, betreff) — exakt so, wie sie
@@ -246,8 +265,10 @@ def get_db():
 # Add a test user (run once)
 def add_test_user(pUsername, pPassword, pRole):
     db = SessionLocal()
-    hashed_password = pwd_context.hash(pPassword)
-    db_user = User(username=pUsername, hashed_password=hashed_password, role=pRole)
-    db.add(db_user)
-    db.commit()
-    db.close()
+    try:
+        hashed_password = pwd_context.hash(pPassword)
+        db_user = User(username=pUsername, hashed_password=hashed_password, role=pRole)
+        db.add(db_user)
+        db.commit()
+    finally:
+        db.close()

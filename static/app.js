@@ -414,7 +414,7 @@ function shoppingModalBodyHtml(sources, prefill = {}) {
   return `
     <div class="form-stack">
       <label>Produktname
-        <input type="text" id="shoppingNameInput" value="${escapeHtml(prefill.name || "")}" placeholder="z. B. Kohle für den Grill" required>
+        <input type="text" id="shoppingNameInput" maxlength="80" value="${escapeHtml(prefill.name || "")}" placeholder="z. B. Kohle für den Grill" required>
       </label>
       <label>Woher (optional)
         <select id="shoppingWoherSelect">
