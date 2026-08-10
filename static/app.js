@@ -2192,11 +2192,14 @@ async function openEditExpenseModal(group) {
     },
   });
 
-  // Bestehende Beträge vorausfüllen, damit ein unveränderter Save die aktuelle
-  // (ggf. individuelle) Aufteilung nicht stillschweigend auf Gleichverteilung zurücksetzt.
+  // Nur vormals fest eingetragene Beträge vorausfüllen, damit ein unveränderter
+  // Save die individuelle Aufteilung nicht stillschweigend verwirft. Personen, die
+  // vorher "auto" waren (Rest gleichmäßig verteilt), bleiben leer, damit sie beim
+  // Speichern automatisch neu aufgeteilt werden (z. B. wenn sich Betrag oder
+  // Beteiligte geändert haben).
   const entryAmounts = {};
   group.entries.forEach((e) => {
-    entryAmounts[e.schuldner_id] = e.cash;
+    if (e.fixed) entryAmounts[e.schuldner_id] = e.cash;
   });
   wireExpenseForm(users, me, entryAmounts);
 }

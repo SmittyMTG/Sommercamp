@@ -881,13 +881,13 @@ def list_expenses(request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     # Tilgungseinträge (Rückzahlungen, status != "offen") sind Buchhaltung, keine eigenen Einkäufe
-    # Sortierung nach created_at (echter Zeitstempel), nicht nach "datum" — das
-    # Feld ist frei editierbar (z. B. beim Nacherfassen älterer Ausgaben) und
-    # eignet sich daher nicht als verlässliche Sortiergrundlage.
+    # Sortierung nach "datum" (eingestelltes/vom Nutzer gesetztes Datum), nicht nach
+    # created_at — Nutzer wollen die Liste nach dem Datum sehen, das sie der Ausgabe
+    # gegeben haben, auch wenn diese später nacherfasst oder bearbeitet wurde.
     rows = (
         db.query(Ausgabe)
         .filter(Ausgabe.status == "offen")
-        .order_by(Ausgabe.created_at.desc())
+        .order_by(Ausgabe.datum.desc(), Ausgabe.created_at.desc())
         .all()
     )
     usernames = {u.id: u.username for u in db.query(User).all()}
@@ -903,6 +903,7 @@ def list_expenses(request: Request, db: Session = Depends(get_db)):
             "betreff": r.betreff,
             "datum": r.datum.isoformat(),
             "selbst": r.schuldner_id == r.glaubiger_id,
+            "fixed": bool(r.fixed),
         }
         for r in rows
     ]
@@ -1003,7 +1004,8 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
         for uid in remaining_ids:
             amounts[uid] = share
 
-    return payload.glaubiger_id, beneficiary_ids, betreff, expense_date, amounts
+    fixed_ids = set(fixed)
+    return payload.glaubiger_id, beneficiary_ids, betreff, expense_date, amounts, fixed_ids
 
 
 @app.post("/api/expenses")
@@ -1016,7 +1018,7 @@ def create_expense(
     validated = _validate_expense_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    glaubiger_id, beneficiary_ids, betreff, expense_date, amounts = validated
+    glaubiger_id, beneficiary_ids, betreff, expense_date, amounts, fixed_ids = validated
 
     batch_id = uuid.uuid4().hex
     created = []
@@ -1028,6 +1030,7 @@ def create_expense(
             betreff=betreff,
             datum=expense_date,
             batch_id=batch_id,
+            fixed=uid in fixed_ids,
         )
         db.add(row)
         created.append(row)
@@ -1066,7 +1069,7 @@ def update_expense_batch(
     validated = _validate_expense_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    glaubiger_id, beneficiary_ids, betreff, expense_date, amounts = validated
+    glaubiger_id, beneficiary_ids, betreff, expense_date, amounts, fixed_ids = validated
 
     # Alte Zeilen des Vorgangs ersetzen statt anzupassen — einfacher und robuster
     # als ein Zeilen-für-Zeilen-Diff, gleiche batch_id bleibt für Kontinuität erhalten.
@@ -1081,6 +1084,7 @@ def update_expense_batch(
                 betreff=betreff,
                 datum=expense_date,
                 batch_id=batch_id,
+                fixed=uid in fixed_ids,
             )
         )
     db.commit()

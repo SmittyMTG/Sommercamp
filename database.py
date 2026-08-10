@@ -158,6 +158,11 @@ class Ausgabe(Base):
     # entstanden sind (ein Eintrag pro betroffener Person). Ermöglicht Bearbeiten/
     # Löschen der ganzen Ausgabe statt nur einer einzelnen Schuldner-Zeile.
     batch_id = Column(String(36), nullable=True, index=True)
+    # True, wenn der Betrag beim Anlegen/Bearbeiten explizit fest eingetragen wurde;
+    # False, wenn er sich aus der Gleichverteilung des Rests ("auto") ergab. Steuert,
+    # ob das Bearbeiten-Formular den Betrag vorausfüllt (fest) oder leer lässt, damit
+    # er bei jeder Bearbeitung neu aufgeteilt wird (auto).
+    fixed = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -193,6 +198,7 @@ def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str = ""
 _ensure_column("ausgaben", "gezahlt", "BOOLEAN", "DEFAULT 0")
 _ensure_column("ausgaben", "status", "TEXT", "DEFAULT 'offen'")
 _ensure_column("ausgaben", "batch_id", "TEXT")
+_ensure_column("ausgaben", "fixed", "BOOLEAN", "DEFAULT 1")
 _ensure_column("shopping_items", "woher_id", "INTEGER")
 _ensure_column("shopping_items", "deadline", "DATE")
 _ensure_column("tasks", "category_id", "INTEGER")
