@@ -104,7 +104,7 @@ class TaskCategoryCreate(BaseModel):
 
 
 class PlanEventCreate(BaseModel):
-    datum: str
+    datum: str | None = None
     uhrzeit: str
     bezeichnung: str
     location: str | None = None
@@ -695,7 +695,9 @@ def _require_admin(db: Session, username: str) -> User | None:
 def _validate_plan_payload(payload: PlanEventCreate):
     """Validiert Termin-Felder für Anlegen UND Bearbeiten. Gibt entweder ein
     Tupel (datum, uhrzeit, bezeichnung, location, beschreibung) oder eine
-    fertige JSONResponse mit Fehlermeldung zurück."""
+    fertige JSONResponse mit Fehlermeldung zurück. datum ist optional: ohne
+    Datum bleibt der Termin "noch offen" (siehe Panel im Camp-Plan) und wird
+    erst per Schnellaktion oder Bearbeiten fest eingeplant."""
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
@@ -706,10 +708,12 @@ def _validate_plan_payload(payload: PlanEventCreate):
     if location and len(location) > 120:
         return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
 
-    try:
-        event_date = date.fromisoformat(payload.datum)
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
+    event_date = None
+    if payload.datum:
+        try:
+            event_date = date.fromisoformat(payload.datum)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
 
     try:
         event_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
@@ -729,7 +733,7 @@ def list_plan_events(request: Request, db: Session = Depends(get_db)):
     return [
         {
             "id": e.id,
-            "datum": e.datum.isoformat(),
+            "datum": e.datum.isoformat() if e.datum else None,
             "uhrzeit": e.uhrzeit.strftime("%H:%M"),
             "bezeichnung": e.bezeichnung,
             "location": e.location,
@@ -768,7 +772,7 @@ def create_plan_event(
 
     return {
         "id": new_event.id,
-        "datum": new_event.datum.isoformat(),
+        "datum": new_event.datum.isoformat() if new_event.datum else None,
         "uhrzeit": new_event.uhrzeit.strftime("%H:%M"),
         "bezeichnung": new_event.bezeichnung,
         "location": new_event.location,
@@ -804,12 +808,33 @@ def update_plan_event(
 
     return {
         "id": existing.id,
-        "datum": existing.datum.isoformat(),
+        "datum": existing.datum.isoformat() if existing.datum else None,
         "uhrzeit": existing.uhrzeit.strftime("%H:%M"),
         "bezeichnung": existing.bezeichnung,
         "location": existing.location,
         "beschreibung": existing.beschreibung,
     }
+
+
+@app.patch("/api/plan/{event_id}/heute")
+def set_plan_event_today(event_id: int, request: Request, db: Session = Depends(get_db)):
+    """Schnellaktion für noch offene (nicht heutige) Termine: verschiebt den Termin
+    auf heute, ohne den vollen Bearbeiten-Dialog öffnen zu müssen (z. B. wenn sich
+    Pläne kurzfristig ändern)."""
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine verschieben"})
+
+    existing = db.query(PlanEvent).filter(PlanEvent.id == event_id).first()
+    if not existing:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    existing.datum = date.today()
+    db.commit()
+
+    return {"id": existing.id, "datum": existing.datum.isoformat()}
 
 
 @app.delete("/api/plan/{event_id}")

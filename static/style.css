@@ -31,6 +31,17 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .stack{display:grid;gap:10px}.plan-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:15px}
 .plan-card{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:12px;align-items:start}.time{font-weight:1000;color:var(--yellow);font-size:17px}.title{font-weight:900;overflow-wrap:anywhere}.details{color:var(--muted);font-size:13px;line-height:1.45;margin-top:4px;overflow-wrap:anywhere}.details a{color:var(--yellow2);font-weight:700;text-decoration:none}.details a:active{text-decoration:underline}
 .date-block h3{margin:18px 2px 9px;font-size:16px;text-transform:capitalize}.empty{border:1px dashed var(--line);border-radius:18px;padding:25px;text-align:center;color:var(--muted)}
+/* Camp-Plan: Kopfzeile + "noch offen"-Panel scrollen als ein Block mit und
+   bleiben dann oben fixiert (position:sticky im scrollenden .app-shell) —
+   deckendes Hintergrund nötig, damit die Liste dahinter nicht durchscheint. */
+.plan-sticky-top{position:sticky;top:0;z-index:6;background:var(--bg);padding-bottom:8px}
+.plan-open-panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:4px 4px 10px;margin-bottom:2px}
+.plan-open-panel .stack{padding:0 10px;gap:8px}
+.plan-open-panel .plan-card{background:var(--surface2)}
+.plan-open-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;color:var(--text);font-weight:850;font-size:14px;padding:10px}
+.plan-open-toggle .chevron{color:var(--muted);transition:transform .15s}
+.plan-open-panel.collapsed .stack{display:none}
+.plan-open-panel.collapsed .chevron{transform:rotate(-90deg)}
 .primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--yellow);color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
 .danger{color:var(--red)}.secondary.danger{border-color:var(--red)}.success{color:var(--green)}
 .list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}

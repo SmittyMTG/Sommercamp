@@ -79,9 +79,18 @@
 
       <!-- ============ PLAN ============ -->
       <section id="screen-plan" class="screen">
-        <div class="section-heading sticky-heading">
-          <div><div class="eyebrow">Alle Tage</div><h2>Camp-Plan</h2></div>
-          <button id="addPlanButton" class="primary compact hidden">＋ Eintrag</button>
+        <div class="plan-sticky-top">
+          <div class="section-heading sticky-heading">
+            <div><div class="eyebrow">Alle Tage</div><h2>Camp-Plan</h2></div>
+            <button id="addPlanButton" class="primary compact hidden">＋ Eintrag</button>
+          </div>
+          <div id="planOpenPanel" class="plan-open-panel hidden">
+            <button type="button" id="planOpenToggle" class="plan-open-toggle">
+              <span>Events die noch offen sind</span>
+              <span class="chevron">▾</span>
+            </button>
+            <div id="planOpenList" class="stack"></div>
+          </div>
         </div>
         <div id="planList" class="stack">
           <div class="empty-state">

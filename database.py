@@ -128,7 +128,9 @@ class TaskSubitem(Base):
 class PlanEvent(Base):
     __tablename__ = "plan_events"
     id = Column(Integer, primary_key=True, index=True)
-    datum = Column(Date, nullable=False)
+    # Optional: ohne Datum ist der Termin "noch offen" (siehe Panel im Camp-Plan)
+    # und wird erst per Schnellaktion/Bearbeiten fest auf einen Tag gelegt.
+    datum = Column(Date, nullable=True)
     uhrzeit = Column(Time, nullable=False)
     bezeichnung = Column(String(60), nullable=False)
     location = Column(String(120), nullable=True)
@@ -223,6 +225,47 @@ _ensure_index("ix_ausgaben_glaubiger_id", "ausgaben", "glaubiger_id")
 _ensure_index("ix_ausgaben_schuldner_id", "ausgaben", "schuldner_id")
 _ensure_index("ix_ausgaben_status", "ausgaben", "status")
 _ensure_index("ix_ausgaben_datum", "ausgaben", "datum")
+
+
+def _relax_plan_events_datum_not_null():
+    """plan_events.datum war ursprünglich NOT NULL; seit "noch offene" (datumslose)
+    Termine möglich sind, muss die Spalte NULL erlauben. SQLite kennt kein ALTER
+    COLUMN für Constraints, daher wird die Tabelle einmalig neu aufgebaut (Rename,
+    Neuanlage mit lockerem Schema, Daten kopieren, alte Tabelle löschen). Läuft nur,
+    wenn die Spalte noch NOT NULL ist, ist also bei jedem weiteren Start ein No-Op.
+    """
+    with engine.connect() as conn:
+        info = conn.exec_driver_sql("PRAGMA table_info(plan_events)").fetchall()
+        datum_col = next((row for row in info if row[1] == "datum"), None)
+        if datum_col is None or datum_col[3] == 0:
+            return
+
+        conn.exec_driver_sql("ALTER TABLE plan_events RENAME TO plan_events_old")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE plan_events (
+                id INTEGER PRIMARY KEY,
+                datum DATE,
+                uhrzeit TIME NOT NULL,
+                bezeichnung VARCHAR(60) NOT NULL,
+                location VARCHAR(120),
+                beschreibung TEXT,
+                created_by VARCHAR,
+                created_at DATETIME
+            )
+            """
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO plan_events (id, datum, uhrzeit, bezeichnung, location, beschreibung, "
+            "created_by, created_at) "
+            "SELECT id, datum, uhrzeit, bezeichnung, location, beschreibung, created_by, created_at "
+            "FROM plan_events_old"
+        )
+        conn.exec_driver_sql("DROP TABLE plan_events_old")
+        conn.commit()
+
+
+_relax_plan_events_datum_not_null()
 
 
 def _backfill_expense_batch_ids():

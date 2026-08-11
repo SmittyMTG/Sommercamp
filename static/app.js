@@ -37,6 +37,14 @@ function goToScreen(name) {
   });
   // Nicht mehr window.scrollTo: body scrollt bewusst nicht mehr (siehe CSS),
   // .app-shell ist jetzt der eigentliche Scroll-Container.
+  if (name === "plan") {
+    // Camp-Plan startet auf dem heutigen Tag statt ganz oben. Ist die Liste
+    // noch nicht geladen, holt loadPlanList() den Scroll nach (siehe Flag).
+    if (typeof scrollPlanToToday === "function" && !scrollPlanToToday()) {
+      planScrollToTodayPending = true;
+    }
+    return;
+  }
   const shell = document.querySelector(".app-shell");
   if (shell) shell.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
 }
@@ -1515,6 +1523,62 @@ function renderPlanEvent(event, isAdmin) {
 
 let lastPlanSignature = null;
 
+/* ---------- Camp-Plan: "noch offene" (datumslose) Events schnell auf heute legen ---------- */
+const planOpenPanelEl = document.getElementById("planOpenPanel");
+const planOpenListEl = document.getElementById("planOpenList");
+const planOpenToggleBtn = document.getElementById("planOpenToggle");
+
+if (planOpenToggleBtn) {
+  planOpenToggleBtn.addEventListener("click", () => {
+    planOpenPanelEl.classList.toggle("collapsed");
+  });
+}
+
+function renderOpenPlanEvent(event) {
+  const card = document.createElement("div");
+  card.className = "plan-card";
+
+  const detailsParts = [];
+  if (event.location) detailsParts.push(`📍 ${escapeHtml(event.location)}`);
+  if (event.beschreibung) detailsParts.push(escapeHtml(event.beschreibung));
+
+  card.innerHTML = `
+    <div class="time">${escapeHtml(event.uhrzeit)}</div>
+    <div>
+      <div class="title">${escapeHtml(event.bezeichnung)}</div>
+      ${detailsParts.length ? `<div class="details">${detailsParts.join(" · ")}</div>` : ""}
+    </div>
+    <div class="list-card-actions">
+      <button type="button" class="icon-button assign-today-btn" aria-label="Für heute einplanen">📌 Heute</button>
+    </div>
+  `;
+
+  card.querySelector(".assign-today-btn").addEventListener("click", async () => {
+    const res = await fetch(`/api/plan/${event.id}/heute`, { method: "PATCH" });
+    if (res.ok) {
+      loadPlanList(true);
+      // "Heute geplant" auf der Startseite hat ein eigenes Poll-Intervall (5s)
+      // und würde die Verschiebung sonst erst mit Verzögerung zeigen.
+      loadTodayPlan();
+    }
+  });
+
+  return card;
+}
+
+// Nach einem Screen-Wechsel zu "Plan" soll die Liste auf den heutigen Tag
+// scrollen (siehe goToScreen). Die Daten sind zu dem Zeitpunkt aber evtl. noch
+// nicht geladen — dieses Flag holt den Scroll dann nach, sobald loadPlanList
+// fertig gerendert hat, statt bei jedem späteren Poll erneut zu scrollen.
+let planScrollToTodayPending = false;
+
+function scrollPlanToToday() {
+  const todayBlock = planListEl && planListEl.querySelector('[data-today-block="true"]');
+  if (!todayBlock) return false;
+  todayBlock.scrollIntoView({ behavior: "instant" in window ? "instant" : "auto", block: "start" });
+  return true;
+}
+
 async function loadPlanList(force) {
   if (!planListEl) return;
   try {
@@ -1528,13 +1592,32 @@ async function loadPlanList(force) {
     const { me } = await fetchUsersAndMe();
     const isAdmin = !!me && isAdminRole(me.role);
 
+    // Termine ohne Datum ("noch offen") gehören nur ins Panel oben, nicht in
+    // die nach Tag gruppierte Liste — sonst würden sie doppelt erscheinen.
+    const openEvents = events
+      .filter((e) => !e.datum)
+      .sort((a, b) => a.uhrzeit.localeCompare(b.uhrzeit));
+    const datedEvents = events.filter((e) => e.datum);
+
+    if (planOpenPanelEl && planOpenListEl) {
+      if (isAdmin && openEvents.length > 0) {
+        planOpenListEl.innerHTML = "";
+        openEvents.forEach((event) => planOpenListEl.appendChild(renderOpenPlanEvent(event)));
+        planOpenPanelEl.classList.remove("hidden");
+      } else {
+        planOpenPanelEl.classList.add("hidden");
+      }
+    }
+
     planListEl.innerHTML = "";
-    if (events.length === 0) {
+    if (datedEvents.length === 0) {
       planListEl.innerHTML = `<div class="empty-state"><p>Hier entsteht der Camp-Plan.</p></div>`;
     } else {
-      groupPlanEvents(events).forEach((group) => {
+      const today = todayIsoDate();
+      groupPlanEvents(datedEvents).forEach((group) => {
         const block = document.createElement("div");
         block.className = "date-block";
+        if (group.datum === today) block.dataset.todayBlock = "true";
         block.innerHTML = `<h3>${formatWeekdayDate(group.datum)}</h3>`;
         const stack = document.createElement("div");
         stack.className = "stack";
@@ -1542,6 +1625,10 @@ async function loadPlanList(force) {
         block.appendChild(stack);
         planListEl.appendChild(block);
       });
+    }
+
+    if (planScrollToTodayPending && scrollPlanToToday()) {
+      planScrollToTodayPending = false;
     }
   } catch (err) {
     planListEl.innerHTML = `<div class="empty-state"><p>Plan konnte nicht geladen werden.</p></div>`;
@@ -1589,14 +1676,13 @@ async function loadTodayPlan() {
 }
 
 function planModalBodyHtml(prefill = {}) {
-  const today = new Date().toISOString().slice(0, 10);
   return `
     <div class="form-stack">
-      <label>Datum
-        <input type="date" id="planDatumInput" value="${prefill.datum || today}" required>
+      <label>Datum <span class="muted">(leer lassen = noch offen)</span>
+        <input type="date" id="planDatumInput" value="${prefill.datum || ""}">
       </label>
       <label>Uhrzeit
-        <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || ""}" required>
+        <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || "12:00"}" required>
       </label>
       <label>Bezeichnung
         <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" placeholder="z. B. Lagerfeuer-Abend" required>
@@ -1619,12 +1705,12 @@ async function submitPlanForm(url, method) {
   const location = document.getElementById("planLocationInput").value.trim();
   const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
 
-  if (!datum || !uhrzeit || !bezeichnung) return;
+  if (!uhrzeit || !bezeichnung) return;
 
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ datum, uhrzeit, bezeichnung, location, beschreibung }),
+    body: JSON.stringify({ datum: datum || null, uhrzeit, bezeichnung, location, beschreibung }),
   });
 
   if (res.ok) {
