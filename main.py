@@ -816,27 +816,6 @@ def update_plan_event(
     }
 
 
-@app.patch("/api/plan/{event_id}/heute")
-def set_plan_event_today(event_id: int, request: Request, db: Session = Depends(get_db)):
-    """Schnellaktion für noch offene (nicht heutige) Termine: verschiebt den Termin
-    auf heute, ohne den vollen Bearbeiten-Dialog öffnen zu müssen (z. B. wenn sich
-    Pläne kurzfristig ändern)."""
-    username = get_current_user(request)
-    if not username:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    if not _require_admin(db, username):
-        return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine verschieben"})
-
-    existing = db.query(PlanEvent).filter(PlanEvent.id == event_id).first()
-    if not existing:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-
-    existing.datum = date.today()
-    db.commit()
-
-    return {"id": existing.id, "datum": existing.datum.isoformat()}
-
-
 @app.delete("/api/plan/{event_id}")
 def delete_plan_event(event_id: int, request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)

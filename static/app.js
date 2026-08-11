@@ -1549,19 +1549,11 @@ function renderOpenPlanEvent(event) {
       ${detailsParts.length ? `<div class="details">${detailsParts.join(" · ")}</div>` : ""}
     </div>
     <div class="list-card-actions">
-      <button type="button" class="icon-button assign-today-btn" aria-label="Für heute einplanen">📌 Heute</button>
+      <button type="button" class="icon-button set-date-btn" aria-label="Datum festlegen">📅</button>
     </div>
   `;
 
-  card.querySelector(".assign-today-btn").addEventListener("click", async () => {
-    const res = await fetch(`/api/plan/${event.id}/heute`, { method: "PATCH" });
-    if (res.ok) {
-      loadPlanList(true);
-      // "Heute geplant" auf der Startseite hat ein eigenes Poll-Intervall (5s)
-      // und würde die Verschiebung sonst erst mit Verzögerung zeigen.
-      loadTodayPlan();
-    }
-  });
+  card.querySelector(".set-date-btn").addEventListener("click", () => openEditPlanModal(event));
 
   return card;
 }
@@ -1573,9 +1565,21 @@ function renderOpenPlanEvent(event) {
 let planScrollToTodayPending = false;
 
 function scrollPlanToToday() {
+  const shell = document.querySelector(".app-shell");
   const todayBlock = planListEl && planListEl.querySelector('[data-today-block="true"]');
-  if (!todayBlock) return false;
-  todayBlock.scrollIntoView({ behavior: "instant" in window ? "instant" : "auto", block: "start" });
+  if (!shell || !todayBlock) return false;
+
+  // scrollIntoView() weiß nichts vom sticky .plan-sticky-top (Kopfzeile +
+  // "noch offen"-Panel), das oben drüberliegt — dessen Höhe schwankt mit der
+  // Anzahl offener Einträge (und ob das Panel gerade ein-/ausgeklappt ist).
+  // Ohne Korrektur landet der heutige Block teils dahinter versteckt. Daher
+  // wird die aktuelle Höhe live gemessen und als Offset abgezogen.
+  const stickyTop = document.querySelector(".plan-sticky-top");
+  const stickyHeight = stickyTop ? stickyTop.getBoundingClientRect().height : 0;
+  const currentOffset = todayBlock.getBoundingClientRect().top - shell.getBoundingClientRect().top;
+  const targetScrollTop = shell.scrollTop + currentOffset - stickyHeight;
+
+  shell.scrollTo({ top: Math.max(0, targetScrollTop), behavior: "instant" in window ? "instant" : "auto" });
   return true;
 }
 
@@ -1617,8 +1621,13 @@ async function loadPlanList(force) {
       groupPlanEvents(datedEvents).forEach((group) => {
         const block = document.createElement("div");
         block.className = "date-block";
-        if (group.datum === today) block.dataset.todayBlock = "true";
-        block.innerHTML = `<h3>${formatWeekdayDate(group.datum)}</h3>`;
+        const isToday = group.datum === today;
+        if (isToday) block.dataset.todayBlock = "true";
+        // Vergangene Tage optisch zurücknehmen, damit auf einen Blick klar ist,
+        // was schon passiert ist — "Heute" bekommt zusätzlich ein eigenes Badge
+        // als klaren Anker zwischen Vergangenheit und Zukunft.
+        if (group.datum < today) block.classList.add("past");
+        block.innerHTML = `<h3>${formatWeekdayDate(group.datum)}${isToday ? ' <span class="today-badge">Heute</span>' : ""}</h3>`;
         const stack = document.createElement("div");
         stack.className = "stack";
         group.items.forEach((event) => stack.appendChild(renderPlanEvent(event, isAdmin)));
