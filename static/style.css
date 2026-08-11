@@ -39,10 +39,13 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    deckendes Hintergrund nötig, damit die Liste dahinter nicht durchscheint. */
 .plan-sticky-top{position:sticky;top:0;z-index:6;background:var(--bg);padding-bottom:8px}
 .plan-open-panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:4px 4px 10px;margin-bottom:2px}
-.plan-open-panel .stack{padding:0 10px;gap:8px}
+/* max-height auf ~2,5 Kacheln geschätzt (Kartenhöhe + Lücke) — Rest ist über
+   die interne Scrollbar erreichbar, das angeschnittene 3. Element signalisiert
+   "hier geht's weiter". */
+.plan-open-panel .stack{padding:0 10px;gap:8px;max-height:190px;overflow-y:auto}
 .plan-open-panel .plan-card{background:var(--surface2)}
 .plan-open-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;color:var(--text);font-weight:850;font-size:14px;padding:10px}
-.plan-open-toggle .chevron{color:var(--muted);transition:transform .15s}
+.plan-open-toggle .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s}
 .plan-open-panel.collapsed .stack{display:none}
 .plan-open-panel.collapsed .chevron{transform:rotate(-90deg)}
 .primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--yellow);color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}

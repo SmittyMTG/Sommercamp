@@ -653,7 +653,7 @@ function sortTasks(items, mode, meId) {
 
 function renderTaskItem(task) {
   const card = document.createElement("div");
-  card.className = "list-card" + (task.done ? " done" : "");
+  card.className = "list-card clickable" + (task.done ? " done" : "");
   card.dataset.id = task.id;
 
   const overdue = isTaskOverdue(task);
@@ -711,12 +711,17 @@ function renderTaskItem(task) {
     </div>
     <div class="list-card-actions">
       <button type="button" class="urgent-btn${isUrgentToday ? " active" : ""}" aria-label="Deadline auf heute setzen">❗</button>
-      <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
       <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
     </div>
   `;
 
-  card.querySelector(".urgent-btn").addEventListener("click", async () => {
+  // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button überflüssig)
+  // — alle anderen interaktiven Elemente in der Karte stoppen die Propagation,
+  // damit ein Klick darauf nicht zusätzlich den Bearbeiten-Dialog öffnet.
+  card.addEventListener("click", () => openEditTaskModal(task));
+
+  card.querySelector(".urgent-btn").addEventListener("click", async (e) => {
+    e.stopPropagation();
     const res = await fetch(`/api/tasks/${task.id}/deadline-today`, { method: "PATCH" });
     if (res.ok) {
       const data = await res.json();
@@ -728,6 +733,7 @@ function renderTaskItem(task) {
   const checkbox = card.querySelector(".list-card-checkbox");
   checkbox.addEventListener("click", async (e) => {
     e.preventDefault();
+    e.stopPropagation();
     const res = await fetch(`/api/tasks/${task.id}/toggle`, { method: "PATCH" });
     if (res.ok) {
       const data = await res.json();
@@ -758,9 +764,8 @@ function renderTaskItem(task) {
     });
   });
 
-  card.querySelector(".edit-btn").addEventListener("click", () => openEditTaskModal(task));
-
-  card.querySelector(".delete-btn").addEventListener("click", () => {
+  card.querySelector(".delete-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
     openModal({
       eyebrow: "Aufgabe",
       title: `„${task.titel}" löschen?`,

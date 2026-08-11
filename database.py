@@ -4,7 +4,16 @@ from sqlalchemy.orm import sessionmaker
 from passlib.context import CryptContext
 from fastapi import Depends
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 import uuid
+
+# Server läuft in UTC, Nutzer:innen sind in Deutschland — date.today() liefert
+# rund um Mitternacht das falsche Datum (siehe today_berlin() in main.py).
+BERLIN_TZ = ZoneInfo("Europe/Berlin")
+
+
+def _today_berlin() -> date:
+    return datetime.now(BERLIN_TZ).date()
 
 # SQLite DB
 # check_same_thread=False: Routen laufen als normale (sync) Handler in Starlettes
@@ -152,7 +161,7 @@ class Ausgabe(Base):
     schuldner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     cash = Column(Numeric(10, 2), nullable=False)
     betreff = Column(String(40), nullable=False)
-    datum = Column(Date, nullable=False, default=date.today, index=True)
+    datum = Column(Date, nullable=False, default=_today_berlin, index=True)
     gezahlt = Column(Boolean, nullable=False, default=False)
     # Normale Ausgaben behalten für immer status="offen" (Default) und werden nie
     # angefasst. Nur Tilgungseinträge (Rückzahlungen, erzeugt beim Bestätigen einer

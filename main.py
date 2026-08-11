@@ -3,6 +3,7 @@ import time
 import uuid
 from datetime import date, datetime as dt
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import FastAPI, Request, Depends, Form
@@ -62,6 +63,19 @@ templates.env.globals["app_version"] = app_version
 
 
 templates.env.globals["static_version"] = static_version
+
+
+# Der Server läuft in UTC, alle Nutzer:innen sind aber in Deutschland unterwegs.
+# date.today()/datetime.utcnow() liefern daher rund um Mitternacht das FALSCHE
+# Datum (z. B. 00:32 Uhr Berliner Zeit im Sommer = 22:32 UTC am Vortag — "heute"
+# wäre dann fälschlich noch "gestern"). Für jede nutzerseitig sichtbare
+# "heute"-Berechnung (❗-Schnellaktionen, Ausgaben-Datum, Tilgung) daher immer
+# diese Helper statt date.today()/datetime.utcnow() verwenden.
+BERLIN_TZ = ZoneInfo("Europe/Berlin")
+
+
+def today_berlin() -> date:
+    return dt.now(BERLIN_TZ).date()
 
 
 # Aktivitäts-Log: absichtlich sehr eng gehalten (nur die Aktionen, bei denen
@@ -324,7 +338,7 @@ def toggle_shopping_deadline_today(item_id: int, request: Request, db: Session =
     if not item:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
-    item.deadline = None if item.deadline == date.today() else date.today()
+    item.deadline = None if item.deadline == today_berlin() else today_berlin()
     db.commit()
     return {"id": item.id, "deadline": item.deadline.isoformat() if item.deadline else None}
 
@@ -611,10 +625,10 @@ def toggle_task_deadline_today(task_id: int, request: Request, db: Session = Dep
     if not task:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
-    if task.deadline and task.deadline.date() == date.today():
+    if task.deadline and task.deadline.date() == today_berlin():
         task.deadline = None
     else:
-        task.deadline = dt.combine(date.today(), dt.min.time())
+        task.deadline = dt.combine(today_berlin(), dt.min.time())
     db.commit()
     return {"id": task.id, "deadline": task.deadline.isoformat() if task.deadline else None}
 
@@ -982,10 +996,10 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
         # Verhindert, dass die Liste (sortiert nach "datum") durch ein frei erfundenes
         # Zukunftsdatum dauerhaft verzerrt wird. Beliebig weit zurückliegende Daten
         # bleiben erlaubt (Nacherfassen älterer Ausgaben).
-        if expense_date > date.today():
+        if expense_date > today_berlin():
             return JSONResponse(status_code=400, content={"error": "Datum darf nicht in der Zukunft liegen"})
     else:
-        expense_date = date.today()
+        expense_date = today_berlin()
 
     fixed = {uid: round(amt, 2) for uid, amt in (payload.fixed_amounts or {}).items()}
     if set(fixed) - set(beneficiary_ids):
@@ -1533,7 +1547,7 @@ def settle_expenses(
         schuldner_id=creditor.id,
         cash=amount,
         betreff=f"Tilgung an {creditor.username}",
-        datum=date.today(),
+        datum=today_berlin(),
         status="pending",
     )
     db.add(tilgung)
