@@ -1487,7 +1487,6 @@ function renderPlanEvent(event, isAdmin) {
     ${
       isAdmin
         ? `<div class="list-card-actions">
-             <button type="button" class="icon-button edit-plan-btn" aria-label="Bearbeiten">✏️</button>
              <button type="button" class="icon-button delete-plan-btn" aria-label="Löschen">🗑️</button>
            </div>`
         : "<div></div>"
@@ -1495,9 +1494,17 @@ function renderPlanEvent(event, isAdmin) {
   `;
 
   if (isAdmin) {
-    card.querySelector(".edit-plan-btn").addEventListener("click", () => openEditPlanModal(event));
+    // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button
+    // überflüssig) — Löschen-Button und der Maps-Link stoppen die Propagation,
+    // damit ein Klick darauf nicht zusätzlich den Bearbeiten-Dialog öffnet.
+    card.classList.add("clickable");
+    card.addEventListener("click", () => openEditPlanModal(event));
 
-    card.querySelector(".delete-plan-btn").addEventListener("click", () => {
+    const locationLink = card.querySelector(".details a");
+    if (locationLink) locationLink.addEventListener("click", (e) => e.stopPropagation());
+
+    card.querySelector(".delete-plan-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
       openModal({
         eyebrow: "Camp-Plan",
         title: `„${event.bezeichnung}" löschen?`,
@@ -1548,12 +1555,13 @@ function renderOpenPlanEvent(event) {
       <div class="title">${escapeHtml(event.bezeichnung)}</div>
       ${detailsParts.length ? `<div class="details">${detailsParts.join(" · ")}</div>` : ""}
     </div>
-    <div class="list-card-actions">
-      <button type="button" class="icon-button set-date-btn" aria-label="Datum festlegen">📅</button>
-    </div>
+    <div></div>
   `;
 
-  card.querySelector(".set-date-btn").addEventListener("click", () => openEditPlanModal(event));
+  // Panel wird ohnehin nur Admins angezeigt (siehe loadPlanList) — ganze
+  // Kachel öffnet Bearbeiten, macht den separaten 📅-Button überflüssig.
+  card.classList.add("clickable");
+  card.addEventListener("click", () => openEditPlanModal(event));
 
   return card;
 }
