@@ -591,7 +591,6 @@ function formatDeadline(iso) {
   return d.toLocaleString("de-DE", {
     day: "2-digit",
     month: "2-digit",
-    year: "numeric",
   });
 }
 
@@ -1614,7 +1613,7 @@ async function loadPlanList(force) {
     // die nach Tag gruppierte Liste — sonst würden sie doppelt erscheinen.
     const openEvents = events
       .filter((e) => !e.datum)
-      .sort((a, b) => a.uhrzeit.localeCompare(b.uhrzeit));
+      .sort((a, b) => a.bezeichnung.localeCompare(b.bezeichnung));
     const datedEvents = events.filter((e) => e.datum);
 
     if (planOpenPanelEl && planOpenListEl) {
@@ -1823,8 +1822,8 @@ function formatEuro(value) {
 }
 
 function formatDate(isoDate) {
-  const [y, m, d] = isoDate.split("-");
-  return `${d}.${m}.${y}`;
+  const [, m, d] = isoDate.split("-");
+  return `${d}.${m}.`;
 }
 
 // Gruppiert die granularen DB-Zeilen (ein Eintrag pro Schuldner) rein für die
@@ -2491,20 +2490,41 @@ function buildMoneyFlowSvg(settlements) {
   const leftOffset = MARGIN_Y + (plotH - left.columnHeight) / 2;
   const rightOffset = MARGIN_Y + (plotH - right.columnHeight) / 2;
 
+  // Die Knotenhöhe folgt dem tatsächlichen Betrag (min. 3px, siehe layout()),
+  // das zweizeilige Label (Name + Betrag) braucht aber ~24px Platz. Bei sehr
+  // kleinen, benachbarten Beträgen reicht der Knotenabstand allein nicht aus
+  // und die Labels würden sich überlappen — daher hier, analog zum
+  // MIN_LABEL_GAP der Bänder-Labels weiter unten, ein Mindestabstand
+  // zwischen den Label-MITTELPUNKTEN erzwungen (die farbigen Balken selbst
+  // bleiben unverändert, nur die Textposition wird bei Bedarf verschoben).
+  const NODE_LABEL_MIN_GAP = 24;
+  function nodeLabelCenters(nodes, positions) {
+    const centers = nodes.map((n) => positions[n.id].y + positions[n.id].h / 2);
+    for (let i = 1; i < centers.length; i++) {
+      const minCenter = centers[i - 1] + NODE_LABEL_MIN_GAP;
+      if (centers[i] < minCenter) centers[i] = minCenter;
+    }
+    return centers;
+  }
+  const leftLabelCenters = nodeLabelCenters(leftNodes, left.positions);
+  const rightLabelCenters = nodeLabelCenters(rightNodes, right.positions);
+
   let nodesSvg = "";
-  leftNodes.forEach((n) => {
+  leftNodes.forEach((n, i) => {
     const pos = left.positions[n.id];
     const y = pos.y + leftOffset;
+    const labelY = leftLabelCenters[i] + leftOffset;
     nodesSvg += `<rect x="${LABEL_W}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
-    nodesSvg += `<text class="money-flow-node-label" x="${LABEL_W - 8}" y="${(y + pos.h / 2 - 3).toFixed(1)}" text-anchor="end">${escapeHtml(n.name)}</text>`;
-    nodesSvg += `<text class="money-flow-node-amount" x="${LABEL_W - 8}" y="${(y + pos.h / 2 + 9).toFixed(1)}" text-anchor="end">${formatEuro(n.total)}</text>`;
+    nodesSvg += `<text class="money-flow-node-label" x="${LABEL_W - 8}" y="${(labelY - 3).toFixed(1)}" text-anchor="end">${escapeHtml(n.name)}</text>`;
+    nodesSvg += `<text class="money-flow-node-amount" x="${LABEL_W - 8}" y="${(labelY + 9).toFixed(1)}" text-anchor="end">${formatEuro(n.total)}</text>`;
   });
-  rightNodes.forEach((n) => {
+  rightNodes.forEach((n, i) => {
     const pos = right.positions[n.id];
     const y = pos.y + rightOffset;
+    const labelY = rightLabelCenters[i] + rightOffset;
     nodesSvg += `<rect x="${rightXStart.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
-    nodesSvg += `<text class="money-flow-node-label" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(y + pos.h / 2 - 3).toFixed(1)}" text-anchor="start">${escapeHtml(n.name)}</text>`;
-    nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(y + pos.h / 2 + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
+    nodesSvg += `<text class="money-flow-node-label" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY - 3).toFixed(1)}" text-anchor="start">${escapeHtml(n.name)}</text>`;
+    nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
   });
 
   // y0 (Startposition je Band am linken Knoten) und y1 (am rechten Knoten)
@@ -2578,7 +2598,11 @@ function buildMoneyFlowSvg(settlements) {
     .join("");
 
   const maxLabelY = labelEntries.length ? labelEntries[labelEntries.length - 1].y : 0;
-  const fullH = Math.max(plotH + 2 * MARGIN_Y, maxLabelY + MARGIN_Y);
+  const maxNodeLabelY = Math.max(
+    leftLabelCenters.length ? leftLabelCenters[leftLabelCenters.length - 1] + leftOffset : 0,
+    rightLabelCenters.length ? rightLabelCenters[rightLabelCenters.length - 1] + rightOffset : 0
+  );
+  const fullH = Math.max(plotH + 2 * MARGIN_Y, maxLabelY + MARGIN_Y, maxNodeLabelY + 9 + MARGIN_Y);
   return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}${labelsSvg}</svg>`;
 }
 
