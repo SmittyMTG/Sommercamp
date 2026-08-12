@@ -43,7 +43,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    die interne Scrollbar erreichbar, das angeschnittene 3. Element signalisiert
    "hier geht's weiter". */
 .plan-open-panel .stack{padding:0 10px;gap:8px;max-height:190px;overflow-y:auto}
-.plan-open-panel .plan-card{background:var(--surface2)}
+.plan-open-panel .plan-card{background:var(--surface2);grid-template-columns:1fr auto}
 .plan-open-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;color:var(--text);font-weight:850;font-size:14px;padding:10px}
 .plan-open-toggle .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s}
 .plan-open-panel.collapsed .stack{display:none}
@@ -102,16 +102,21 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 /* Offene Zahlungen: animierter Rechenweg */
 .link-button{background:none;border:none;color:var(--yellow);font-weight:800;font-size:13px;padding:0;margin-left:4px;cursor:pointer;text-decoration:underline}
 .explain-body{min-height:220px;padding:6px 2px}
+/* Feste Kartenhöhe nur für dieses Mehrschritt-Modal (nicht global auf
+   .modal-card, das brauchen die einfachen Formular-Dialoge nicht): Kopf und
+   "Weiter"-Leiste bleiben so bei jedem Schritt exakt an derselben Stelle,
+   egal wie viel Inhalt der jeweilige Schritt hat — nur der Body scrollt
+   intern, wenn ein Schritt mal nicht reinpasst. Löst das "der Button
+   wandert je nach Seitenlänge"-Problem beim Durchklicken.
+*/
+#settlementExplainDialog .modal-card{display:flex;flex-direction:column;height:min(72vh,560px)}
+#settlementExplainDialog .modal-header{flex-shrink:0}
+#settlementExplainDialog .explain-body{flex:1;min-height:0;overflow-y:auto}
+#settlementExplainDialog .explain-controls{flex-shrink:0}
 .explain-slide{opacity:0;transform:translateY(8px);transition:opacity .25s ease,transform .25s ease}
 .explain-slide.in{opacity:1;transform:translateY(0)}
 .explain-slide p{margin:0 0 10px}
 .explain-slide-label{text-transform:uppercase;letter-spacing:.1em;font-size:11px;font-weight:850;color:var(--muted);margin-bottom:12px!important}
-.explain-bar-row{display:grid;grid-template-columns:64px 1fr 64px;align-items:center;gap:8px;margin-bottom:8px;font-size:12px}
-.explain-bar-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.explain-bar-track{position:relative;height:14px;background:var(--surface2);border-radius:999px;overflow:hidden}
-.explain-bar{position:absolute;top:0;bottom:0;left:0;border-radius:999px;transition:width .5s ease}
-.explain-bar.pos{background:var(--green)}.explain-bar.neg{background:var(--red)}
-.explain-bar-value{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
 .explain-example-block{background:var(--surface2);border-radius:14px;padding:10px 12px;margin-bottom:10px}
 .explain-ledger-row{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:4px 0;color:var(--muted)}
 .explain-ledger-plus{color:var(--green);font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -121,10 +126,6 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .explain-example-tag{background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:1px 6px;font-size:10px;font-weight:700;color:var(--text)}
 .explain-example-more{font-size:11px;color:var(--muted);padding:3px 0;font-style:italic}
 .explain-example-sum{text-align:right;font-weight:900;font-size:13px;margin-top:6px;padding-top:6px;border-top:1px solid var(--line)}
-.explain-pair-raw{background:var(--surface2);border-radius:14px;padding:10px 12px;margin-bottom:8px}
-.explain-pair-raw-title{font-size:12px;font-weight:800;margin-bottom:8px!important}
-.explain-pair-raw .explain-bar-row{margin-bottom:6px}
-.explain-pair-raw .explain-bar-row:last-child{margin-bottom:0}
 .explain-pair-net-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px}
 .explain-pair-net-row:last-of-type{border-bottom:none}
 .explain-pair-net-names{font-size:12px}
@@ -137,6 +138,13 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .explain-chain-node{font-size:13px;flex:none}
 .explain-chain-arrow{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:0}
 .explain-chain-amount{font-weight:900;color:var(--yellow);font-size:12px;white-space:nowrap}
+/* Mehrere Ketten untereinander auf einer Folie statt einzeln durchklickbar —
+   Trennlinie zwischen den Ketten, damit klar bleibt, wo eine endet und die
+   nächste anfängt. */
+.explain-merge-list{display:grid;gap:16px}
+.explain-merge-chain{padding-top:16px;border-top:1px solid var(--line)}
+.explain-merge-chain:first-child{padding-top:0;border-top:none}
+.explain-merge-chain-label{font-size:11px;font-weight:850;color:var(--muted);margin-bottom:8px!important}
 .explain-result-row{background:var(--surface2);border-radius:12px;padding:10px 12px;font-size:13px}
 .explain-controls{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:16px}
 .explain-controls button{flex:none}

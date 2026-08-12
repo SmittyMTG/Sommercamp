@@ -1554,8 +1554,9 @@ function renderOpenPlanEvent(event) {
   if (event.location) detailsParts.push(`📍 ${escapeHtml(event.location)}`);
   if (event.beschreibung) detailsParts.push(escapeHtml(event.beschreibung));
 
+  // Kein Datum -> auch keine Uhrzeit (siehe _validate_plan_payload) — daher
+  // hier keine Zeit-Spalte wie bei den fest eingeplanten Terminen.
   card.innerHTML = `
-    <div class="time">${escapeHtml(event.uhrzeit)}</div>
     <div>
       <div class="title">${escapeHtml(event.bezeichnung)}</div>
       ${detailsParts.length ? `<div class="details">${detailsParts.join(" · ")}</div>` : ""}
@@ -1698,13 +1699,17 @@ async function loadTodayPlan() {
 }
 
 function planModalBodyHtml(prefill = {}) {
+  // Uhrzeit ohne Datum ergibt keinen Sinn ("noch offen" hat bewusst keine Zeit)
+  // — daher nur vorbefüllen, wenn auch ein Datum feststeht. wirePlanForm()
+  // hält das beim Ändern des Datums danach synchron.
+  const uhrzeitDefault = prefill.uhrzeit || (prefill.datum ? "12:00" : "");
   return `
     <div class="form-stack">
       <label>Datum <span class="muted">(leer lassen = noch offen)</span>
         <input type="date" id="planDatumInput" value="${prefill.datum || ""}">
       </label>
       <label>Uhrzeit
-        <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || "12:00"}" required>
+        <input type="time" id="planUhrzeitInput" value="${uhrzeitDefault}">
       </label>
       <label>Bezeichnung
         <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" placeholder="z. B. Lagerfeuer-Abend" required>
@@ -1720,6 +1725,24 @@ function planModalBodyHtml(prefill = {}) {
   `;
 }
 
+// Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten
+// Felder im DOM) — hält Uhrzeit mit Datum synchron: ohne Datum ergibt eine
+// Uhrzeit keinen Sinn ("noch offen"), daher wird sie beim Leeren des Datums
+// automatisch mit geleert und beim erstmaligen Setzen eines Datums mit 12:00
+// vorbefüllt.
+function wirePlanForm() {
+  const datumInput = document.getElementById("planDatumInput");
+  const uhrzeitInput = document.getElementById("planUhrzeitInput");
+  if (!datumInput || !uhrzeitInput) return;
+  datumInput.addEventListener("input", () => {
+    if (!datumInput.value) {
+      uhrzeitInput.value = "";
+    } else if (!uhrzeitInput.value) {
+      uhrzeitInput.value = "12:00";
+    }
+  });
+}
+
 async function submitPlanForm(url, method) {
   const datum = document.getElementById("planDatumInput").value;
   const uhrzeit = document.getElementById("planUhrzeitInput").value;
@@ -1727,12 +1750,13 @@ async function submitPlanForm(url, method) {
   const location = document.getElementById("planLocationInput").value.trim();
   const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
 
-  if (!uhrzeit || !bezeichnung) return;
+  if (!bezeichnung) return;
+  if (datum && !uhrzeit) return;
 
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ datum: datum || null, uhrzeit, bezeichnung, location, beschreibung }),
+    body: JSON.stringify({ datum: datum || null, uhrzeit: uhrzeit || null, bezeichnung, location, beschreibung }),
   });
 
   if (res.ok) {
@@ -1758,6 +1782,7 @@ function openAddPlanModal() {
     bodyHtml: planModalBodyHtml(),
     onSubmit: () => submitPlanForm("/api/plan", "POST"),
   });
+  wirePlanForm();
 }
 
 function openEditPlanModal(event) {
@@ -1768,6 +1793,7 @@ function openEditPlanModal(event) {
     bodyHtml: planModalBodyHtml(event),
     onSubmit: () => submitPlanForm(`/api/plan/${event.id}`, "PATCH"),
   });
+  wirePlanForm();
 }
 
 if (addPlanButton) {
@@ -1834,6 +1860,8 @@ function groupExpenses(expenses) {
 function renderExpenseGroup(group, isAdmin) {
   const card = document.createElement("div");
   card.className = "list-card";
+  const canManage = isAdmin && group.batchId;
+  if (canManage) card.classList.add("clickable");
   // Namen bleiben hier bewusst unhighlighted — die Randfarbe des Zahlers an
   // der ganzen Kachel reicht als visuelle Zuordnung.
   const payerNames = Array.from(group.glaeubiger);
@@ -1846,7 +1874,6 @@ function renderExpenseGroup(group, isAdmin) {
       return `${label}: ${formatEuro(e.cash)}`;
     })
     .join(" · ");
-  const canManage = isAdmin && group.batchId;
 
   card.innerHTML = `
     <div class="list-card-text">
@@ -1857,7 +1884,6 @@ function renderExpenseGroup(group, isAdmin) {
     ${
       canManage
         ? `<div class="list-card-actions">
-             <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
              <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
            </div>`
         : ""
@@ -1865,8 +1891,12 @@ function renderExpenseGroup(group, isAdmin) {
   `;
 
   if (canManage) {
-    card.querySelector(".edit-btn").addEventListener("click", () => openEditExpenseModal(group));
-    card.querySelector(".delete-btn").addEventListener("click", () => {
+    // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button überflüssig,
+    // weiterhin nur für Admins) — Löschen stoppt die Propagation, damit ein Klick
+    // darauf nicht zusätzlich den Bearbeiten-Dialog öffnet.
+    card.addEventListener("click", () => openEditExpenseModal(group));
+    card.querySelector(".delete-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
       openModal({
         eyebrow: "Kosten",
         title: `„${group.betreff}" löschen?`,
@@ -2727,27 +2757,6 @@ const settlementExplainNextBtn = document.getElementById("settlementExplainNext"
 let explainSlides = [];
 let explainSlideIndex = 0;
 
-function explainPairRawRow(p) {
-  const max = Math.max(p.a_to_b, p.b_to_a, 1);
-  const wA = Math.max((p.a_to_b / max) * 100, 2);
-  const wB = Math.max((p.b_to_a / max) * 100, 2);
-  return `
-    <div class="explain-pair-raw">
-      <p class="explain-pair-raw-title">${nameTag(p.a_username)} ⇄ ${nameTag(p.b_username)}</p>
-      <div class="explain-bar-row">
-        <span class="explain-bar-name">${escapeHtml(p.a_username)} →</span>
-        <div class="explain-bar-track"><div class="explain-bar neg" style="width:${wA}%"></div></div>
-        <span class="explain-bar-value">${formatEuro(p.a_to_b)}</span>
-      </div>
-      <div class="explain-bar-row">
-        <span class="explain-bar-name">${escapeHtml(p.b_username)} →</span>
-        <div class="explain-bar-track"><div class="explain-bar neg" style="width:${wB}%"></div></div>
-        <span class="explain-bar-value">${formatEuro(p.b_to_a)}</span>
-      </div>
-    </div>
-  `;
-}
-
 function explainPairNetRow(p) {
   const netAbs = Math.abs(p.net);
   const settled = netAbs <= 0.005;
@@ -2773,12 +2782,12 @@ function explainChainHop(amount) {
   `;
 }
 
-function explainMergeSlide(m, idx, total) {
+function explainMergeChain(m, idx, total) {
   const inAfter = Math.max(0, m.amt_in - m.amount);
   const outAfter = Math.max(0, m.amt_out - m.amount);
   return `
-    <div class="explain-slide">
-      <p class="explain-slide-label">Schritt 3.${idx + 1} — Kette auflösen (${idx + 1} von ${total})</p>
+    <div class="explain-merge-chain">
+      <p class="explain-merge-chain-label">Kette ${idx + 1} von ${total}</p>
       <div class="explain-chain">
         <div class="explain-chain-node">${nameTag(m.u)}</div>
         ${explainChainHop(m.amt_in)}
@@ -2801,15 +2810,15 @@ function explainLedgerEntry(e, fromName, toName) {
   if (e.type === "direct") {
     return `
       <div class="explain-ledger-row">
-        <span>${escapeHtml(fromName)} schuldete ${escapeHtml(toName)} schon direkt aus eigenen Ausgaben (Schritt 2)</span>
+        <span>${escapeHtml(fromName)} schuldete ${escapeHtml(toName)} schon direkt aus eigenen Ausgaben (Schritt 1)</span>
         <span class="explain-ledger-plus">+${formatEuro(e.amount)}</span>
       </div>
     `;
   }
   const isAdd = e.type === "chain_add";
   const label = isAdd
-    ? `Kette ${escapeHtml(e.u)} → ${escapeHtml(e.m)} → ${escapeHtml(e.v)} verschoben hierher (Schritt 3.${e.step})`
-    : `Diese Verbindung als Zwischenstation für Kette ${escapeHtml(e.u)} → ${escapeHtml(e.m)} → ${escapeHtml(e.v)} verbraucht (Schritt 3.${e.step})`;
+    ? `Kette ${escapeHtml(e.u)} → ${escapeHtml(e.m)} → ${escapeHtml(e.v)} verschoben hierher (Kette ${e.step} in Schritt 2)`
+    : `Diese Verbindung als Zwischenstation für Kette ${escapeHtml(e.u)} → ${escapeHtml(e.m)} → ${escapeHtml(e.v)} verbraucht (Kette ${e.step} in Schritt 2)`;
   return `
     <div class="explain-ledger-row">
       <span>${label}</span>
@@ -2818,11 +2827,11 @@ function explainLedgerEntry(e, fromName, toName) {
   `;
 }
 
-function explainLedgerSlide(l) {
+function explainLedgerBlock(l) {
   const hasDirect = l.entries.some((e) => e.type === "direct");
   return `
-    <div class="explain-slide">
-      <p class="explain-slide-label">${nameTag(l.from)} → ${nameTag(l.to)}</p>
+    <div class="explain-merge-chain">
+      <p class="explain-merge-chain-label">${nameTag(l.from)} → ${nameTag(l.to)}</p>
       <div class="explain-example-block">
         ${l.entries.map((e) => explainLedgerEntry(e, l.from, l.to)).join("")}
         <div class="explain-example-sum">= ${formatEuro(l.amount)}</div>
@@ -2861,40 +2870,44 @@ function explainExampleDirection(fromName, toName, dir) {
   `;
 }
 
+function explainExampleBlock(ex) {
+  // Kein Paar-Titel mehr — die Namen stehen schon in explainExampleDirection()
+  // ("X schuldet Y:"), die Trennlinie von .explain-merge-chain reicht als
+  // optische Abgrenzung zwischen den Paaren.
+  return `
+    <div class="explain-merge-chain">
+      ${explainExampleDirection(ex.a, ex.b, ex.a_to_b)}
+      ${explainExampleDirection(ex.b, ex.a, ex.b_to_a)}
+    </div>
+  `;
+}
+
 function buildExplainSlides(data) {
-  const { pairs, netted_pairs, merges, steps, example } = data;
+  const { pairs, netted_pairs, merges, steps, examples } = data;
 
   const slides = [];
 
   slides.push(() => `
     <div class="explain-slide">
-      <p>Jede gemeinsame Ausgabe erzeugt eine direkte Schuld: der Beteiligte schuldet dem Zahler seinen Anteil.</p>
+      <p>Jede gemeinsame Ausgabe erzeugt eine direkte Schuld: wer bezahlt hat, bekommt ein Guthaben — wer beteiligt war, schuldet seinen Anteil.</p>
       <p>Zuerst wird das <strong>nur zwischen den zwei beteiligten Personen</strong> verrechnet. Ergibt sich daraus eine Kette (A schuldet B, B schuldet C), wird die Kette danach aufgelöst, damit möglichst wenige Überweisungen nötig sind.</p>
-    </div>
-  `);
-
-  if (example) {
-    slides.push(() => `
-      <div class="explain-slide">
-        <p class="explain-slide-label">Beispiel — ${nameTag(example.a)} und ${nameTag(example.b)}</p>
-        <p>Jede einzelne gemeinsame Ausgabe der beiden wird gezählt: wer bezahlt hat, bekommt ein Guthaben — wer beteiligt war, schuldet seinen Anteil. Das summiert sich, getrennt nach Richtung:</p>
-        ${explainExampleDirection(example.a, example.b, example.a_to_b)}
-        ${explainExampleDirection(example.b, example.a, example.b_to_a)}
-        <p class="muted">Genau diese beiden Summen siehst du gleich für jedes Paar in Schritt 1 wieder.</p>
-      </div>
-    `);
-  }
-
-  slides.push(() => `
-    <div class="explain-slide">
-      <p class="explain-slide-label">Schritt 1 — Rohe Summen je Personenpaar (vor jeder Verrechnung)</p>
-      ${pairs.length ? pairs.map((p) => explainPairRawRow(p)).join("") : `<p class="muted">Keine gemeinsamen Ausgaben.</p>`}
+      ${
+        examples && examples.length
+          ? `
+        <p class="explain-slide-label">Beispiele — jedes Paar im Detail</p>
+        <div class="explain-merge-list">
+          ${examples.map((ex) => explainExampleBlock(ex)).join("")}
+        </div>
+        <p class="muted">Diese Summen werden im nächsten Schritt pro Paar gegeneinander verrechnet.</p>
+      `
+          : ""
+      }
     </div>
   `);
 
   slides.push(() => `
     <div class="explain-slide">
-      <p class="explain-slide-label">Schritt 2 — Pro Paar verrechnet</p>
+      <p class="explain-slide-label">Schritt 1 — Pro Paar verrechnet</p>
       ${pairs.length ? pairs.map((p) => explainPairNetRow(p)).join("") : `<p class="muted">–</p>`}
       <p class="muted">Beide Richtungen werden gegeneinander aufgerechnet — übrig bleibt eine Zahlung pro Paar (oder gar keine, wenn es sich deckt).</p>
     </div>
@@ -2903,24 +2916,27 @@ function buildExplainSlides(data) {
   if (merges.length) {
     slides.push(() => `
       <div class="explain-slide">
-        <p class="explain-slide-label">Schritt 3 — Ketten auflösen</p>
+        <p class="explain-slide-label">Schritt 2 — Ketten auflösen</p>
         <p>Wo eine Person nur "durchreicht" (schuldet UND bekommt was), wird sie so weit wie möglich übersprungen — das spart Überweisungen, führt aber dazu, dass am Ende auch an Personen gezahlt wird, mit denen man nichts direkt hatte.</p>
-        <p class="muted">${merges.length} Kettenschritt${merges.length === 1 ? "" : "e"} im Detail auf den nächsten Folien.</p>
+        <div class="explain-merge-list">
+          ${merges.map((m, idx) => explainMergeChain(m, idx, merges.length)).join("")}
+        </div>
       </div>
     `);
-    merges.forEach((m, idx) => slides.push(() => explainMergeSlide(m, idx, merges.length)));
   }
 
   const ledgers = data.ledgers || [];
   if (ledgers.length) {
     slides.push(() => `
       <div class="explain-slide">
-        <p class="explain-slide-label">Schritt 4 — Wie sich die Ergebnisse aufsummieren</p>
-        <p>Jede finale Zahlung ist die Summe aus dem direkten Betrag (Schritt 2) plus allen Kettenschritten, die genau diese Verbindung erhöht haben — abzüglich der Schritte, in denen sie selbst wieder als Zwischenstation für eine andere Kette verbraucht wurde.</p>
-        <p class="muted">Die Herleitung für jede der ${ledgers.length} finalen Zahlung${ledgers.length === 1 ? "" : "en"} auf den nächsten Folien.</p>
+        <p class="explain-slide-label">Schritt 3 — Wie sich die Ergebnisse aufsummieren</p>
+        <p>Jede finale Zahlung ist die Summe aus dem direkten Betrag (Schritt 1) plus allen Kettenschritten, die genau diese Verbindung erhöht haben — abzüglich der Schritte, in denen sie selbst wieder als Zwischenstation für eine andere Kette verbraucht wurde.</p>
+        <p class="muted">Die Herleitung für jede der ${ledgers.length} finalen Zahlung${ledgers.length === 1 ? "" : "en"} im Detail:</p>
+        <div class="explain-merge-list">
+          ${ledgers.map((l) => explainLedgerBlock(l)).join("")}
+        </div>
       </div>
     `);
-    ledgers.forEach((l) => slides.push(() => explainLedgerSlide(l)));
   }
 
   slides.push(() => `
@@ -2932,7 +2948,7 @@ function buildExplainSlides(data) {
             ? steps
                 .map(
                   (s) => `
-          <div class="explain-result-row">${nameTag(s.from)} → ${nameTag(s.to)}: <strong>${formatEuro(s.amount)}</strong></div>
+          <div class="explain-result-row">${nameTag(s.from)} schuldet ${nameTag(s.to)}: <strong>${formatEuro(s.amount)}</strong></div>
         `
                 )
                 .join("")
@@ -2949,6 +2965,10 @@ function buildExplainSlides(data) {
 function renderExplainSlide() {
   if (!settlementExplainBodyEl) return;
   settlementExplainBodyEl.innerHTML = explainSlides[explainSlideIndex]();
+  // Ohne das bleibt beim Weiterklicken die Scroll-Position der vorherigen
+  // (evtl. heruntergescrollten) Folie stehen — jede Folie soll aber immer
+  // oben beginnen.
+  settlementExplainBodyEl.scrollTop = 0;
   requestAnimationFrame(() => {
     const slideEl = settlementExplainBodyEl.querySelector(".explain-slide");
     if (slideEl) requestAnimationFrame(() => slideEl.classList.add("in"));

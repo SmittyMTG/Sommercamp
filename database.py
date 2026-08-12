@@ -140,7 +140,9 @@ class PlanEvent(Base):
     # Optional: ohne Datum ist der Termin "noch offen" (siehe Panel im Camp-Plan)
     # und wird erst per Schnellaktion/Bearbeiten fest auf einen Tag gelegt.
     datum = Column(Date, nullable=True)
-    uhrzeit = Column(Time, nullable=False)
+    # Ohne Datum ergibt eine Uhrzeit keinen Sinn — daher ebenfalls optional,
+    # serverseitig erzwungen: nur zusammen mit datum gesetzt (main.py).
+    uhrzeit = Column(Time, nullable=True)
     bezeichnung = Column(String(60), nullable=False)
     location = Column(String(120), nullable=True)
     beschreibung = Column(Text, nullable=True)
@@ -236,17 +238,20 @@ _ensure_index("ix_ausgaben_status", "ausgaben", "status")
 _ensure_index("ix_ausgaben_datum", "ausgaben", "datum")
 
 
-def _relax_plan_events_datum_not_null():
-    """plan_events.datum war ursprünglich NOT NULL; seit "noch offene" (datumslose)
-    Termine möglich sind, muss die Spalte NULL erlauben. SQLite kennt kein ALTER
-    COLUMN für Constraints, daher wird die Tabelle einmalig neu aufgebaut (Rename,
-    Neuanlage mit lockerem Schema, Daten kopieren, alte Tabelle löschen). Läuft nur,
-    wenn die Spalte noch NOT NULL ist, ist also bei jedem weiteren Start ein No-Op.
+def _relax_plan_events_not_null():
+    """plan_events.datum und .uhrzeit waren ursprünglich NOT NULL; seit "noch
+    offene" (datums-/uhrzeitlose) Termine möglich sind, müssen beide Spalten
+    NULL erlauben. SQLite kennt kein ALTER COLUMN für Constraints, daher wird
+    die Tabelle bei Bedarf einmalig neu aufgebaut (Rename, Neuanlage mit
+    lockerem Schema, Daten kopieren, alte Tabelle löschen). Läuft nur, wenn
+    noch mindestens eine der beiden Spalten NOT NULL ist, ist also bei jedem
+    weiteren Start ein No-Op.
     """
     with engine.connect() as conn:
         info = conn.exec_driver_sql("PRAGMA table_info(plan_events)").fetchall()
-        datum_col = next((row for row in info if row[1] == "datum"), None)
-        if datum_col is None or datum_col[3] == 0:
+        by_name = {row[1]: row for row in info}
+        still_not_null = any(by_name[c][3] == 1 for c in ("datum", "uhrzeit") if c in by_name)
+        if not still_not_null:
             return
 
         conn.exec_driver_sql("ALTER TABLE plan_events RENAME TO plan_events_old")
@@ -255,7 +260,7 @@ def _relax_plan_events_datum_not_null():
             CREATE TABLE plan_events (
                 id INTEGER PRIMARY KEY,
                 datum DATE,
-                uhrzeit TIME NOT NULL,
+                uhrzeit TIME,
                 bezeichnung VARCHAR(60) NOT NULL,
                 location VARCHAR(120),
                 beschreibung TEXT,
@@ -274,7 +279,7 @@ def _relax_plan_events_datum_not_null():
         conn.commit()
 
 
-_relax_plan_events_datum_not_null()
+_relax_plan_events_not_null()
 
 
 def _backfill_expense_batch_ids():

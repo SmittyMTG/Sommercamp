@@ -119,7 +119,7 @@ class TaskCategoryCreate(BaseModel):
 
 class PlanEventCreate(BaseModel):
     datum: str | None = None
-    uhrzeit: str
+    uhrzeit: str | None = None
     bezeichnung: str
     location: str | None = None
     beschreibung: str | None = None
@@ -711,7 +711,9 @@ def _validate_plan_payload(payload: PlanEventCreate):
     Tupel (datum, uhrzeit, bezeichnung, location, beschreibung) oder eine
     fertige JSONResponse mit Fehlermeldung zurück. datum ist optional: ohne
     Datum bleibt der Termin "noch offen" (siehe Panel im Camp-Plan) und wird
-    erst per Schnellaktion oder Bearbeiten fest eingeplant."""
+    erst per Schnellaktion oder Bearbeiten fest eingeplant. Eine Uhrzeit ohne
+    Datum ergibt keinen Sinn, daher ist sie nur zusammen mit einem Datum
+    erlaubt/Pflicht — ohne Datum wird sie immer auf None erzwungen."""
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
@@ -729,10 +731,14 @@ def _validate_plan_payload(payload: PlanEventCreate):
         except ValueError:
             return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
 
-    try:
-        event_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
-    except ValueError:
-        return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
+    event_time = None
+    if event_date is not None:
+        if not payload.uhrzeit:
+            return JSONResponse(status_code=400, content={"error": "Uhrzeit darf nicht leer sein"})
+        try:
+            event_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
 
     beschreibung = (payload.beschreibung or "").strip() or None
     return event_date, event_time, bezeichnung, location, beschreibung
@@ -748,7 +754,7 @@ def list_plan_events(request: Request, db: Session = Depends(get_db)):
         {
             "id": e.id,
             "datum": e.datum.isoformat() if e.datum else None,
-            "uhrzeit": e.uhrzeit.strftime("%H:%M"),
+            "uhrzeit": e.uhrzeit.strftime("%H:%M") if e.uhrzeit else None,
             "bezeichnung": e.bezeichnung,
             "location": e.location,
             "beschreibung": e.beschreibung,
@@ -787,7 +793,7 @@ def create_plan_event(
     return {
         "id": new_event.id,
         "datum": new_event.datum.isoformat() if new_event.datum else None,
-        "uhrzeit": new_event.uhrzeit.strftime("%H:%M"),
+        "uhrzeit": new_event.uhrzeit.strftime("%H:%M") if new_event.uhrzeit else None,
         "bezeichnung": new_event.bezeichnung,
         "location": new_event.location,
         "beschreibung": new_event.beschreibung,
@@ -823,7 +829,7 @@ def update_plan_event(
     return {
         "id": existing.id,
         "datum": existing.datum.isoformat() if existing.datum else None,
-        "uhrzeit": existing.uhrzeit.strftime("%H:%M"),
+        "uhrzeit": existing.uhrzeit.strftime("%H:%M") if existing.uhrzeit else None,
         "bezeichnung": existing.bezeichnung,
         "location": existing.location,
         "beschreibung": existing.beschreibung,
@@ -1183,13 +1189,14 @@ def _pairwise_raw_breakdown(db: Session) -> list[dict]:
     return pairs
 
 
-def _pairwise_example(db: Session) -> dict | None:
-    """Konkretes Beispielpaar mit den einzelnen zugrundeliegenden Ausgaben-Zeilen
-    (nicht nur der Summe) für die Erklär-Animation — zeigt anschaulich, wie sich
-    ein a_to_b/b_to_a-Wert aus Schritt 1 tatsächlich zusammensetzt. Wählt das
-    Paar mit den meisten Einzel-Positionen (interessantestes Beispiel); die
-    Summen entsprechen exakt denen aus _pairwise_raw_breakdown für dieses Paar,
-    nur die Anzeige der Einzelposten ist auf ein paar Beispiele begrenzt."""
+def _pairwise_examples(db: Session) -> list[dict]:
+    """Für JEDES Paar mit gemeinsamen Ausgaben die einzelnen zugrundeliegenden
+    Ausgaben-Zeilen (nicht nur die Summe) für die Erklär-Animation — zeigt
+    anschaulich, wie sich die a_to_b/b_to_a-Werte aus Schritt 1 tatsächlich
+    zusammensetzen. Die Summen entsprechen exakt denen aus
+    _pairwise_raw_breakdown, nur die Anzeige der Einzelposten ist pro Richtung
+    auf ein paar Beispiele begrenzt. Absteigend nach Anzahl Positionen sortiert
+    (interessanteste Paare zuerst)."""
     rows = (
         db.query(Ausgabe)
         .filter(Ausgabe.schuldner_id != Ausgabe.glaubiger_id, Ausgabe.status != "pending")
@@ -1200,24 +1207,26 @@ def _pairwise_example(db: Session) -> dict | None:
     for r in rows:
         by_pair.setdefault(frozenset((r.schuldner_id, r.glaubiger_id)), []).append(r)
     if not by_pair:
-        return None
-    pair, pair_rows = max(by_pair.items(), key=lambda kv: len(kv[1]))
-    a_id, b_id = tuple(pair)
+        return []
 
     usernames = {u.id: u.username for u in db.query(User).all()}
-    a_to_b_rows = [r for r in pair_rows if r.schuldner_id == a_id]
-    b_to_a_rows = [r for r in pair_rows if r.schuldner_id == b_id]
 
     def summarize(rows_: list[Ausgabe], limit: int = 3) -> dict:
         shown = [{"betreff": r.betreff, "cash": float(r.cash), "tilgung": r.status == "getilgt"} for r in rows_[:limit]]
         return {"items": shown, "more": max(0, len(rows_) - limit), "total": round(sum(float(r.cash) for r in rows_), 2)}
 
-    return {
-        "a_id": a_id, "a": usernames.get(a_id, "?"),
-        "b_id": b_id, "b": usernames.get(b_id, "?"),
-        "a_to_b": summarize(a_to_b_rows),
-        "b_to_a": summarize(b_to_a_rows),
-    }
+    examples = []
+    for pair, pair_rows in sorted(by_pair.items(), key=lambda kv: -len(kv[1])):
+        a_id, b_id = tuple(pair)
+        a_to_b_rows = [r for r in pair_rows if r.schuldner_id == a_id]
+        b_to_a_rows = [r for r in pair_rows if r.schuldner_id == b_id]
+        examples.append({
+            "a_id": a_id, "a": usernames.get(a_id, "?"),
+            "b_id": b_id, "b": usernames.get(b_id, "?"),
+            "a_to_b": summarize(a_to_b_rows),
+            "b_to_a": summarize(b_to_a_rows),
+        })
+    return examples
 
 
 def _compute_pairwise_debts(db: Session) -> list[tuple[int, int, float]]:
@@ -1470,10 +1479,10 @@ def get_open_settlements_explain(request: Request, db: Session = Depends(get_db)
         for from_id, to_id, amount in settlements
     ]
 
-    example = _pairwise_example(db)
+    examples = _pairwise_examples(db)
     ledgers = _settlement_ledgers(db)
 
-    return {"pairs": pairs, "netted_pairs": netted_pairs, "merges": merges, "steps": steps, "example": example, "ledgers": ledgers}
+    return {"pairs": pairs, "netted_pairs": netted_pairs, "merges": merges, "steps": steps, "examples": examples, "ledgers": ledgers}
 
 
 @app.post("/api/expenses/settle")
