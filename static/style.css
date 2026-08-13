@@ -48,6 +48,12 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .plan-open-toggle .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s}
 .plan-open-panel.collapsed .stack{display:none}
 .plan-open-panel.collapsed .chevron{transform:rotate(-90deg)}
+.plan-past-panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:4px 4px 10px;margin-bottom:12px}
+.plan-past-panel .plan-past-content{padding:0 6px}
+.plan-past-panel .date-block:first-child h3{margin-top:6px}
+.plan-past-panel.collapsed .plan-past-content{display:none}
+.plan-past-panel.collapsed{padding-bottom:4px}
+.plan-past-panel.collapsed .chevron{transform:rotate(-90deg)}
 .primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--yellow);color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
 .danger{color:var(--red)}.secondary.danger{border-color:var(--red)}.success{color:var(--green)}
 .list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}

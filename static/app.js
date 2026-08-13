@@ -37,14 +37,8 @@ function goToScreen(name) {
   });
   // Nicht mehr window.scrollTo: body scrollt bewusst nicht mehr (siehe CSS),
   // .app-shell ist jetzt der eigentliche Scroll-Container.
-  if (name === "plan") {
-    // Camp-Plan startet auf dem heutigen Tag statt ganz oben. Ist die Liste
-    // noch nicht geladen, holt loadPlanList() den Scroll nach (siehe Flag).
-    if (typeof scrollPlanToToday === "function" && !scrollPlanToToday()) {
-      planScrollToTodayPending = true;
-    }
-    return;
-  }
+  // Camp-Plan startet ganz oben (nicht mehr beim heutigen Tag), damit das
+  // eingeklappte "Vergangene Termine"-Panel direkt sichtbar ist.
   const shell = document.querySelector(".app-shell");
   if (shell) shell.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
 }
@@ -238,7 +232,7 @@ const quickShoppingEl = document.getElementById("quickShopping");
 
 function renderShoppingItem(item) {
   const card = document.createElement("div");
-  card.className = "list-card" + (item.done ? " done" : "");
+  card.className = "list-card clickable" + (item.done ? " done" : "");
   card.dataset.id = item.id;
 
   const sourceTag = item.woher
@@ -257,16 +251,21 @@ function renderShoppingItem(item) {
     </div>
     <div class="list-card-actions">
       <button type="button" class="urgent-btn${item.deadline ? " active" : ""}" aria-label="Wird heute gebraucht">❗</button>
-      <button type="button" class="edit-btn" aria-label="Bearbeiten">✏️</button>
       <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
     </div>
   `;
+
+  // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button überflüssig)
+  // — alle anderen interaktiven Elemente in der Karte stoppen die Propagation,
+  // damit ein Klick darauf nicht zusätzlich den Bearbeiten-Dialog öffnet.
+  card.addEventListener("click", () => openEditShoppingModal(item));
 
   // Der Klick aktualisiert die eigene Ansicht sofort über die HTTP-Antwort.
   // Andere Geräte sehen die Änderung über das Sekunden-Polling (pollShoppingList).
   const checkbox = card.querySelector(".list-card-checkbox");
   checkbox.addEventListener("click", async (e) => {
     e.preventDefault();
+    e.stopPropagation();
     const res = await fetch(`/api/shopping/${item.id}/toggle`, { method: "PATCH" });
     if (res.ok) {
       const data = await res.json();
@@ -276,7 +275,8 @@ function renderShoppingItem(item) {
     }
   });
 
-  card.querySelector(".urgent-btn").addEventListener("click", async () => {
+  card.querySelector(".urgent-btn").addEventListener("click", async (e) => {
+    e.stopPropagation();
     const res = await fetch(`/api/shopping/${item.id}/deadline-today`, { method: "PATCH" });
     if (res.ok) {
       const data = await res.json();
@@ -285,9 +285,8 @@ function renderShoppingItem(item) {
     }
   });
 
-  card.querySelector(".edit-btn").addEventListener("click", () => openEditShoppingModal(item));
-
-  card.querySelector(".delete-btn").addEventListener("click", () => {
+  card.querySelector(".delete-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
     openModal({
       eyebrow: "Einkauf",
       title: `„${item.name}" löschen?`,
@@ -1534,6 +1533,13 @@ function renderPlanEvent(event, isAdmin) {
 
 let lastPlanSignature = null;
 
+// Vergangene Tage sind standardmäßig eingeklappt (siehe loadPlanList) — das
+// planListEl wird bei jedem Poll neu aufgebaut, daher hier gemerkt, ob
+// zuletzt aufgeklappt wurde, damit der Zustand über Re-Renders hinweg
+// erhalten bleibt (ein neuer Render erfolgt eh nur bei echten Datenänderungen,
+// siehe lastPlanSignature-Check).
+let planPastExpanded = false;
+
 /* ---------- Camp-Plan: "noch offene" (datumslose) Events schnell auf heute legen ---------- */
 const planOpenPanelEl = document.getElementById("planOpenPanel");
 const planOpenListEl = document.getElementById("planOpenList");
@@ -1571,31 +1577,6 @@ function renderOpenPlanEvent(event) {
   return card;
 }
 
-// Nach einem Screen-Wechsel zu "Plan" soll die Liste auf den heutigen Tag
-// scrollen (siehe goToScreen). Die Daten sind zu dem Zeitpunkt aber evtl. noch
-// nicht geladen — dieses Flag holt den Scroll dann nach, sobald loadPlanList
-// fertig gerendert hat, statt bei jedem späteren Poll erneut zu scrollen.
-let planScrollToTodayPending = false;
-
-function scrollPlanToToday() {
-  const shell = document.querySelector(".app-shell");
-  const todayBlock = planListEl && planListEl.querySelector('[data-today-block="true"]');
-  if (!shell || !todayBlock) return false;
-
-  // scrollIntoView() weiß nichts vom sticky .plan-sticky-top (Kopfzeile +
-  // "noch offen"-Panel), das oben drüberliegt — dessen Höhe schwankt mit der
-  // Anzahl offener Einträge (und ob das Panel gerade ein-/ausgeklappt ist).
-  // Ohne Korrektur landet der heutige Block teils dahinter versteckt. Daher
-  // wird die aktuelle Höhe live gemessen und als Offset abgezogen.
-  const stickyTop = document.querySelector(".plan-sticky-top");
-  const stickyHeight = stickyTop ? stickyTop.getBoundingClientRect().height : 0;
-  const currentOffset = todayBlock.getBoundingClientRect().top - shell.getBoundingClientRect().top;
-  const targetScrollTop = shell.scrollTop + currentOffset - stickyHeight;
-
-  shell.scrollTo({ top: Math.max(0, targetScrollTop), behavior: "instant" in window ? "instant" : "auto" });
-  return true;
-}
-
 async function loadPlanList(force) {
   if (!planListEl) return;
   try {
@@ -1631,11 +1612,11 @@ async function loadPlanList(force) {
       planListEl.innerHTML = `<div class="empty-state"><p>Hier entsteht der Camp-Plan.</p></div>`;
     } else {
       const today = todayIsoDate();
-      groupPlanEvents(datedEvents).forEach((group) => {
+
+      function buildDateBlock(group) {
         const block = document.createElement("div");
         block.className = "date-block";
         const isToday = group.datum === today;
-        if (isToday) block.dataset.todayBlock = "true";
         // Vergangene Tage optisch zurücknehmen, damit auf einen Blick klar ist,
         // was schon passiert ist — "Heute" bekommt zusätzlich ein eigenes Badge
         // als klaren Anker zwischen Vergangenheit und Zukunft.
@@ -1645,12 +1626,42 @@ async function loadPlanList(force) {
         stack.className = "stack";
         group.items.forEach((event) => stack.appendChild(renderPlanEvent(event, isAdmin)));
         block.appendChild(stack);
-        planListEl.appendChild(block);
-      });
-    }
+        return block;
+      }
 
-    if (planScrollToTodayPending && scrollPlanToToday()) {
-      planScrollToTodayPending = false;
+      const groups = groupPlanEvents(datedEvents);
+      const pastGroups = groups.filter((g) => g.datum < today);
+      const upcomingGroups = groups.filter((g) => g.datum >= today);
+
+      // Vergangene Termine sind schon passiert und interessieren im Alltag
+      // kaum noch — sie werden daher gesammelt hinter einem eingeklappten
+      // Panel versteckt statt die Liste nach oben hin vollzustopfen, und
+      // lassen sich bei Bedarf per Klick aufklappen.
+      if (pastGroups.length > 0) {
+        const panel = document.createElement("div");
+        panel.className = "plan-past-panel";
+        if (!planPastExpanded) panel.classList.add("collapsed");
+
+        const count = pastGroups.reduce((n, g) => n + g.items.length, 0);
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "plan-open-toggle";
+        toggle.innerHTML = `<span>Vergangene Termine (${count})</span><span class="chevron">▾</span>`;
+        toggle.addEventListener("click", () => {
+          planPastExpanded = !planPastExpanded;
+          panel.classList.toggle("collapsed", !planPastExpanded);
+        });
+        panel.appendChild(toggle);
+
+        const content = document.createElement("div");
+        content.className = "plan-past-content";
+        pastGroups.forEach((group) => content.appendChild(buildDateBlock(group)));
+        panel.appendChild(content);
+
+        planListEl.appendChild(panel);
+      }
+
+      upcomingGroups.forEach((group) => planListEl.appendChild(buildDateBlock(group)));
     }
   } catch (err) {
     planListEl.innerHTML = `<div class="empty-state"><p>Plan konnte nicht geladen werden.</p></div>`;
