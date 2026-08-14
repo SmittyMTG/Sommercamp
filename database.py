@@ -91,10 +91,9 @@ class TaskCategory(Base):
 
 
 # Aufgaben: geteilte Todo-Liste — jeder darf anlegen, bearbeiten, abhaken und
-# löschen. Höchstens eine Person kann zugewiesen werden
-# (daher genügt eine einzelne Zuordnungstabelle mit maximal einer Zeile pro
-# Aufgabe statt einer direkten Spalte — historisch für mehrere Personen gedacht,
-# heute an main.py auf max. 1 begrenzt). Keine Zuweisung heißt: gilt für alle.
+# löschen. Mehrere Personen können gemeinsam zugewiesen werden (daher die
+# separate Zuordnungstabelle statt einer direkten Spalte). Keine Zuweisung
+# heißt: gilt für alle.
 class Task(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True, index=True)
@@ -105,10 +104,6 @@ class Task(Base):
     category_id = Column(Integer, ForeignKey("task_categories.id"), nullable=True)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    # Wiederkehrend: beim Abschließen wird automatisch eine neue, offene Kopie
-    # angelegt (siehe main.py toggle_task) — die erledigte Zeile bleibt als
-    # eigenständiger, abgeschlossener Vorgang in der Statistik stehen.
-    recurring = Column(Boolean, nullable=False, default=False)
     # Geschätzter Aufwand in Minuten (ganzzahlig, optional) — fließt gewichtet
     # in die Aufgaben-Statistik ein.
     aufwand_min = Column(Integer, nullable=True)
@@ -218,8 +213,21 @@ _ensure_column("ausgaben", "fixed", "BOOLEAN", "DEFAULT 1")
 _ensure_column("shopping_items", "woher_id", "INTEGER")
 _ensure_column("shopping_items", "deadline", "DATE")
 _ensure_column("tasks", "category_id", "INTEGER")
-_ensure_column("tasks", "recurring", "BOOLEAN", "DEFAULT 0")
 _ensure_column("tasks", "aufwand_min", "INTEGER")
+
+
+# Gegenstück zu _ensure_column: entfernt eine Spalte, falls sie noch von einem
+# älteren Stand existiert (z. B. "recurring" nach Entfernen des Wiederkehrend-
+# Features) — DROP COLUMN wird von SQLite seit 3.35 nativ unterstützt.
+def _ensure_column_dropped(table: str, column: str):
+    with engine.connect() as conn:
+        existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+        if column in existing:
+            conn.exec_driver_sql(f"ALTER TABLE {table} DROP COLUMN {column}")
+            conn.commit()
+
+
+_ensure_column_dropped("tasks", "recurring")
 
 
 # Analoge Selbst-Migration für Indizes: index=True auf einer Column wirkt nur bei

@@ -104,7 +104,6 @@ class TaskCreate(BaseModel):
     deadline: str | None = None
     assignee_ids: list[int] = []
     category_id: int | None = None
-    recurring: bool = False
     aufwand_min: int | None = None
 
 
@@ -356,7 +355,7 @@ def delete_shopping_item(item_id: int, request: Request, db: Session = Depends(g
     return {"ok": True}
 
 
-# --- Aufgaben (geteilt, höchstens eine Person zuweisbar, mit Deadline) ---
+# --- Aufgaben (geteilt, mehrere Personen zuweisbar, mit Deadline) ---
 
 def _validate_task_payload(payload: TaskCreate, db: Session):
     """Gibt entweder (titel, beschreibung, deadline, assignee_ids, category_id,
@@ -376,11 +375,9 @@ def _validate_task_payload(payload: TaskCreate, db: Session):
         except ValueError:
             return JSONResponse(status_code=400, content={"error": "Ungültige Deadline"})
 
-    # Höchstens eine Person: entweder klar verantwortlich, oder niemand (dann
+    # Mehrere Personen können gemeinsam verantwortlich sein, oder niemand (dann
     # gilt die Aufgabe für alle, siehe Frontend-Filter/Dashboard).
     assignee_ids = sorted(set(payload.assignee_ids))
-    if len(assignee_ids) > 1:
-        return JSONResponse(status_code=400, content={"error": "Nur eine Person kann zugewiesen werden"})
     if assignee_ids:
         valid_ids = {u.id for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
         if not set(assignee_ids).issubset(valid_ids):
@@ -413,7 +410,6 @@ def _serialize_task(
         "done": task.done,
         "deadline": task.deadline.isoformat() if task.deadline else None,
         "created_by": task.created_by,
-        "recurring": task.recurring,
         "aufwand_min": task.aufwand_min,
         "assignees": [
             {"id": uid, "username": usernames.get(uid, "?")} for uid in assignee_ids
@@ -506,7 +502,6 @@ def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get
         deadline=deadline,
         created_by=username,
         category_id=category_id,
-        recurring=payload.recurring,
         aufwand_min=aufwand_min,
     )
     db.add(task)
@@ -522,11 +517,12 @@ def create_task(request: Request, payload: TaskCreate, db: Session = Depends(get
         c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()
     }
 
-    if assignee_ids:
-        affected = usernames.get(assignee_ids[0])
+    for uid in assignee_ids:
+        affected = usernames.get(uid)
         if affected:
             log_action(db, username, affected, "task_created", f"{username} hat dir die Aufgabe „{titel}“ zugewiesen")
-            db.commit()
+    if assignee_ids:
+        db.commit()
 
     return _serialize_task(task, assignee_ids, usernames, categories, [])
 
@@ -549,7 +545,6 @@ def update_task(task_id: int, request: Request, payload: TaskCreate, db: Session
     task.beschreibung = beschreibung
     task.deadline = deadline
     task.category_id = category_id
-    task.recurring = payload.recurring
     task.aufwand_min = aufwand_min
     db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).delete(synchronize_session=False)
     for uid in assignee_ids:
@@ -575,43 +570,21 @@ def toggle_task(task_id: int, request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=404, content={"error": "not found"})
 
     task.done = not task.done
-    cloned = False
 
     if task.done:
-        assignee = db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).first()
-        if assignee:
-            affected_user = db.query(User).filter(User.id == assignee.user_id).first()
-            if affected_user:
-                log_action(
-                    db,
-                    username,
-                    affected_user.username,
-                    "task_done",
-                    f"{username} hat deine Aufgabe „{task.titel}“ abgeschlossen",
-                )
-
-        # Wiederkehrend: die erledigte Zeile bleibt als abgeschlossener Vorgang
-        # stehen (zählt in der Statistik als "erledigt"), eine frische Kopie
-        # entsteht offen — zählt dort dann als eigene, neue Aufgabe.
-        if task.recurring:
-            clone = Task(
-                titel=task.titel,
-                beschreibung=task.beschreibung,
-                deadline=task.deadline,
-                created_by=task.created_by,
-                category_id=task.category_id,
-                recurring=True,
-                aufwand_min=task.aufwand_min,
+        assignees = db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).all()
+        affected_users = db.query(User).filter(User.id.in_(a.user_id for a in assignees)).all()
+        for affected_user in affected_users:
+            log_action(
+                db,
+                username,
+                affected_user.username,
+                "task_done",
+                f"{username} hat deine Aufgabe „{task.titel}“ abgeschlossen",
             )
-            db.add(clone)
-            db.commit()
-            db.refresh(clone)
-            for a in db.query(TaskAssignee).filter(TaskAssignee.task_id == task.id).all():
-                db.add(TaskAssignee(task_id=clone.id, user_id=a.user_id))
-            cloned = True
 
     db.commit()
-    return {"id": task.id, "done": task.done, "cloned": cloned}
+    return {"id": task.id, "done": task.done}
 
 
 @app.patch("/api/tasks/{task_id}/deadline-today")

@@ -605,13 +605,13 @@ function filterTasks(items, mode, meId) {
   return items;
 }
 
-// Sortierschlüssel für "Verantwortlich": eigene Aufgaben zuerst, dann die
-// übrigen alphabetisch nach zuständiger Person, nicht zugewiesene ("Für alle") ganz am Ende.
+// Sortierschlüssel für "Verantwortlich": eigene Aufgaben zuerst (auch wenn man
+// nur einer von mehreren Zuständigen ist), dann die übrigen alphabetisch nach
+// den zuständigen Personen, nicht zugewiesene ("Für alle") ganz am Ende.
 function taskResponsibleSortKey(task, meId) {
-  const assignee = task.assignees[0];
-  if (!assignee) return [2, ""];
-  if (assignee.id === meId) return [0, ""];
-  return [1, assignee.username.toLowerCase()];
+  if (task.assignees.length === 0) return [2, ""];
+  if (task.assignees.some((a) => a.id === meId)) return [0, ""];
+  return [1, task.assignees.map((a) => a.username.toLowerCase()).sort().join(", ")];
 }
 
 // Offene Aufgaben stehen immer vor erledigten; die gewählte Sortierung gilt
@@ -662,13 +662,13 @@ function renderTaskItem(task) {
   }
   if (task.aufwand_min != null) metaParts.push(`⏱ ${task.aufwand_min} Min`);
   if (task.assignees.length) {
-    metaParts.push(`${task.assignees.map((a) => nameTag(a.username)).join(", ")} ist verantwortlich`);
+    const verb = task.assignees.length > 1 ? "sind verantwortlich" : "ist verantwortlich";
+    metaParts.push(`${task.assignees.map((a) => nameTag(a.username)).join(", ")} ${verb}`);
   }
 
   const categoryTag = task.category
     ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
     : "";
-  const recurringTag = task.recurring ? `<span class="recurring-tag">🔁 wiederkehrend</span>` : "";
 
   const descHtml = task.beschreibung
     ? `<p class="list-card-meta">${escapeHtml(task.beschreibung)}</p>`
@@ -701,7 +701,7 @@ function renderTaskItem(task) {
       <button type="button" class="list-card-checkbox${task.done ? " checked" : ""}" aria-label="Erledigt"></button>
       <div class="list-card-text">
         <p class="list-card-title">${escapeHtml(task.titel)}</p>
-        ${categoryTag}${recurringTag}
+        ${categoryTag}
         ${metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : ""}
         ${descHtml}
         ${subitemsHtml}
@@ -735,12 +735,6 @@ function renderTaskItem(task) {
     const res = await fetch(`/api/tasks/${task.id}/toggle`, { method: "PATCH" });
     if (res.ok) {
       const data = await res.json();
-      if (data.cloned) {
-        // Wiederkehrend: eine neue offene Kopie ist entstanden — komplett neu laden,
-        // damit sie in der Liste auftaucht, statt nur diese eine Karte zu aktualisieren.
-        loadTasks(true);
-        return;
-      }
       checkbox.classList.toggle("checked", data.done);
       card.classList.toggle("done", data.done);
       task.done = data.done;
@@ -1126,15 +1120,13 @@ function taskCategoryOptionsHtml(categories, selectedId) {
 }
 
 function taskModalBodyHtml(users, categories, prefill = {}) {
-  // Höchstens eine Person kann verantwortlich sein — ein Dropdown macht das
-  // (anders als eine Checkbox-Gruppe) von sich aus unmissverständlich: entweder
-  // "Niemand" (Aufgabe gilt für alle) oder genau eine konkret verantwortliche Person.
-  const currentAssigneeId =
-    prefill.assignees && prefill.assignees.length ? prefill.assignees[0].id : null;
+  // Mehrere Personen können gemeinsam verantwortlich sein — keine Auswahl
+  // bedeutet: die Aufgabe gilt für alle.
+  const currentAssigneeIds = new Set((prefill.assignees || []).map((a) => a.id));
   const assigneeOptions = users
     .map(
       (u) =>
-        `<option value="${u.id}"${u.id === currentAssigneeId ? " selected" : ""}>${escapeHtml(u.username)}</option>`
+        `<label class="check-card"><input type="checkbox" class="assignee-checkbox" value="${u.id}"${currentAssigneeIds.has(u.id) ? " checked" : ""}>${escapeHtml(u.username)}</label>`
     )
     .join("");
 
@@ -1151,12 +1143,10 @@ function taskModalBodyHtml(users, categories, prefill = {}) {
       <label>Beschreibung (optional)
         <textarea id="taskBeschreibungInput" placeholder="Details …">${escapeHtml(prefill.beschreibung || "")}</textarea>
       </label>
-      <label>Verantwortlich
-        <select id="taskAssigneeSelect">
-          <option value="">Alle</option>
-          ${assigneeOptions}
-        </select>
-      </label>
+      <div class="checkbox-group">
+        <div class="eyebrow">Verantwortlich (leer = gilt für alle)</div>
+        <div id="taskAssigneeOptions" class="checkbox-grid">${assigneeOptions}</div>
+      </div>
       <label>Kategorie (optional)
         <select id="taskCategorySelect">
           <option value="">— keine Angabe —</option>
@@ -1179,10 +1169,6 @@ function taskModalBodyHtml(users, categories, prefill = {}) {
       </label>
       <label>Aufwand in Minuten (optional)
         <input type="number" id="taskAufwandInput" min="0" step="1" inputmode="numeric" value="${prefill.aufwand_min != null ? prefill.aufwand_min : ""}" placeholder="z. B. 30">
-      </label>
-      <label class="check-card">
-        <input type="checkbox" id="taskRecurringInput"${prefill.recurring ? " checked" : ""}>
-        🔁 Wiederkehrend — nach Abschluss erscheint automatisch eine neue, offene Kopie
       </label>
       ${
         prefill.id
@@ -1352,12 +1338,12 @@ async function readTaskForm() {
   const titel = document.getElementById("taskTitelInput").value.trim();
   if (!titel) return null;
   const beschreibung = document.getElementById("taskBeschreibungInput").value.trim();
-  const assigneeValue = document.getElementById("taskAssigneeSelect").value;
-  const assignee_ids = assigneeValue ? [parseInt(assigneeValue, 10)] : [];
+  const assignee_ids = Array.from(
+    document.querySelectorAll("#taskAssigneeOptions .assignee-checkbox:checked")
+  ).map((el) => parseInt(el.value, 10));
   const deadline = document.getElementById("taskDeadlineInput").value || null;
   const aufwandRaw = document.getElementById("taskAufwandInput").value;
   const aufwand_min = aufwandRaw !== "" ? parseInt(aufwandRaw, 10) : null;
-  const recurring = document.getElementById("taskRecurringInput").checked;
 
   const categoryResult = await resolveTaskCategoryId();
   if (!categoryResult.ok) return null;
@@ -1369,7 +1355,6 @@ async function readTaskForm() {
     category_id: categoryResult.category_id,
     deadline,
     aufwand_min,
-    recurring,
   };
 }
 
