@@ -70,6 +70,14 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    potenziell viele Einträge, die volle .list-card-Höhe nimmt zu viel Platz weg. */
 .compact-list{gap:6px}
 .compact-list .list-card{padding:9px 10px;min-height:auto;border-radius:13px}
+/* Seitennummerierung (Ausgaben & Log, siehe renderPager in app.js) — leer
+   (:empty), solange alles auf eine Seite passt, dann auch kein Rand-Abstand. */
+.pager{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;margin-top:14px}
+.pager:empty{display:none;margin:0}
+.pager-nav,.pager-page{border:1px solid var(--line);background:var(--surface2);color:var(--text);border-radius:999px;min-width:32px;height:32px;padding:0 6px;font-weight:800;font-size:13px;cursor:pointer}
+.pager-nav[disabled]{opacity:.35;cursor:default}
+.pager-page.active{background:var(--yellow);border-color:var(--yellow);color:#111}
+.pager-ellipsis{color:var(--muted);padding:0 2px;font-weight:800}
 .compact-list .list-card-content{gap:9px}
 .compact-list .list-card-checkbox{width:20px;height:20px}
 .compact-list .list-card-title{font-size:14px}

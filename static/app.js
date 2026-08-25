@@ -2535,6 +2535,45 @@ function formatDate(isoDate) {
   return `${d}.${m}.`;
 }
 
+/* ---------- Kosten: einfache Seitennummerierung (Ausgaben & Log) ---------- */
+// Welche Seitenzahlen tatsächlich als Button gezeigt werden: immer erste,
+// letzte und die direkte Umgebung der aktuellen Seite — dazwischenliegende
+// Lücken werden im Rendering durch "…" ersetzt, statt jede einzelne Seite
+// aufzulisten (bei vielen Seiten sonst unübersichtlich).
+function pagerPageNumbers(current, total) {
+  const pages = new Set([1, total, current - 1, current, current + 1]);
+  return Array.from(pages)
+    .filter((p) => p >= 1 && p <= total)
+    .sort((a, b) => a - b);
+}
+
+// Rendert nur, wenn mehr als eine Seite existiert — sonst bleibt der
+// Container leer (keine Pager-Leiste bei kurzen Listen).
+function renderPager(container, { total, page, pageSize, onChange }) {
+  if (!container) return;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(Math.max(page, 1), totalPages);
+
+  if (totalPages <= 1) {
+    container.innerHTML = "";
+    return;
+  }
+
+  let html = `<button type="button" class="pager-nav" data-page="${current - 1}"${current === 1 ? " disabled" : ""} aria-label="Vorherige Seite">‹</button>`;
+  let prevPage = 0;
+  pagerPageNumbers(current, totalPages).forEach((p) => {
+    if (p - prevPage > 1) html += `<span class="pager-ellipsis">…</span>`;
+    html += `<button type="button" class="pager-page${p === current ? " active" : ""}" data-page="${p}">${p}</button>`;
+    prevPage = p;
+  });
+  html += `<button type="button" class="pager-nav" data-page="${current + 1}"${current === totalPages ? " disabled" : ""} aria-label="Nächste Seite">›</button>`;
+
+  container.innerHTML = html;
+  container.querySelectorAll("button[data-page]:not([disabled])").forEach((btn) => {
+    btn.addEventListener("click", () => onChange(parseInt(btn.dataset.page, 10)));
+  });
+}
+
 // Gruppiert die granularen DB-Zeilen (ein Eintrag pro Schuldner) rein für die
 // Darstellung nach batch_id zu einer Kachel pro Ausgabe-Vorgang. Die DB selbst
 // bleibt granular, hier wird nur zusammengefasst, was zusammengehört. batch_id
@@ -2635,6 +2674,9 @@ let lastExpensesMeUsername = null;
 let expenseFilterMode = null; // "von" | "fuer" | null (= alle)
 let expenseFilterUserId = null;
 let expenseFilterOptionsPopulated = false;
+const EXPENSE_PAGE_SIZE = 25;
+let expensePage = 1;
+const expensePagerEl = document.getElementById("expensePager");
 
 async function populateExpenseFilterOptions() {
   if (expenseFilterOptionsPopulated || !expenseFilterSelect) return;
@@ -2670,6 +2712,7 @@ if (expenseFilterSelect) {
       expenseFilterMode = mode;
       expenseFilterUserId = parseInt(id, 10);
     }
+    expensePage = 1;
     renderExpenseList();
     saveUiState({ costsExpenseFilter: val });
   });
@@ -2685,14 +2728,29 @@ function renderExpenseList() {
     return g.beneficiaryIds.has(expenseFilterUserId);
   });
 
+  // Nur die 25 aktuellsten Einträge (Liste ist bereits nach Datum absteigend
+  // sortiert) auf einmal anzeigen, Rest über die Seitennummerierung darunter.
+  const totalPages = Math.max(1, Math.ceil(groups.length / EXPENSE_PAGE_SIZE));
+  if (expensePage > totalPages) expensePage = totalPages;
+  const pageGroups = groups.slice((expensePage - 1) * EXPENSE_PAGE_SIZE, expensePage * EXPENSE_PAGE_SIZE);
+
   expenseListEl.innerHTML = "";
   if (groups.length === 0) {
     expenseListEl.innerHTML = `<div class="empty"><p>${
       lastExpenses.length === 0 ? "Noch keine Einträge." : "Keine Ausgaben für diese Auswahl."
     }</p></div>`;
   } else {
-    groups.forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, lastExpensesIsAdmin, lastExpensesMeUsername)));
+    pageGroups.forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, lastExpensesIsAdmin, lastExpensesMeUsername)));
   }
+  renderPager(expensePagerEl, {
+    total: groups.length,
+    page: expensePage,
+    pageSize: EXPENSE_PAGE_SIZE,
+    onChange: (p) => {
+      expensePage = p;
+      renderExpenseList();
+    },
+  });
 
   updateExpensesHeroCard();
 }
@@ -3983,8 +4041,11 @@ async function loadReceivedPayments() {
 /* ---------- Kosten: Log (wer hat Ausgaben erstellt/bearbeitet/gelöscht) ---------- */
 const expenseLogListEl = document.getElementById("expenseLogList");
 const expenseLogFilterSelect = document.getElementById("expenseLogFilterSelect");
+const expenseLogPagerEl = document.getElementById("expenseLogPager");
 let lastExpenseLog = [];
 let expenseLogFilterAction = "";
+const EXPENSE_LOG_PAGE_SIZE = 25;
+let expenseLogPage = 1;
 
 function formatExpenseLogTime(iso) {
   const d = new Date(iso);
@@ -4018,12 +4079,30 @@ function renderExpenseLog() {
     ? lastExpenseLog.filter((e) => e.action === expenseLogFilterAction)
     : lastExpenseLog;
 
+  // Nur die 25 aktuellsten Einträge auf einmal (Liste kommt bereits absteigend
+  // sortiert vom Server), Rest über die Seitennummerierung darunter.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / EXPENSE_LOG_PAGE_SIZE));
+  if (expenseLogPage > totalPages) expenseLogPage = totalPages;
+  const pageEntries = filtered.slice(
+    (expenseLogPage - 1) * EXPENSE_LOG_PAGE_SIZE,
+    expenseLogPage * EXPENSE_LOG_PAGE_SIZE
+  );
+
   expenseLogListEl.innerHTML = "";
   if (filtered.length === 0) {
     expenseLogListEl.innerHTML = `<div class="empty-state"><p>Noch keine Einträge.</p></div>`;
   } else {
-    filtered.forEach((e) => expenseLogListEl.appendChild(renderExpenseLogItem(e)));
+    pageEntries.forEach((e) => expenseLogListEl.appendChild(renderExpenseLogItem(e)));
   }
+  renderPager(expenseLogPagerEl, {
+    total: filtered.length,
+    page: expenseLogPage,
+    pageSize: EXPENSE_LOG_PAGE_SIZE,
+    onChange: (p) => {
+      expenseLogPage = p;
+      renderExpenseLog();
+    },
+  });
 }
 
 async function loadExpenseLog() {
@@ -4041,6 +4120,7 @@ async function loadExpenseLog() {
 if (expenseLogFilterSelect) {
   expenseLogFilterSelect.addEventListener("change", () => {
     expenseLogFilterAction = expenseLogFilterSelect.value;
+    expenseLogPage = 1;
     renderExpenseLog();
     saveUiState({ costsLogFilter: expenseLogFilterAction });
   });
