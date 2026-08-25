@@ -62,6 +62,15 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .primary.fab-button{position:fixed;right:16px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:21;box-shadow:0 10px 25px rgba(0,0,0,.4);background:var(--me-color,var(--yellow))}
 .danger{color:var(--red)}.secondary.danger{border-color:var(--red)}.success{color:var(--green)}
 .list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}
+/* Tasks-Liste: spürbar kompaktere Kacheln (weniger Innenabstand, kleinerer
+   Haken, engerer Zeilenabstand zwischen den Karten) — hier stapeln sich
+   potenziell viele Einträge, die volle .list-card-Höhe nimmt zu viel Platz weg. */
+.compact-list{gap:6px}
+.compact-list .list-card{padding:9px 10px;min-height:auto;border-radius:13px}
+.compact-list .list-card-content{gap:9px}
+.compact-list .list-card-checkbox{width:20px;height:20px}
+.compact-list .list-card-title{font-size:14px}
+.compact-list .list-card-meta{font-size:11px;margin-top:1px}
 .list-card.clickable{cursor:pointer}.list-card.clickable:active{background:var(--surface2)}
 .list-card-content{flex:1;display:flex;align-items:center;gap:13px;min-width:0}
 .list-card-checkbox{width:24px;height:24px;flex-shrink:0;border-radius:999px;border:2px solid var(--line);background:none;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}.list-card-checkbox:active{transform:scale(.9)}.list-card-checkbox.checked{background:var(--yellow);border-color:var(--yellow)}.list-card-checkbox.checked::after{content:'✓';color:#111;font-weight:900;font-size:13px}
@@ -71,6 +80,8 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .urgent-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s,opacity .15s;opacity:.45}.urgent-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}.urgent-btn.active{opacity:1;color:var(--red);background:rgba(255,98,98,.15)}
 .meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:7px}.pill{background:var(--surface2);border:1px solid var(--line);border-radius:999px;padding:5px 8px;font-size:11px;color:var(--muted)}
 .action-row{display:flex;flex-wrap:wrap;gap:7px}.tiny{padding:8px 10px;border-radius:11px;border:none;background:var(--surface2);color:var(--text);font-weight:850;min-height:32px;display:flex;align-items:center;justify-content:center}
+.task-toolbar{margin-bottom:10px}
+.task-toolbar-btn{border-radius:9px}
 /* font-weight ist bei .filter UND .filter.active bewusst identisch (900) —
    sonst ändert sich beim Umschalten (fett vs. normal) die Textbreite und der
    Button "springt" sichtbar in der Größe statt nur die Farbe zu wechseln. */
