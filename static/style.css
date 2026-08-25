@@ -72,12 +72,17 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .compact-list .list-card{padding:9px 10px;min-height:auto;border-radius:13px}
 /* Seitennummerierung (Ausgaben & Log, siehe renderPager in app.js) — leer
    (:empty), solange alles auf eine Seite passt, dann auch kein Rand-Abstand. */
-.pager{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;margin-top:14px}
+.pager{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;margin:14px 0}
 .pager:empty{display:none;margin:0}
 .pager-nav,.pager-page{border:1px solid var(--line);background:var(--surface2);color:var(--text);border-radius:999px;min-width:32px;height:32px;padding:0 6px;font-weight:800;font-size:13px;cursor:pointer}
 .pager-nav[disabled]{opacity:.35;cursor:default}
 .pager-page.active{background:var(--yellow);border-color:var(--yellow);color:#111}
 .pager-ellipsis{color:var(--muted);padding:0 2px;font-weight:800}
+/* Dünner Hinweis-Button über der Liste, nur sichtbar, wenn man nicht mehr auf
+   Seite 1 ist — bringt direkt zurück zu den neuesten Einträgen, ohne dafür
+   eine zweite komplette Seitennummerierung oben zu brauchen. */
+.jump-top-btn{display:block;width:100%;text-align:center;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin-bottom:10px;font-size:12px;font-weight:800;color:var(--muted);cursor:pointer}
+.jump-top-btn:active{background:var(--surface)}
 .compact-list .list-card-content{gap:9px}
 .compact-list .list-card-checkbox{width:20px;height:20px}
 .compact-list .list-card-title{font-size:14px}
@@ -86,6 +91,16 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .list-card-content{flex:1;display:flex;align-items:center;gap:13px;min-width:0}
 .list-card-checkbox{width:24px;height:24px;flex-shrink:0;border-radius:999px;border:2px solid var(--line);background:none;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}.list-card-checkbox:active{transform:scale(.9)}.list-card-checkbox.checked{background:var(--yellow);border-color:var(--yellow)}.list-card-checkbox.checked::after{content:'✓';color:#111;font-weight:900;font-size:13px}
 .list-card-text{flex:1;min-width:0}.list-card-title{font-weight:800;color:var(--text);margin:0;overflow-wrap:anywhere}.list-card-meta{font-size:12px;color:var(--muted);margin:3px 0 0;overflow-wrap:anywhere}
+/* Ausgaben-Liste: jede Kachel bleibt exakt gleich hoch, egal wie viele
+   Personen beteiligt sind oder wie lang Betreff/Namen sind — jede Zeile
+   bleibt einzeilig (kein Umbruch mehr), zu breiter Text läuft stattdessen als
+   Endlos-Ticker durch (siehe applyExpenseMarquee in app.js), statt die
+   Kachel höher zu machen als andere. */
+.list-card-text.no-wrap .list-card-title,.list-card-text.no-wrap .list-card-meta{white-space:nowrap;overflow:hidden;overflow-wrap:normal}
+.marquee-track{display:inline-flex;white-space:nowrap;animation:marquee-scroll linear infinite;will-change:transform}
+.marquee-seg{padding-right:48px}
+@keyframes marquee-scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@media (prefers-reduced-motion: reduce){.marquee-track{animation:none}}
 .list-card-actions{display:flex;gap:4px;align-items:center;flex-shrink:0}
 .delete-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s;opacity:.7}.delete-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}
 .urgent-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s,opacity .15s;opacity:.45}.urgent-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}.urgent-btn.active{opacity:1;color:var(--red);background:rgba(255,98,98,.15)}
@@ -125,8 +140,8 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    der Betrag nicht auf Höhe der Überschrift daneben ("Offen"/"Alle Ausgaben"). */
 .balance-chip{display:flex;flex-direction:row;align-items:center;gap:6px;text-align:right;flex-shrink:0}
 .balance-chip-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
-.balance-chip-value{font-size:16px;font-weight:900}
-.balance-chip-value.success{color:var(--green)}.balance-chip-value.danger{color:var(--red)}.balance-chip-value.muted{color:var(--muted);font-size:13px}
+.balance-chip-value{font-size:10px;font-weight:900}
+.balance-chip-value.success{color:var(--green)}.balance-chip-value.danger{color:var(--red)}.balance-chip-value.muted{color:var(--muted)}
 .source-tag{display:inline-block;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;color:#111;margin-top:5px}
 .category-tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--muted);margin-top:5px}
 .category-tag-dot{width:7px;height:7px;border-radius:50%;flex:none}

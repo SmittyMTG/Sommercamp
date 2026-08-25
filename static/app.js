@@ -2548,8 +2548,12 @@ function pagerPageNumbers(current, total) {
 }
 
 // Rendert nur, wenn mehr als eine Seite existiert — sonst bleibt der
-// Container leer (keine Pager-Leiste bei kurzen Listen).
-function renderPager(container, { total, page, pageSize, onChange }) {
+// Container leer (keine Pager-Leiste bei kurzen Listen). scrollAnchor steuert,
+// wohin nach einem Klick gescrollt wird: "end" für den Pager unter der Liste
+// (bleibt unten sichtbar, sonst müsste man nach jedem Seitenwechsel wieder
+// nach unten scrollen), "start" für die gleichwertige Kopie über der Liste
+// (bleibt logischerweise oben, wo man gerade interagiert hat).
+function renderPager(container, { total, page, pageSize, onChange, scrollAnchor }) {
   if (!container) return;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const current = Math.min(Math.max(page, 1), totalPages);
@@ -2570,7 +2574,10 @@ function renderPager(container, { total, page, pageSize, onChange }) {
 
   container.innerHTML = html;
   container.querySelectorAll("button[data-page]:not([disabled])").forEach((btn) => {
-    btn.addEventListener("click", () => onChange(parseInt(btn.dataset.page, 10)));
+    btn.addEventListener("click", () => {
+      onChange(parseInt(btn.dataset.page, 10));
+      container.scrollIntoView({ block: scrollAnchor || "end" });
+    });
   });
 }
 
@@ -2624,7 +2631,7 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
     .join(" · ");
 
   card.innerHTML = `
-    <div class="list-card-text">
+    <div class="list-card-text no-wrap">
       <p class="list-card-title">${escapeHtml(group.betreff)}</p>
       <p class="list-card-meta">${formatDate(group.datum)} · bezahlt von ${payer} · ${formatEuro(group.total)} gesamt</p>
       <p class="list-card-meta">${breakdown}</p>
@@ -2677,6 +2684,14 @@ let expenseFilterOptionsPopulated = false;
 const EXPENSE_PAGE_SIZE = 25;
 let expensePage = 1;
 const expensePagerEl = document.getElementById("expensePager");
+const expenseJumpTopBtn = document.getElementById("expenseJumpTopBtn");
+if (expenseJumpTopBtn) {
+  expenseJumpTopBtn.addEventListener("click", () => {
+    expensePage = 1;
+    renderExpenseList();
+    expenseListEl.scrollIntoView({ block: "start" });
+  });
+}
 
 async function populateExpenseFilterOptions() {
   if (expenseFilterOptionsPopulated || !expenseFilterSelect) return;
@@ -2718,6 +2733,20 @@ if (expenseFilterSelect) {
   });
 }
 
+// Zu breiter Text in einer .no-wrap-Zeile (siehe renderExpenseGroup) läuft als
+// Endlos-Ticker durch, statt die Kachel höher zu machen als andere — konstante
+// Geschwindigkeit unabhängig von der Textlänge, damit kurze und lange Zeilen
+// gleich "schnell" wirken. Muss NACH dem Einfügen ins DOM laufen, da
+// scrollWidth/clientWidth an einem noch nicht angehängten Element nicht
+// verlässlich sind.
+const MARQUEE_PX_PER_SECOND = 45;
+function applyExpenseMarquee(el) {
+  if (el.scrollWidth <= el.clientWidth + 1) return;
+  const original = el.innerHTML;
+  const duration = Math.max(4, el.scrollWidth / MARQUEE_PX_PER_SECOND);
+  el.innerHTML = `<span class="marquee-track" style="animation-duration:${duration}s"><span class="marquee-seg">${original}</span><span class="marquee-seg" aria-hidden="true">${original}</span></span>`;
+}
+
 // "Von X": X hat bezahlt (Zahler). "Für X": X war Beteiligter/Nutznießer
 // (auch bei sich selbst) — unabhängig davon, wer bezahlt hat.
 function renderExpenseList() {
@@ -2741,7 +2770,11 @@ function renderExpenseList() {
     }</p></div>`;
   } else {
     pageGroups.forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, lastExpensesIsAdmin, lastExpensesMeUsername)));
+    expenseListEl
+      .querySelectorAll(".list-card-text.no-wrap .list-card-title, .list-card-text.no-wrap .list-card-meta")
+      .forEach(applyExpenseMarquee);
   }
+  if (expenseJumpTopBtn) expenseJumpTopBtn.classList.toggle("hidden", expensePage <= 1);
   renderPager(expensePagerEl, {
     total: groups.length,
     page: expensePage,
@@ -2750,6 +2783,7 @@ function renderExpenseList() {
       expensePage = p;
       renderExpenseList();
     },
+    scrollAnchor: "end",
   });
 
   updateExpensesHeroCard();
@@ -4042,10 +4076,18 @@ async function loadReceivedPayments() {
 const expenseLogListEl = document.getElementById("expenseLogList");
 const expenseLogFilterSelect = document.getElementById("expenseLogFilterSelect");
 const expenseLogPagerEl = document.getElementById("expenseLogPager");
+const expenseLogJumpTopBtn = document.getElementById("expenseLogJumpTopBtn");
 let lastExpenseLog = [];
 let expenseLogFilterAction = "";
 const EXPENSE_LOG_PAGE_SIZE = 25;
 let expenseLogPage = 1;
+if (expenseLogJumpTopBtn) {
+  expenseLogJumpTopBtn.addEventListener("click", () => {
+    expenseLogPage = 1;
+    renderExpenseLog();
+    expenseLogListEl.scrollIntoView({ block: "start" });
+  });
+}
 
 function formatExpenseLogTime(iso) {
   const d = new Date(iso);
@@ -4094,6 +4136,7 @@ function renderExpenseLog() {
   } else {
     pageEntries.forEach((e) => expenseLogListEl.appendChild(renderExpenseLogItem(e)));
   }
+  if (expenseLogJumpTopBtn) expenseLogJumpTopBtn.classList.toggle("hidden", expenseLogPage <= 1);
   renderPager(expenseLogPagerEl, {
     total: filtered.length,
     page: expenseLogPage,
@@ -4102,6 +4145,7 @@ function renderExpenseLog() {
       expenseLogPage = p;
       renderExpenseLog();
     },
+    scrollAnchor: "end",
   });
 }
 
