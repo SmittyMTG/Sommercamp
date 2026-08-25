@@ -151,7 +151,15 @@ class PrivateTask(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     created_by = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    aufwand_min = Column(Integer, nullable=True)
+
+
+# Verantwortliche einer privaten Task — mehrere Personen möglich, gleiches
+# Muster wie TaskAssignee oben.
+class PrivateTaskAssignee(Base):
+    __tablename__ = "private_task_assignees"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("private_tasks.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
 
 class PrivateTaskSubitem(Base):

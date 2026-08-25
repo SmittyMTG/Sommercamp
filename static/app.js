@@ -141,6 +141,11 @@ function initNavigation() {
 }
 
 /* ---------- Helpers ---------- */
+// Ersetzt den Mülleimer-Emoji auf Löschen-Buttons: Emoji ignorieren CSS
+// color (fixe bunte Glyphe, kein Hover-Feedback), dieses Icon nutzt
+// currentColor und folgt damit .delete-btn's grau→rot-Übergang beim Hover.
+const TRASH_ICON_SVG = `<svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11"/><path d="M5.5 4V2.6c0-.4.3-.7.7-.7h3.6c.4 0 .7.3.7.7V4"/><path d="M3.4 4l.6 8.8c0 .6.5 1.1 1.1 1.1h5.8c.6 0 1.1-.5 1.1-1.1L12.6 4"/><path d="M6.4 7v4"/><path d="M9.6 7v4"/></svg>`;
+
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
@@ -465,7 +470,7 @@ function renderTaskItem(task) {
     </div>
     <div class="list-card-actions">
       <button type="button" class="urgent-btn${isUrgentToday ? " active" : ""}" aria-label="Deadline auf heute setzen">❗</button>
-      <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
+      <button type="button" class="delete-btn" aria-label="Löschen">${TRASH_ICON_SVG}</button>
     </div>
   `;
 
@@ -695,7 +700,7 @@ function renderTaskSubitemsEditor(taskId, subitems) {
                 <input type="checkbox" class="subitem-toggle" data-sub-id="${s.id}"${s.done ? " checked" : ""}>
                 <span>${escapeHtml(s.titel)}</span>
               </label>
-              <button type="button" class="icon-button subitem-delete" data-sub-id="${s.id}" aria-label="Löschen">🗑️</button>
+              <button type="button" class="icon-button subitem-delete" data-sub-id="${s.id}" aria-label="Löschen">${TRASH_ICON_SVG}</button>
             </div>
           `
         )
@@ -991,7 +996,10 @@ function renderPrivateTaskItem(task) {
     const label = `📅 ${formatDeadline(task.deadline)}`;
     metaParts.push(overdue ? `<span class="danger">⚠️ ${label}</span>` : label);
   }
-  if (task.aufwand_min != null) metaParts.push(`⏱ ${task.aufwand_min} Min`);
+  if (task.assignees && task.assignees.length) {
+    const verb = task.assignees.length > 1 ? "sind verantwortlich" : "ist verantwortlich";
+    metaParts.push(`${task.assignees.map((a) => nameTag(a.username)).join(", ")} ${verb}`);
+  }
 
   const categoryTag = task.category
     ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
@@ -1022,8 +1030,6 @@ function renderPrivateTaskItem(task) {
     `
     : "";
 
-  const isUrgentToday = isDeadlineToday(task.deadline);
-
   card.innerHTML = `
     <div class="list-card-content">
       <button type="button" class="list-card-checkbox${task.done ? " checked" : ""}" aria-label="Erledigt"></button>
@@ -1036,22 +1042,11 @@ function renderPrivateTaskItem(task) {
       </div>
     </div>
     <div class="list-card-actions">
-      <button type="button" class="urgent-btn${isUrgentToday ? " active" : ""}" aria-label="Deadline auf heute setzen">❗</button>
-      <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
+      <button type="button" class="delete-btn" aria-label="Löschen">${TRASH_ICON_SVG}</button>
     </div>
   `;
 
   card.addEventListener("click", () => openEditPrivateTaskModal(task));
-
-  card.querySelector(".urgent-btn").addEventListener("click", async (e) => {
-    e.stopPropagation();
-    const res = await fetch(`/api/private-tasks/${task.id}/deadline-today`, { method: "PATCH" });
-    if (res.ok) {
-      const data = await res.json();
-      task.deadline = data.deadline;
-      loadPrivateTasks(true);
-    }
-  });
 
   const checkbox = card.querySelector(".list-card-checkbox");
   checkbox.addEventListener("click", async (e) => {
@@ -1251,13 +1246,30 @@ function privateTaskProjectOptionsHtml(projects, selectedId) {
     .join("");
 }
 
-function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
+function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, users = []) {
   const currentCategoryId = prefill.category ? prefill.category.id : null;
   const currentProjectId = prefill.project ? prefill.project.id : "";
   const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 10) : "";
 
+  // Gleiche Chip-Optik wie "Für wen?" bei der Ausgaben-Erfassung — hier aber
+  // standardmäßig alle abgewählt (blass), nicht alle ausgewählt: eine Task
+  // hat i. d. R. niemanden oder gezielt eine/wenige Personen verantwortlich.
+  const currentAssigneeIds = new Set((prefill.assignees || []).map((a) => a.id));
+  const assigneeOptions = users
+    .map((u) => {
+      const checked = currentAssigneeIds.has(u.id);
+      const color = USER_COLORS[u.username] || "#ffd400";
+      const pale = hexToRgba(color, 0.16);
+      return `<label class="beneficiary-chip${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}><span>${escapeHtml(u.username)}</span></label>`;
+    })
+    .join("");
+
   return `
     <div class="form-stack">
+      <div class="checkbox-group">
+        <div class="eyebrow">Verantwortlich</div>
+        <div id="privTaskAssignees" class="chip-row">${assigneeOptions}</div>
+      </div>
       <label>Titel
         <input type="text" id="privTaskTitelInput" maxlength="80" value="${escapeHtml(prefill.titel || "")}" required>
       </label>
@@ -1301,12 +1313,13 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
         <button type="button" id="createPrivTaskCategoryBtn" class="secondary compact">Kategorie anlegen</button>
         <p class="error-text hidden new-priv-task-category-error"></p>
       </div>
-      <label>Deadline (optional)
-        <input type="date" id="privTaskDeadlineInput" value="${deadlineValue}">
-      </label>
-      <label>Aufwand in Minuten (optional)
-        <input type="number" id="privTaskAufwandInput" min="0" step="1" inputmode="numeric" value="${prefill.aufwand_min != null ? prefill.aufwand_min : ""}">
-      </label>
+      <div class="deadline-row">
+        <label>Deadline (optional)
+          <input type="date" id="privTaskDeadlineInput" value="${deadlineValue}">
+        </label>
+        <button type="button" id="privTaskDeadlineTodayBtn" class="secondary compact">Heute!</button>
+        <button type="button" id="privTaskDeadlineTomorrowBtn" class="secondary compact">Morgen!</button>
+      </div>
       ${
         prefill.id
           ? `
@@ -1323,6 +1336,33 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
       }
     </div>
   `;
+}
+
+// Fallback für Browser ohne :has() — siehe syncBeneficiaryChipClasses oben,
+// gleiches Prinzip nur auf den Verantwortlich-Chips der Tasks-Seite.
+function wirePrivateTaskAssigneeChips() {
+  const container = document.getElementById("privTaskAssignees");
+  if (!container) return;
+  container.querySelectorAll(".beneficiary-chip").forEach((chip) => {
+    const cb = chip.querySelector(".beneficiary-checkbox");
+    if (!cb) return;
+    cb.addEventListener("change", () => chip.classList.toggle("checked", cb.checked));
+  });
+}
+
+// "Heute!"/"Morgen!" füllen nur das Datumsfeld — gespeichert wird erst beim
+// regulären Modal-Submit, kein eigener API-Call nötig.
+function wirePrivateTaskDeadlineShortcuts() {
+  const input = document.getElementById("privTaskDeadlineInput");
+  const todayBtn = document.getElementById("privTaskDeadlineTodayBtn");
+  const tomorrowBtn = document.getElementById("privTaskDeadlineTomorrowBtn");
+  if (!input || !todayBtn || !tomorrowBtn) return;
+  todayBtn.addEventListener("click", () => {
+    input.value = isoDateLocal(new Date());
+  });
+  tomorrowBtn.addEventListener("click", () => {
+    input.value = isoDateLocal(addDays(new Date(), 1));
+  });
 }
 
 function wirePrivateTaskCategoryPicker() {
@@ -1489,8 +1529,9 @@ async function readPrivateTaskForm() {
   if (!titel) return null;
   const beschreibung = document.getElementById("privTaskBeschreibungInput").value.trim();
   const deadline = document.getElementById("privTaskDeadlineInput").value || null;
-  const aufwandRaw = document.getElementById("privTaskAufwandInput").value;
-  const aufwand_min = aufwandRaw !== "" ? parseInt(aufwandRaw, 10) : null;
+  const assignee_ids = Array.from(
+    document.querySelectorAll("#privTaskAssignees .beneficiary-checkbox:checked")
+  ).map((el) => parseInt(el.value, 10));
 
   const categoryResult = await resolvePrivateTaskCategoryId();
   if (!categoryResult.ok) return null;
@@ -1501,10 +1542,10 @@ async function readPrivateTaskForm() {
   return {
     titel,
     beschreibung,
+    assignee_ids,
     category_id: categoryResult.category_id,
     project_id: projectResult.project_id,
     deadline,
-    aufwand_min,
   };
 }
 
@@ -1520,7 +1561,7 @@ function renderPrivateTaskSubitemsEditor(taskId, subitems) {
                 <input type="checkbox" class="subitem-toggle" data-sub-id="${s.id}"${s.done ? " checked" : ""}>
                 <span>${escapeHtml(s.titel)}</span>
               </label>
-              <button type="button" class="icon-button subitem-delete" data-sub-id="${s.id}" aria-label="Löschen">🗑️</button>
+              <button type="button" class="icon-button subitem-delete" data-sub-id="${s.id}" aria-label="Löschen">${TRASH_ICON_SVG}</button>
             </div>
           `
         )
@@ -1569,7 +1610,7 @@ function wirePrivateTaskSubitems(taskId, initialSubitems) {
 }
 
 async function openAddPrivateTaskModal() {
-  const { me } = await fetchUsersAndMe();
+  const { me, users } = await fetchUsersAndMe();
   const categories = await fetchTaskCategories();
   const projects = await fetchProjects();
   const isAdmin = !!(me && isAdminRole(me.role));
@@ -1578,7 +1619,7 @@ async function openAddPrivateTaskModal() {
     eyebrow: "Task",
     title: "Task hinzufügen",
     submitLabel: "Speichern",
-    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin),
+    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, {}, users),
     onSubmit: async () => {
       const form = await readPrivateTaskForm();
       if (!form) return;
@@ -1596,12 +1637,14 @@ async function openAddPrivateTaskModal() {
     },
   });
 
+  wirePrivateTaskAssigneeChips();
+  wirePrivateTaskDeadlineShortcuts();
   wirePrivateTaskCategoryPicker();
   if (isAdmin) wirePrivateTaskProjectPicker();
 }
 
 async function openEditPrivateTaskModal(task) {
-  const { me } = await fetchUsersAndMe();
+  const { me, users } = await fetchUsersAndMe();
   const categories = await fetchTaskCategories();
   const projects = await fetchProjects();
   const isAdmin = !!(me && isAdminRole(me.role));
@@ -1610,7 +1653,7 @@ async function openEditPrivateTaskModal(task) {
     eyebrow: "Task",
     title: "Task bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, task),
+    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, task, users),
     onSubmit: async () => {
       const form = await readPrivateTaskForm();
       if (!form) return;
@@ -1628,6 +1671,8 @@ async function openEditPrivateTaskModal(task) {
     },
   });
 
+  wirePrivateTaskAssigneeChips();
+  wirePrivateTaskDeadlineShortcuts();
   wirePrivateTaskCategoryPicker();
   if (isAdmin) wirePrivateTaskProjectPicker();
   wirePrivateTaskSubitems(task.id, task.subitems);
@@ -2149,6 +2194,19 @@ function calClearDragHighlight() {
   document.querySelectorAll(".cal-hour-cell.cal-drag-target").forEach((el) => el.classList.remove("cal-drag-target"));
 }
 
+// Färbt den gesamten überstrichenen Bereich zwischen Start- und aktueller
+// Stunde ein (nicht nur die einzelne Zelle unterm Finger) — so sieht man
+// beim Ziehen eine durchgehende Fläche statt einer springenden Einzelzelle.
+function calHighlightRange(date, hourA, hourB) {
+  calClearDragHighlight();
+  const lo = Math.min(hourA, hourB);
+  const hi = Math.max(hourA, hourB);
+  document.querySelectorAll(`.cal-hour-cell[data-date="${date}"]`).forEach((el) => {
+    const h = parseInt(el.dataset.hour, 10);
+    if (h >= lo && h <= hi) el.classList.add("cal-drag-target");
+  });
+}
+
 function calEndDrag() {
   if (calDragState) clearTimeout(calDragState.longPressTimer);
   calClearDragHighlight();
@@ -2163,7 +2221,15 @@ function wireCalDayDragCreate(container) {
     const cell = e.target.closest(".cal-hour-cell");
     if (!cell || e.target.closest(".cal-time-event")) return;
 
-    calDragState = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId, active: false };
+    calDragState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      pointerId: e.pointerId,
+      active: false,
+      startDate: cell.dataset.date,
+      startHour: parseInt(cell.dataset.hour, 10),
+      currentHour: parseInt(cell.dataset.hour, 10),
+    };
     calDragState.longPressTimer = setTimeout(() => {
       if (!calDragState) return;
       calDragState.active = true;
@@ -2173,7 +2239,7 @@ function wireCalDayDragCreate(container) {
         // Manche Browser mögen setPointerCapture in bestimmten Situationen
         // nicht — der Drag funktioniert (per elementFromPoint) trotzdem.
       }
-      cell.classList.add("cal-drag-target");
+      calHighlightRange(calDragState.startDate, calDragState.startHour, calDragState.startHour);
       if (navigator.vibrate) navigator.vibrate(15);
     }, CAL_LONG_PRESS_MS);
   });
@@ -2191,25 +2257,22 @@ function wireCalDayDragCreate(container) {
     e.preventDefault();
     const hovered = document.elementFromPoint(e.clientX, e.clientY);
     const cell = hovered && hovered.closest(".cal-hour-cell");
-    if (cell && !cell.classList.contains("cal-drag-target")) {
-      calClearDragHighlight();
-      cell.classList.add("cal-drag-target");
-    }
+    if (!cell || cell.dataset.date !== calDragState.startDate) return;
+    const hour = parseInt(cell.dataset.hour, 10);
+    if (hour === calDragState.currentHour) return;
+    calDragState.currentHour = hour;
+    calHighlightRange(calDragState.startDate, calDragState.startHour, hour);
   });
 
   function finishDrag(e) {
     if (!calDragState) return;
     const wasActive = calDragState.active;
-    let targetCell = null;
-    if (wasActive) {
-      const hovered = document.elementFromPoint(e.clientX, e.clientY);
-      targetCell = hovered && hovered.closest(".cal-hour-cell");
-    }
+    const state = calDragState;
     calEndDrag();
-    if (wasActive && targetCell) {
+    if (wasActive) {
       calSuppressNextClick = true;
-      const hour = String(targetCell.dataset.hour).padStart(2, "0");
-      openAddPlanModal({ datum: targetCell.dataset.date, uhrzeit: `${hour}:00` });
+      const hour = String(state.currentHour).padStart(2, "0");
+      openAddPlanModal({ datum: state.startDate, uhrzeit: `${hour}:00` });
     }
   }
   container.addEventListener("pointerup", finishDrag);
@@ -2457,7 +2520,7 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
     ${
       canManage
         ? `<div class="list-card-actions">
-             <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
+             <button type="button" class="delete-btn" aria-label="Löschen">${TRASH_ICON_SVG}</button>
            </div>`
         : ""
     }
@@ -2755,7 +2818,6 @@ function renderExpenseFixedAmountInputs(users, entryAmounts) {
         existingValues[uid] ?? (entryAmounts[uid] != null ? entryAmounts[uid].toFixed(2) : "");
       return `
         <label class="fixed-amount-chip" title="${escapeHtml(u.username)}">
-          ${avatarCircleHtml(u.username, 20)}
           <input type="number" step="0.01" min="0.01" inputmode="decimal" class="expense-fixed-input" data-uid="${uid}" placeholder="auto" value="${prefillValue}">
         </label>
       `;

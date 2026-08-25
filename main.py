@@ -25,6 +25,7 @@ from database import (
     Project,
     ProjectAccess,
     PrivateTask,
+    PrivateTaskAssignee,
     PrivateTaskSubitem,
     Ausgabe,
     ActivityLog,
@@ -147,7 +148,7 @@ class PrivateTaskCreate(BaseModel):
     deadline: str | None = None
     category_id: int | None = None
     project_id: int | None = None
-    aufwand_min: int | None = None
+    assignee_ids: list[int] = []
 
 
 class PrivateTaskSubitemCreate(BaseModel):
@@ -585,15 +586,20 @@ def _validate_private_task_payload(payload: PrivateTaskCreate, db: Session):
     if project_id is not None and not db.query(Project).filter(Project.id == project_id).first():
         return JSONResponse(status_code=400, content={"error": "Unbekanntes Projekt"})
 
-    aufwand_min = payload.aufwand_min
-    if aufwand_min is not None and aufwand_min < 0:
-        return JSONResponse(status_code=400, content={"error": "Aufwand darf nicht negativ sein"})
+    # Mehrere Personen können gemeinsam verantwortlich sein, oder niemand.
+    assignee_ids = sorted(set(payload.assignee_ids))
+    if assignee_ids:
+        valid_ids = {u.id for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
+        if not set(assignee_ids).issubset(valid_ids):
+            return JSONResponse(status_code=400, content={"error": "Unbekannte Person ausgewählt"})
 
-    return titel, beschreibung, deadline, category_id, project_id, aufwand_min
+    return titel, beschreibung, deadline, category_id, project_id, assignee_ids
 
 
 def _serialize_private_task(
     task: PrivateTask,
+    assignee_ids: list[int],
+    usernames: dict[int, str],
     categories: dict[int, TaskCategory],
     projects: dict[int, Project],
     subitems: list[PrivateTaskSubitem] | None = None,
@@ -607,7 +613,9 @@ def _serialize_private_task(
         "done": task.done,
         "deadline": task.deadline.isoformat() if task.deadline else None,
         "created_by": task.created_by,
-        "aufwand_min": task.aufwand_min,
+        "assignees": [
+            {"id": uid, "username": usernames.get(uid, "?")} for uid in assignee_ids
+        ],
         "category": (
             {"id": category.id, "farbe": category.farbe, "bezeichnung": category.bezeichnung}
             if category
@@ -628,14 +636,20 @@ def list_private_tasks(request: Request, db: Session = Depends(get_db)):
     tasks = db.query(PrivateTask).order_by(PrivateTask.created_at.desc()).all()
     visible = [t for t in tasks if _can_access_private_task(db, me, t)]
 
+    usernames = {u.id: u.username for u in db.query(User).all()}
     categories = {c.id: c for c in db.query(TaskCategory).all()}
     projects = {p.id: p for p in db.query(Project).all()}
+    assignees_by_task: dict[int, list[int]] = {}
+    for a in db.query(PrivateTaskAssignee).all():
+        assignees_by_task.setdefault(a.task_id, []).append(a.user_id)
     subitems_by_task: dict[int, list[PrivateTaskSubitem]] = {}
     for s in db.query(PrivateTaskSubitem).order_by(PrivateTaskSubitem.created_at.asc()).all():
         subitems_by_task.setdefault(s.task_id, []).append(s)
 
     return [
-        _serialize_private_task(t, categories, projects, subitems_by_task.get(t.id, []))
+        _serialize_private_task(
+            t, assignees_by_task.get(t.id, []), usernames, categories, projects, subitems_by_task.get(t.id, [])
+        )
         for t in visible
     ]
 
@@ -650,7 +664,7 @@ def create_private_task(request: Request, payload: PrivateTaskCreate, db: Sessio
     validated = _validate_private_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, category_id, project_id, aufwand_min = validated
+    titel, beschreibung, deadline, category_id, project_id, assignee_ids = validated
 
     if not _can_use_private_project(db, me, project_id):
         return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
@@ -662,15 +676,20 @@ def create_private_task(request: Request, payload: PrivateTaskCreate, db: Sessio
         created_by=username,
         category_id=category_id,
         project_id=project_id,
-        aufwand_min=aufwand_min,
     )
     db.add(task)
     db.commit()
     db.refresh(task)
 
+    for uid in assignee_ids:
+        db.add(PrivateTaskAssignee(task_id=task.id, user_id=uid))
+    if assignee_ids:
+        db.commit()
+
+    usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
     categories = {c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()}
     projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
-    return _serialize_private_task(task, categories, projects, [])
+    return _serialize_private_task(task, assignee_ids, usernames, categories, projects, [])
 
 
 @app.patch("/api/private-tasks/{task_id}")
@@ -689,7 +708,7 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
     validated = _validate_private_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, category_id, project_id, aufwand_min = validated
+    titel, beschreibung, deadline, category_id, project_id, assignee_ids = validated
 
     if project_id != task.project_id and not _can_use_private_project(db, me, project_id):
         return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
@@ -699,9 +718,12 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
     task.deadline = deadline
     task.category_id = category_id
     task.project_id = project_id
-    task.aufwand_min = aufwand_min
+    db.query(PrivateTaskAssignee).filter(PrivateTaskAssignee.task_id == task.id).delete(synchronize_session=False)
+    for uid in assignee_ids:
+        db.add(PrivateTaskAssignee(task_id=task.id, user_id=uid))
     db.commit()
 
+    usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
     categories = {c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()}
     projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
     subitems = (
@@ -710,7 +732,7 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
         .order_by(PrivateTaskSubitem.created_at.asc())
         .all()
     )
-    return _serialize_private_task(task, categories, projects, subitems)
+    return _serialize_private_task(task, assignee_ids, usernames, categories, projects, subitems)
 
 
 @app.patch("/api/private-tasks/{task_id}/toggle")
@@ -731,27 +753,6 @@ def toggle_private_task(task_id: int, request: Request, db: Session = Depends(ge
     return {"id": task.id, "done": task.done}
 
 
-@app.patch("/api/private-tasks/{task_id}/deadline-today")
-def toggle_private_task_deadline_today(task_id: int, request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
-    if not task:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-    if not _can_access_private_task(db, me, task):
-        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
-
-    if task.deadline and task.deadline.date() == today_berlin():
-        task.deadline = None
-    else:
-        task.deadline = dt.combine(today_berlin(), dt.min.time())
-    db.commit()
-    return {"id": task.id, "deadline": task.deadline.isoformat() if task.deadline else None}
-
-
 @app.delete("/api/private-tasks/{task_id}")
 def delete_private_task(task_id: int, request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
@@ -764,6 +765,7 @@ def delete_private_task(task_id: int, request: Request, db: Session = Depends(ge
         if not _can_access_private_task(db, me, task):
             return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
         db.query(PrivateTaskSubitem).filter(PrivateTaskSubitem.task_id == task.id).delete(synchronize_session=False)
+        db.query(PrivateTaskAssignee).filter(PrivateTaskAssignee.task_id == task.id).delete(synchronize_session=False)
         db.delete(task)
         db.commit()
     return {"ok": True}
