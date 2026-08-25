@@ -18,7 +18,13 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 /* body scrollt bewusst NICHT mehr (siehe oben) — stattdessen scrollt nur dieser
    Bereich intern. Die fixierte Bottom-Nav liegt außerhalb und kann sich dadurch
    beim iOS-Bounce-Scrolling nicht mehr sichtbar mitbewegen. */
-.app-shell{position:relative;max-width:760px;margin:auto;padding:18px 16px 110px;height:100%;overflow-y:scroll;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
+/* overflow-x:hidden ist hier Pflicht, nicht nur Vorsicht: sobald overflow-y
+   gesetzt ist, aber overflow-x nicht, rechnet der Browser overflow-x
+   automatisch auf "auto" hoch (CSS-Spec-Eigenheit) — jedes zu breite Kind-
+   Element (z. B. ein einzelner nicht umbrechbarer Text) hätte sonst sofort
+   horizontales Scrollen der ganzen Seite zur Folge, je nach Handybreite.
+   Diese Zeile ist die feste Grenze, die die Breite nie überschreiten darf. */
+.app-shell{position:relative;max-width:760px;margin:auto;padding:18px 16px 110px;height:100%;overflow-y:scroll;overflow-x:hidden;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
 .app-shell::-webkit-scrollbar{width:8px}
 .app-shell::-webkit-scrollbar-track{background:transparent}
 .app-shell::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px}
