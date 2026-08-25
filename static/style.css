@@ -78,6 +78,16 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    .list-card-text schon sagt. Muss also auf JEDER verschachtelten Ebene
    gesetzt sein, nicht nur an der Stelle, die den Text abschneidet. */
 .list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;min-width:0;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}
+/* Ausgaben-Kacheln: Profilbild des Zahlers dezent transparent im Hintergrund
+   statt nur der farbigen Randlinie (siehe --avatar-url in app.js). ::before
+   liegt HINTER dem Kartentext (die direkten Kinder bekommen z-index:1);
+   overflow:hidden + der eigene border-radius der Kachel sorgen dafür, dass
+   das Bild sauber an den runden Ecken endet, statt darüber hinauszuragen.
+   Der Verlauf blendet das Bild nach links (Richtung Text) aus, damit es
+   nicht mit der Lesbarkeit konkurriert. */
+.list-card.avatar-bg{position:relative;overflow:hidden}
+.list-card.avatar-bg::before{content:"";position:absolute;inset:0;background-image:var(--avatar-url);background-size:cover;background-position:center 30%;opacity:.22;mask-image:linear-gradient(to left,#000,transparent 80%);-webkit-mask-image:linear-gradient(to left,#000,transparent 80%);z-index:0}
+.list-card.avatar-bg>*{position:relative;z-index:1}
 /* Tasks-Liste: spürbar kompaktere Kacheln (weniger Innenabstand, kleinerer
    Haken, engerer Zeilenabstand zwischen den Karten) — hier stapeln sich
    potenziell viele Einträge, die volle .list-card-Höhe nimmt zu viel Platz weg. */

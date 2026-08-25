@@ -2622,6 +2622,14 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
   const payerNames = Array.from(group.glaeubiger);
   const borderColor = USER_COLORS[payerNames[0]];
   if (borderColor) card.style.borderLeft = `4px solid ${borderColor}`;
+  // Profilbild des Zahlers dezent transparent im Hintergrund (siehe
+  // .list-card.avatar-bg in style.css) — nur bei genau einem Zahler und wenn
+  // diese Person überhaupt ein Profilbild hochgeladen hat.
+  const payerAvatar = payerNames.length === 1 ? USER_AVATARS[payerNames[0]] : null;
+  if (payerAvatar) {
+    card.classList.add("avatar-bg");
+    card.style.setProperty("--avatar-url", `url('${payerAvatar}')`);
+  }
   const payer = payerNames.map((n) => escapeHtml(n)).join(", ");
 
   // Statt aller Beteiligten mit Anteil nur EINE Person + Durchschnitt: im
