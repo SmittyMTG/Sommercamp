@@ -1254,7 +1254,6 @@ function wirePrivateTaskProjectPicker() {
         <option value="__new__">+ Neues Projekt anlegen…</option>
       `;
       newFields.classList.add("hidden");
-      renderProjectAdminPanel();
     } else {
       const data = await res.json().catch(() => ({}));
       errEl.textContent = data.error || "Konnte nicht angelegt werden.";
@@ -1486,125 +1485,6 @@ async function openEditPrivateTaskModal(task) {
 const addPrivateTaskButton = document.getElementById("addPrivateTaskButton");
 if (addPrivateTaskButton) addPrivateTaskButton.addEventListener("click", openAddPrivateTaskModal);
 
-/* ---------- Tasks: Projekte verwalten (nur Admins) ---------- */
-
-const projectAdminPanelEl = document.getElementById("projectAdminPanel");
-const projectAdminListEl = document.getElementById("projectAdminList");
-
-function projectEditModalBodyHtml(users, project) {
-  const currentMemberIds = new Set((project.members || []).map((m) => m.id));
-  const memberOptions = users
-    .map(
-      (u) =>
-        `<label class="check-card"><input type="checkbox" class="project-member-checkbox" value="${u.id}"${currentMemberIds.has(u.id) ? " checked" : ""}>${nameTag(u.username)}</label>`
-    )
-    .join("");
-
-  return `
-    <div class="form-stack">
-      <label>Projektname
-        <input type="text" id="projectNameInput" maxlength="60" value="${escapeHtml(project.name)}" required>
-      </label>
-      <div class="checkbox-group">
-        <div class="eyebrow">Zugriff (welche User sehen dieses Projekt?)</div>
-        <div class="checkbox-grid">${memberOptions}</div>
-      </div>
-    </div>
-  `;
-}
-
-async function openEditProjectModal(project) {
-  const { users } = await fetchUsersAndMe();
-
-  openModal({
-    eyebrow: "Projekt",
-    title: `„${project.name}" bearbeiten`,
-    submitLabel: "Speichern",
-    bodyHtml: projectEditModalBodyHtml(users, project),
-    onSubmit: async () => {
-      const name = document.getElementById("projectNameInput").value.trim();
-      if (!name) return;
-      const member_ids = Array.from(document.querySelectorAll(".project-member-checkbox:checked")).map((el) =>
-        parseInt(el.value, 10)
-      );
-
-      const res = await fetch(`/api/projects/${project.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, member_ids }),
-      });
-
-      if (res.ok) {
-        closeModal();
-        const projects = await fetchProjects(true);
-        populateProjectFilterSelect(projects);
-        renderProjectAdminPanel();
-      }
-    },
-  });
-}
-
-function renderProjectCard(project) {
-  const card = document.createElement("div");
-  card.className = "list-card clickable";
-  const members = project.members || [];
-  const memberLabel = members.length ? members.map((m) => nameTag(m.username)).join(", ") : "Niemand freigeschaltet";
-  card.innerHTML = `
-    <div class="list-card-content">
-      <div class="list-card-text">
-        <p class="list-card-title">${escapeHtml(project.name)}</p>
-        <p class="list-card-meta">${memberLabel}</p>
-      </div>
-    </div>
-  `;
-  card.addEventListener("click", () => openEditProjectModal(project));
-  return card;
-}
-
-async function renderProjectAdminPanel() {
-  if (!projectAdminListEl) return;
-  const projects = await fetchProjects(true);
-  projectAdminListEl.innerHTML = "";
-  if (projects.length === 0) {
-    projectAdminListEl.innerHTML = `<div class="empty-state"><p>Noch keine Projekte.</p></div>`;
-  } else {
-    projects.forEach((p) => projectAdminListEl.appendChild(renderProjectCard(p)));
-  }
-}
-
-async function openAddProjectModal() {
-  openModal({
-    eyebrow: "Projekt",
-    title: "Projekt anlegen",
-    submitLabel: "Anlegen",
-    bodyHtml: `
-      <div class="form-stack">
-        <label>Projektname
-          <input type="text" id="newProjectNameInput" maxlength="60" required>
-        </label>
-      </div>
-    `,
-    onSubmit: async () => {
-      const name = document.getElementById("newProjectNameInput").value.trim();
-      if (!name) return;
-      const res = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (res.ok) {
-        closeModal();
-        const projects = await fetchProjects(true);
-        populateProjectFilterSelect(projects);
-        renderProjectAdminPanel();
-      }
-    },
-  });
-}
-
-const addProjectButton = document.getElementById("addProjectButton");
-if (addProjectButton) addProjectButton.addEventListener("click", openAddProjectModal);
-
 /* ---------- Bottom-Nav: erstmal nur für Admins sichtbar (normale User sehen
    ausschließlich die Kosten-Seite, ohne jede Navigation) ---------- */
 fetchUsersAndMe().then(({ me }) => {
@@ -1654,14 +1534,6 @@ fetchUsersAndMe().then(({ me }) => {
   fetchProjects(true).then((projects) => populateProjectFilterSelect(projects));
   loadPrivateTasks(true);
   setInterval(loadPrivateTasks, 5000);
-
-  if (isAdminRole(me.role)) {
-    if (projectAdminPanelEl) {
-      projectAdminPanelEl.classList.remove("hidden");
-      renderProjectAdminPanel();
-    }
-    if (addProjectButton) addProjectButton.classList.remove("hidden");
-  }
 });
 
 /* ---------- Profil (Passwort ändern, Profilbild) ---------- */
