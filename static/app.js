@@ -2896,14 +2896,13 @@ function updateExpenseSplitHint() {
   const fixedInputs = checkedExpenseFixedInputs();
   hintEl.classList.remove("error-text");
 
-  if (fixedInputs.length === 0) {
-    hintEl.textContent = "";
-    return;
-  }
-
   const cash = parseFloat(document.getElementById("expenseCashInput").value) || 0;
   const fixedTotal = fixedInputs.reduce((sum, el) => sum + (parseFloat(el.value) || 0), 0);
-  const openCount = fixedInputs.filter((el) => !el.value).length;
+  // Ist noch niemand ausgewählt, gibt es rechnerisch 0 offene Personen — als
+  // "1" behandelt, damit hier von Anfang an derselbe Satz im selben Format
+  // steht (statt eines leeren Absatzes) und die Fensterhöhe beim ersten
+  // Auswählen nicht durch neu erscheinenden Text springt.
+  const openCount = fixedInputs.length === 0 ? 1 : fixedInputs.filter((el) => !el.value).length;
   const remaining = Math.round((cash - fixedTotal) * 100) / 100;
 
   if (remaining < -0.005) {
