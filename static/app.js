@@ -105,8 +105,12 @@ function avatarCircleHtml(username, size) {
 function nameTag(username) {
   const safe = escapeHtml(username);
   const color = USER_COLORS[username];
-  const nameHtml = color ? `<span class="name-tag" style="background:${color}">${safe}</span>` : safe;
-  return `<span class="name-with-avatar">${avatarCircleHtml(username)}${nameHtml}</span>`;
+  const avatar = avatarCircleHtml(username, 16);
+  // Avatar + Name als EIN geschlossenes Element: die Farbe umschließt beides
+  // (siehe .name-pill in style.css), statt nur als separate Pille neben dem
+  // Avatar zu schweben.
+  if (!color) return `<span class="name-with-avatar">${avatar}${safe}</span>`;
+  return `<span class="name-with-avatar name-pill" style="--tag-color:${color}">${avatar}<span>${safe}</span></span>`;
 }
 
 /* ---------- Generic modal ---------- */
@@ -1833,14 +1837,29 @@ if (adminUsersButton) {
   });
 }
 
-/* ---------- Camp-Plan (Termine, nur Admins legen an) ---------- */
-const planListEl = document.getElementById("planList");
-const addPlanButton = document.getElementById("addPlanButton");
-
-function formatWeekdayDate(isoDate) {
-  const d = new Date(`${isoDate}T00:00:00`);
-  const formatted = d.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long" });
-  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+/* ---------- Kalender: Datums-Helfer ---------- */
+function isoDateLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function addDays(d, n) {
+  const res = new Date(d);
+  res.setDate(res.getDate() + n);
+  return res;
+}
+function addMonths(d, n) {
+  const res = new Date(d);
+  res.setMonth(res.getMonth() + n);
+  return res;
+}
+// Woche startet Montag (DE-Konvention), unabhängig von d.getDay()'s
+// So-als-0-Zählung.
+function startOfWeekMonday(d) {
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return addDays(d, diff);
 }
 
 // Reiner Text wie "Camp" liefert bei Google Maps eine unzuverlässige Suche
@@ -1855,86 +1874,13 @@ function mapsUrl(location) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
-function groupPlanEvents(events) {
-  const groups = new Map();
-  for (const e of events) {
-    if (!groups.has(e.datum)) groups.set(e.datum, []);
-    groups.get(e.datum).push(e);
-  }
-  return Array.from(groups.entries()).map(([datum, items]) => ({ datum, items }));
+function formatWeekdayDate(isoDate) {
+  const d = new Date(`${isoDate}T00:00:00`);
+  const formatted = d.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "long" });
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 }
 
-function renderPlanEvent(event, isAdmin) {
-  const card = document.createElement("div");
-  card.className = "plan-card";
-
-  const detailsParts = [];
-  if (event.location) {
-    detailsParts.push(
-      `📍 <a href="${mapsUrl(event.location)}" target="_blank" rel="noopener">${escapeHtml(event.location)}</a>`
-    );
-  }
-  if (event.beschreibung) {
-    detailsParts.push(escapeHtml(event.beschreibung));
-  }
-
-  card.innerHTML = `
-    <div class="time">${escapeHtml(event.uhrzeit)}</div>
-    <div>
-      <div class="title">${escapeHtml(event.bezeichnung)}</div>
-      ${detailsParts.length ? `<div class="details">${detailsParts.join("<br>")}</div>` : ""}
-    </div>
-    ${
-      isAdmin
-        ? `<div class="list-card-actions">
-             <button type="button" class="icon-button delete-plan-btn" aria-label="Löschen">🗑️</button>
-           </div>`
-        : "<div></div>"
-    }
-  `;
-
-  if (isAdmin) {
-    // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button
-    // überflüssig) — Löschen-Button und der Maps-Link stoppen die Propagation,
-    // damit ein Klick darauf nicht zusätzlich den Bearbeiten-Dialog öffnet.
-    card.classList.add("clickable");
-    card.addEventListener("click", () => openEditPlanModal(event));
-
-    const locationLink = card.querySelector(".details a");
-    if (locationLink) locationLink.addEventListener("click", (e) => e.stopPropagation());
-
-    card.querySelector(".delete-plan-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      openModal({
-        eyebrow: "Kalender",
-        title: `„${event.bezeichnung}" löschen?`,
-        bodyHtml: `<p class="muted warning-text">Der Termin wird für alle aus dem Plan entfernt. Das lässt sich nicht rückgängig machen.</p>`,
-        submitLabel: "Löschen",
-        danger: true,
-        onSubmit: async () => {
-          const res = await fetch(`/api/plan/${event.id}`, { method: "DELETE" });
-          if (res.ok) {
-            loadPlanList(true);
-          }
-          closeModal();
-        },
-      });
-    });
-  }
-
-  return card;
-}
-
-let lastPlanSignature = null;
-
-// Vergangene Tage sind standardmäßig eingeklappt (siehe loadPlanList) — das
-// planListEl wird bei jedem Poll neu aufgebaut, daher hier gemerkt, ob
-// zuletzt aufgeklappt wurde, damit der Zustand über Re-Renders hinweg
-// erhalten bleibt (ein neuer Render erfolgt eh nur bei echten Datenänderungen,
-// siehe lastPlanSignature-Check).
-let planPastExpanded = false;
-
-/* ---------- Camp-Plan: "noch offene" (datumslose) Events schnell auf heute legen ---------- */
+/* ---------- Kalender: "Event-Ideen" (Termine ohne Datum) ---------- */
 const planOpenPanelEl = document.getElementById("planOpenPanel");
 const planOpenListEl = document.getElementById("planOpenList");
 const planOpenToggleBtn = document.getElementById("planOpenToggle");
@@ -1971,8 +1917,209 @@ function renderOpenPlanEvent(event) {
   return card;
 }
 
+/* ---------- Kalender: Monats-/Wochen-/Tagesansicht ---------- */
+const calendarContainerEl = document.getElementById("calendarContainer");
+const calendarLabelEl = document.getElementById("calendarLabel");
+const calendarViewSwitchEl = document.getElementById("calendarViewSwitch");
+
+let calendarView = "month"; // "month" | "week" | "day"
+let calendarAnchor = new Date();
+calendarAnchor.setHours(0, 0, 0, 0);
+let lastDatedEvents = [];
+let calendarIsAdmin = false;
+
+// Farbe folgt der Person, die den Termin angelegt hat (created_by) — gleiche
+// Namensfarbe wie überall sonst im UI, fällt auf Gelb zurück, wenn unbekannt.
+function calEventColor(event) {
+  return (event.created_by && USER_COLORS[event.created_by]) || "#ffd400";
+}
+function calEventChipHtml(event, cssClass) {
+  const color = calEventColor(event);
+  const pale = hexToRgba(color, 0.18);
+  const time = event.uhrzeit ? event.uhrzeit.slice(0, 5) : "";
+  return `<div class="${cssClass}" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">${time ? `${time} ` : ""}${escapeHtml(event.bezeichnung)}</div>`;
+}
+
+function eventsByDateMap() {
+  const map = new Map();
+  lastDatedEvents.forEach((e) => {
+    if (!map.has(e.datum)) map.set(e.datum, []);
+    map.get(e.datum).push(e);
+  });
+  map.forEach((list) => list.sort((a, b) => a.uhrzeit.localeCompare(b.uhrzeit)));
+  return map;
+}
+
+function calendarLabelText() {
+  if (calendarView === "day") return formatWeekdayDate(isoDateLocal(calendarAnchor));
+  if (calendarView === "week") {
+    const start = startOfWeekMonday(calendarAnchor);
+    const end = addDays(start, 6);
+    const sameMonth = start.getMonth() === end.getMonth();
+    const startStr = start.toLocaleDateString("de-DE", { day: "2-digit", month: sameMonth ? undefined : "2-digit" });
+    const endStr = end.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+    return `${startStr}. – ${endStr}`;
+  }
+  const label = calendarAnchor.toLocaleDateString("de-DE", { month: "long", year: "numeric" });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function renderMonthView() {
+  const year = calendarAnchor.getFullYear();
+  const month = calendarAnchor.getMonth();
+  const gridStart = startOfWeekMonday(new Date(year, month, 1));
+  const todayIso = isoDateLocal(new Date());
+  const eventsByDate = eventsByDateMap();
+
+  const weekdayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+  let html = weekdayLabels.map((w) => `<div class="cal-weekday">${w}</div>`).join("");
+
+  // Immer 6 volle Wochen (42 Zellen), damit die Grid-Höhe nicht je nach Monat
+  // (4 vs. 6 Zeilen) hin- und herspringt.
+  for (let i = 0; i < 42; i++) {
+    const cellDate = addDays(gridStart, i);
+    const cellIso = isoDateLocal(cellDate);
+    const inMonth = cellDate.getMonth() === month;
+    const isToday = cellIso === todayIso;
+    const dayEvents = eventsByDate.get(cellIso) || [];
+    const visible = dayEvents.slice(0, 3);
+    const overflow = dayEvents.length - visible.length;
+
+    html += `
+      <div class="cal-day-cell${inMonth ? "" : " other-month"}${isToday ? " today" : ""}" data-date="${cellIso}">
+        <div class="cal-day-num">${cellDate.getDate()}</div>
+        <div class="cal-day-events">
+          ${visible.map((e) => calEventChipHtml(e, "cal-event-pill")).join("")}
+          ${overflow > 0 ? `<div class="cal-day-more">+${overflow} mehr</div>` : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  calendarContainerEl.innerHTML = `<div class="cal-month-grid">${html}</div>`;
+
+  calendarContainerEl.querySelectorAll(".cal-day-cell").forEach((cell) => {
+    cell.addEventListener("click", (e) => {
+      const chip = e.target.closest(".cal-event-pill");
+      if (chip) {
+        if (!calendarIsAdmin) return;
+        const event = lastDatedEvents.find((ev) => String(ev.id) === chip.dataset.id);
+        if (event) openEditPlanModal(event);
+        return;
+      }
+      calendarAnchor = new Date(`${cell.dataset.date}T00:00:00`);
+      calendarView = "day";
+      updateCalendarViewSwitchUI();
+      renderCalendar();
+    });
+  });
+}
+
+// Gemeinsame Stunden-Raster-Ansicht für Woche (7 Spalten) und Tag (1 Spalte)
+// — jede Zelle enthält ihre Termine direkt (statt einzeln positionierter
+// Blöcke mit Kollisions-Berechnung), mehrere Termine zur selben Stunde
+// stapeln dadurch einfach übereinander.
+const CAL_START_HOUR = 6;
+const CAL_END_HOUR = 23;
+
+function renderTimeGridView(days) {
+  const todayIso = isoDateLocal(new Date());
+  const eventsByDate = eventsByDateMap();
+
+  let headerHtml = `<div class="cal-corner"></div>`;
+  days.forEach((d) => {
+    const iso = isoDateLocal(d);
+    const label = d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit" });
+    headerHtml += `<div class="cal-col-header${iso === todayIso ? " today" : ""}">${label}</div>`;
+  });
+
+  let rowsHtml = "";
+  for (let h = CAL_START_HOUR; h <= CAL_END_HOUR; h++) {
+    rowsHtml += `<div class="cal-hour-label">${String(h).padStart(2, "0")}</div>`;
+    days.forEach((d) => {
+      const iso = isoDateLocal(d);
+      const hourEvents = (eventsByDate.get(iso) || []).filter(
+        (e) => e.uhrzeit && parseInt(e.uhrzeit.slice(0, 2), 10) === h
+      );
+      rowsHtml += `
+        <div class="cal-hour-cell${iso === todayIso ? " today-col" : ""}" data-date="${iso}" data-hour="${h}">
+          ${hourEvents.map((e) => calEventChipHtml(e, "cal-time-event")).join("")}
+        </div>
+      `;
+    });
+  }
+
+  calendarContainerEl.innerHTML = `<div class="cal-time-grid" style="--cal-cols:${days.length}">${headerHtml}${rowsHtml}</div>`;
+
+  calendarContainerEl.querySelectorAll(".cal-hour-cell").forEach((cell) => {
+    cell.addEventListener("click", (e) => {
+      if (!calendarIsAdmin) return;
+      const chip = e.target.closest(".cal-time-event");
+      if (chip) {
+        const event = lastDatedEvents.find((ev) => String(ev.id) === chip.dataset.id);
+        if (event) openEditPlanModal(event);
+        return;
+      }
+      const hour = String(cell.dataset.hour).padStart(2, "0");
+      openAddPlanModal({ datum: cell.dataset.date, uhrzeit: `${hour}:00` });
+    });
+  });
+}
+
+function updateCalendarViewSwitchUI() {
+  if (!calendarViewSwitchEl) return;
+  calendarViewSwitchEl.querySelectorAll(".filter").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.calview === calendarView);
+  });
+}
+
+function renderCalendar() {
+  if (!calendarContainerEl) return;
+  if (calendarLabelEl) calendarLabelEl.textContent = calendarLabelText();
+
+  if (calendarView === "month") {
+    renderMonthView();
+  } else if (calendarView === "week") {
+    renderTimeGridView([...Array(7)].map((_, i) => addDays(startOfWeekMonday(calendarAnchor), i)));
+  } else {
+    renderTimeGridView([calendarAnchor]);
+  }
+}
+
+if (calendarViewSwitchEl) {
+  calendarViewSwitchEl.querySelectorAll(".filter").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      calendarView = btn.dataset.calview;
+      updateCalendarViewSwitchUI();
+      renderCalendar();
+    });
+  });
+}
+
+const calPrevBtn = document.getElementById("calPrevBtn");
+const calNextBtn = document.getElementById("calNextBtn");
+const calTodayBtn = document.getElementById("calTodayBtn");
+
+function shiftCalendarAnchor(dir) {
+  if (calendarView === "month") calendarAnchor = addMonths(calendarAnchor, dir);
+  else if (calendarView === "week") calendarAnchor = addDays(calendarAnchor, dir * 7);
+  else calendarAnchor = addDays(calendarAnchor, dir);
+  renderCalendar();
+}
+if (calPrevBtn) calPrevBtn.addEventListener("click", () => shiftCalendarAnchor(-1));
+if (calNextBtn) calNextBtn.addEventListener("click", () => shiftCalendarAnchor(1));
+if (calTodayBtn) {
+  calTodayBtn.addEventListener("click", () => {
+    calendarAnchor = new Date();
+    calendarAnchor.setHours(0, 0, 0, 0);
+    renderCalendar();
+  });
+}
+
+let lastPlanSignature = null;
+
 async function loadPlanList(force) {
-  if (!planListEl) return;
+  if (!calendarContainerEl) return;
   try {
     const res = await fetch("/api/plan");
     if (!res.ok) throw new Error("Fehler beim Laden");
@@ -1982,17 +2129,17 @@ async function loadPlanList(force) {
     lastPlanSignature = signature;
 
     const { me } = await fetchUsersAndMe();
-    const isAdmin = !!me && isAdminRole(me.role);
+    calendarIsAdmin = !!me && isAdminRole(me.role);
 
-    // Termine ohne Datum ("noch offen") gehören nur ins Panel oben, nicht in
-    // die nach Tag gruppierte Liste — sonst würden sie doppelt erscheinen.
+    // Termine ohne Datum ("Event-Ideen") gehören nur ins Panel oben, nicht in
+    // den Kalender — sonst würden sie doppelt bzw. gar nicht erscheinen.
     const openEvents = events
       .filter((e) => !e.datum)
       .sort((a, b) => a.bezeichnung.localeCompare(b.bezeichnung));
-    const datedEvents = events.filter((e) => e.datum);
+    lastDatedEvents = events.filter((e) => e.datum);
 
     if (planOpenPanelEl && planOpenListEl) {
-      if (isAdmin && openEvents.length > 0) {
+      if (calendarIsAdmin && openEvents.length > 0) {
         planOpenListEl.innerHTML = "";
         openEvents.forEach((event) => planOpenListEl.appendChild(renderOpenPlanEvent(event)));
         planOpenPanelEl.classList.remove("hidden");
@@ -2001,64 +2148,9 @@ async function loadPlanList(force) {
       }
     }
 
-    planListEl.innerHTML = "";
-    if (datedEvents.length === 0) {
-      planListEl.innerHTML = `<div class="empty-state"><p>Hier entsteht der Camp-Plan.</p></div>`;
-    } else {
-      const today = todayIsoDate();
-
-      function buildDateBlock(group) {
-        const block = document.createElement("div");
-        block.className = "date-block";
-        const isToday = group.datum === today;
-        // Vergangene Tage optisch zurücknehmen, damit auf einen Blick klar ist,
-        // was schon passiert ist — "Heute" bekommt zusätzlich ein eigenes Badge
-        // als klaren Anker zwischen Vergangenheit und Zukunft.
-        if (group.datum < today) block.classList.add("past");
-        block.innerHTML = `<h3>${formatWeekdayDate(group.datum)}${isToday ? ' <span class="today-badge">Heute</span>' : ""}</h3>`;
-        const stack = document.createElement("div");
-        stack.className = "stack";
-        group.items.forEach((event) => stack.appendChild(renderPlanEvent(event, isAdmin)));
-        block.appendChild(stack);
-        return block;
-      }
-
-      const groups = groupPlanEvents(datedEvents);
-      const pastGroups = groups.filter((g) => g.datum < today);
-      const upcomingGroups = groups.filter((g) => g.datum >= today);
-
-      // Vergangene Termine sind schon passiert und interessieren im Alltag
-      // kaum noch — sie werden daher gesammelt hinter einem eingeklappten
-      // Panel versteckt statt die Liste nach oben hin vollzustopfen, und
-      // lassen sich bei Bedarf per Klick aufklappen.
-      if (pastGroups.length > 0) {
-        const panel = document.createElement("div");
-        panel.className = "plan-past-panel";
-        if (!planPastExpanded) panel.classList.add("collapsed");
-
-        const count = pastGroups.reduce((n, g) => n + g.items.length, 0);
-        const toggle = document.createElement("button");
-        toggle.type = "button";
-        toggle.className = "plan-open-toggle";
-        toggle.innerHTML = `<span>Vergangene Termine (${count})</span><span class="chevron">▾</span>`;
-        toggle.addEventListener("click", () => {
-          planPastExpanded = !planPastExpanded;
-          panel.classList.toggle("collapsed", !planPastExpanded);
-        });
-        panel.appendChild(toggle);
-
-        const content = document.createElement("div");
-        content.className = "plan-past-content";
-        pastGroups.forEach((group) => content.appendChild(buildDateBlock(group)));
-        panel.appendChild(content);
-
-        planListEl.appendChild(panel);
-      }
-
-      upcomingGroups.forEach((group) => planListEl.appendChild(buildDateBlock(group)));
-    }
+    renderCalendar();
   } catch (err) {
-    planListEl.innerHTML = `<div class="empty-state"><p>Plan konnte nicht geladen werden.</p></div>`;
+    calendarContainerEl.innerHTML = `<div class="empty-state"><p>Kalender konnte nicht geladen werden.</p></div>`;
   }
 }
 
@@ -2080,6 +2172,11 @@ function planModalBodyHtml(prefill = {}) {
       </label>
       <label>Location (Adresse)
         <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
+        ${
+          prefill.location
+            ? `<a href="${mapsUrl(prefill.location)}" target="_blank" rel="noopener" class="link-button">📍 Auf Karte anzeigen</a>`
+            : ""
+        }
       </label>
       <label>Beschreibung
         <textarea id="planBeschreibungInput" placeholder="Was ist geplant?">${escapeHtml(prefill.beschreibung || "")}</textarea>
@@ -2136,11 +2233,11 @@ async function submitPlanForm(url, method) {
   }
 }
 
-function openAddPlanModal() {
+function openAddPlanModal(prefill = {}) {
   openModal({
     eyebrow: "Kalender",
     title: "Termin hinzufügen",
-    bodyHtml: planModalBodyHtml(),
+    bodyHtml: planModalBodyHtml(prefill),
     onSubmit: () => submitPlanForm("/api/plan", "POST"),
   });
   wirePlanForm();
@@ -2157,13 +2254,9 @@ function openEditPlanModal(event) {
   wirePlanForm();
 }
 
+const addPlanButton = document.getElementById("addPlanButton");
 if (addPlanButton) {
-  addPlanButton.addEventListener("click", openAddPlanModal);
-  // Button ist standardmäßig ausgeblendet (siehe index.html), damit er für
-  // Nicht-Admins nie kurz aufblitzt, bis die Rolle bekannt ist.
-  fetchUsersAndMe().then(({ me }) => {
-    if (me && isAdminRole(me.role)) addPlanButton.classList.remove("hidden");
-  });
+  addPlanButton.addEventListener("click", () => openAddPlanModal({ datum: isoDateLocal(calendarAnchor) }));
 }
 
 /* ---------- Kosten & Schulden ---------- */

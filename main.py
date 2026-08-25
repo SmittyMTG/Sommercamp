@@ -1023,6 +1023,7 @@ def list_plan_events(request: Request, db: Session = Depends(get_db)):
             "bezeichnung": e.bezeichnung,
             "location": e.location,
             "beschreibung": e.beschreibung,
+            "created_by": e.created_by,
         }
         for e in events
     ]

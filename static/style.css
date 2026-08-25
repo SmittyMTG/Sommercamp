@@ -40,43 +40,26 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .eyebrow{text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-size:11px;font-weight:850}
 .countdown{font-size:34px;line-height:1.05;font-weight:1000;margin:10px 0 8px}.countdown small{font-size:.4em;font-weight:800;color:var(--muted);letter-spacing:.02em;margin-right:.35em}.muted{color:var(--muted);font-size:13px}
 .section-heading{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:12px;margin:10px 0 12px}.section-heading h2{margin:2px 0 0;font-size:21px}
-.sticky-heading{position:sticky;top:0;background:linear-gradient(var(--bg) 76%,transparent);padding:12px 0;z-index:5}
-.stack{display:grid;gap:10px}.plan-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:15px}
-.plan-card{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:12px;align-items:start}.time{font-weight:1000;color:var(--yellow);font-size:17px}.title{font-weight:900;overflow-wrap:anywhere}.details{color:var(--muted);font-size:13px;line-height:1.45;margin-top:4px;overflow-wrap:anywhere}.details a{color:var(--yellow2);font-weight:700;text-decoration:none}.details a:active{text-decoration:underline}
-.plan-card.clickable{cursor:pointer;transition:background .15s}.plan-card.clickable:active{background:var(--surface2)}
-.date-block h3{margin:18px 2px 9px;font-size:16px;text-transform:capitalize;display:flex;align-items:center;gap:8px}.empty{border:1px dashed var(--line);border-radius:18px;padding:25px;text-align:center;color:var(--muted)}
-.today-badge{display:inline-block;background:var(--yellow);color:#111;font-size:10px;font-weight:900;padding:3px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em}
-.date-block.past h3{color:var(--muted)}.date-block.past .plan-card{opacity:.6}
-/* Camp-Plan: Kopfzeile + "noch offen"-Panel scrollen als ein Block mit und
-   bleiben dann oben fixiert (position:sticky im scrollenden .app-shell) —
-   deckendes Hintergrund nötig, damit die Liste dahinter nicht durchscheint. */
-.plan-sticky-top{position:sticky;top:0;z-index:6;background:var(--bg);padding-bottom:8px}
-.plan-open-panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:4px 4px 10px;margin-bottom:2px}
+.stack{display:grid;gap:10px}
+/* Kompakte Kachel für die Event-Ideen-Liste (Termine ohne Datum) — keine
+   eigene Zeit-Spalte mehr, die gibt's bei "noch offenen" Terminen nie. */
+.plan-card{background:var(--surface2);border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start}
+.plan-card .title{font-weight:900;overflow-wrap:anywhere;font-size:14px}
+.plan-card .details{color:var(--muted);font-size:12px;line-height:1.4;margin-top:2px;overflow-wrap:anywhere}
+.plan-card .details a{color:var(--yellow2);font-weight:700;text-decoration:none}
+.plan-card .details a:active{text-decoration:underline}
+.plan-card.clickable{cursor:pointer;transition:background .15s}.plan-card.clickable:active{background:var(--surface)}
+.empty{border:1px dashed var(--line);border-radius:18px;padding:25px;text-align:center;color:var(--muted)}
+.plan-open-panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:4px 4px 10px;margin-bottom:14px}
 /* max-height auf ~2,5 Kacheln geschätzt (Kartenhöhe + Lücke) — Rest ist über
    die interne Scrollbar erreichbar, das angeschnittene 3. Element signalisiert
    "hier geht's weiter". */
 .plan-open-panel .stack{padding:0 10px;gap:8px;max-height:190px;overflow-y:auto}
-.plan-open-panel .plan-card{background:var(--surface2);grid-template-columns:1fr auto}
 .plan-open-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;color:var(--text);font-weight:850;font-size:14px;padding:10px}
 .plan-open-toggle .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s}
 .plan-open-panel.collapsed .stack{display:none}
 .plan-open-panel.collapsed .chevron{transform:rotate(-90deg)}
 #expenseFixedAmountsToggle.collapsed .chevron{transform:rotate(-90deg)}
-.plan-past-panel{
-  background:var(--surface);
-  border:1px solid var(--line);
-  border-radius:16px;
-  padding:4px 4px 10px;
-  margin-bottom:12px;
-  position:sticky;
-  top:0;
-  z-index:6;
-}
-.plan-past-panel .plan-past-content{padding:0 6px}
-.plan-past-panel .date-block:first-child h3{margin-top:6px}
-.plan-past-panel.collapsed .plan-past-content{display:none}
-.plan-past-panel.collapsed{padding-bottom:4px}
-.plan-past-panel.collapsed .chevron{transform:rotate(-90deg)}
 .primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--yellow);color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
 /* Schwebender "+"-Button unten rechts (leichter mit dem Daumen erreichbar) —
    eigene Nutzerfarbe statt festem Gelb, mit .primary.fab-button für höhere
@@ -119,6 +102,10 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .name-with-avatar{display:inline-flex;align-items:center;gap:5px;vertical-align:middle}
 .name-avatar{border-radius:999px;object-fit:cover;flex:none}
 .name-avatar-fallback{display:flex;align-items:center;justify-content:center;background:var(--surface2);color:var(--muted);font-weight:800;flex:none}
+/* Avatar + Name als EIN geschlossenes Element: die Namensfarbe umschließt
+   jetzt beides statt nur als separate Pille neben dem Avatar zu schweben. */
+.name-with-avatar.name-pill{background:var(--tag-color);border-radius:999px;padding:1px 8px 1px 1px;color:#111;font-weight:800}
+.name-with-avatar.name-pill .name-avatar,.name-with-avatar.name-pill .name-avatar-fallback{box-shadow:0 0 0 1px rgba(0,0,0,.15)}
 .settle-btn{white-space:nowrap}
 .subitems-progress{font-weight:700}
 .subitems-list{display:grid;gap:6px;margin-top:6px}
@@ -149,6 +136,7 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 
 /* Offene Zahlungen: animierter Rechenweg */
 .link-button{background:none;border:none;color:var(--yellow);font-weight:800;font-size:13px;padding:0;margin-left:4px;cursor:pointer;text-decoration:underline}
+.settled-toggle{display:block;margin:20px 0 10px}
 .explain-body{min-height:220px;padding:6px 2px}
 /* Feste Kartenhöhe nur für dieses Mehrschritt-Modal (nicht global auf
    .modal-card, das brauchen die einfachen Formular-Dialoge nicht): Kopf und
@@ -208,5 +196,41 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .money-flow-node-label{font-size:11px;font-weight:700;fill:var(--text)}
 .money-flow-node-amount{font-size:10px;fill:var(--muted)}
 .money-flow-edge-label{font-size:10px;font-weight:800;paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
+
+/* ---------- Kalender (Monat/Woche/Tag) ---------- */
+.calendar-toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:4px 0 10px}
+.calendar-nav{display:flex;align-items:center;gap:6px}
+.calendar-nav .icon-button{padding:7px 12px;font-weight:900;font-size:16px;line-height:1}
+.calendar-label{font-weight:900;font-size:15px;text-align:right}
+#calendarViewSwitch{margin-bottom:14px}
+
+/* Monatsansicht: 7 Spalten, Wochentags-Kopfzeile + Kacheln mit bis zu 3
+   Event-Chips + Overflow-Hinweis. Andere-Monat-Tage blass, heute mit
+   gelbem Rand — gleiche visuelle Sprache wie der Rest der App. */
+.cal-month-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+.cal-weekday{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);text-align:center;font-weight:800;padding-bottom:6px}
+.cal-day-cell{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px 5px;min-height:62px;display:flex;flex-direction:column;gap:3px;cursor:pointer;transition:background .15s,border-color .15s;min-width:0}
+.cal-day-cell:active{background:var(--surface2)}
+.cal-day-cell.other-month{opacity:.35}
+.cal-day-cell.today{border-color:var(--yellow)}
+.cal-day-num{font-size:12px;font-weight:800;color:var(--text)}
+.cal-day-cell.today .cal-day-num{color:var(--yellow)}
+.cal-day-events{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cal-event-pill{font-size:9.5px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-day-more{font-size:9px;color:var(--muted);font-weight:800;padding-left:2px}
+
+/* Wochen-/Tagesansicht: Stunden-Zeilen (6–23 Uhr) × Tages-Spalten. Jede
+   Zelle enthält direkt ihre Termine (statt einzeln positionierter Blöcke),
+   damit mehrere Termine zur selben Stunde einfach übereinander stapeln,
+   ohne Kollisions-Berechnung. */
+.cal-time-grid{display:grid;grid-template-columns:38px repeat(var(--cal-cols,1),minmax(0,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);border-radius:12px;overflow:hidden}
+.cal-corner{background:var(--surface);border-bottom:1px solid var(--line)}
+.cal-col-header{background:var(--surface);border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:center;font-size:11px;font-weight:800;padding:7px 2px;color:var(--muted)}
+.cal-col-header.today{color:var(--yellow)}
+.cal-hour-label{background:var(--bg);border-bottom:1px solid var(--line);border-right:1px solid var(--line);font-size:9.5px;color:var(--muted);text-align:right;padding:3px 4px 0 0;font-weight:700}
+.cal-hour-cell{background:var(--surface);border-bottom:1px solid var(--line);border-right:1px solid var(--line);min-height:40px;padding:2px;display:flex;flex-direction:column;gap:2px;cursor:pointer}
+.cal-hour-cell:active{background:var(--surface2)}
+.cal-hour-cell.today-col{background:rgba(255,212,0,.05)}
+.cal-time-event{font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 
 @media(min-width:650px){.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}

@@ -30,24 +30,33 @@
     <section id="appContent">
       <!-- ============ PLAN ============ -->
       <section id="screen-plan" class="screen">
-        <div class="plan-sticky-top">
-          <div class="section-heading sticky-heading">
-            <div><div class="eyebrow">Alle Tage</div><h2>Kalender</h2></div>
-            <button id="addPlanButton" class="primary compact hidden">＋ Eintrag</button>
-          </div>
-          <div id="planOpenPanel" class="plan-open-panel hidden">
-            <button type="button" id="planOpenToggle" class="plan-open-toggle">
-              <span>Events die noch offen sind</span>
-              <span class="chevron">▾</span>
-            </button>
-            <div id="planOpenList" class="stack"></div>
-          </div>
+        <div class="section-heading">
+          <div><div class="eyebrow">Alle Tage</div><h2>Kalender</h2></div>
         </div>
-        <div id="planList" class="stack">
-          <div class="empty-state">
-            <p>Hier entsteht der Kalender.</p>
-          </div>
+
+        <div id="planOpenPanel" class="plan-open-panel hidden">
+          <button type="button" id="planOpenToggle" class="plan-open-toggle">
+            <span>Event-Ideen</span>
+            <span class="chevron">▾</span>
+          </button>
+          <div id="planOpenList" class="stack"></div>
         </div>
+
+        <div class="calendar-toolbar">
+          <div class="calendar-nav">
+            <button type="button" id="calPrevBtn" class="icon-button" aria-label="Zurück">‹</button>
+            <button type="button" id="calTodayBtn" class="secondary compact">Heute</button>
+            <button type="button" id="calNextBtn" class="icon-button" aria-label="Weiter">›</button>
+          </div>
+          <div id="calendarLabel" class="calendar-label"></div>
+        </div>
+        <div class="filter-row" id="calendarViewSwitch">
+          <button type="button" class="filter active" data-calview="month">Monat</button>
+          <button type="button" class="filter" data-calview="week">Woche</button>
+          <button type="button" class="filter" data-calview="day">Tag</button>
+        </div>
+
+        <div id="calendarContainer"></div>
       </section>
 
       <!-- ============ COSTS ============ -->
@@ -192,6 +201,7 @@
        app.js über data-fab-for gesteuert. -->
   <button id="addExpenseButton" class="primary compact fab-button" data-fab-for="costs">＋ Ausgabe</button>
   <button id="addTaskButton" class="primary compact fab-button hidden" data-fab-for="more">＋ Aufgabe</button>
+  <button id="addPlanButton" class="primary compact fab-button hidden" data-fab-for="plan">＋ Eintrag</button>
 
   <nav id="bottomNav" class="bottom-nav hidden">
     <button class="nav-item" data-screen="plan"><span>▣</span>Kalender</button>
