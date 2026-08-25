@@ -2733,20 +2733,6 @@ if (expenseFilterSelect) {
   });
 }
 
-// Zu breiter Text in einer .no-wrap-Zeile (siehe renderExpenseGroup) läuft als
-// Endlos-Ticker durch, statt die Kachel höher zu machen als andere — konstante
-// Geschwindigkeit unabhängig von der Textlänge, damit kurze und lange Zeilen
-// gleich "schnell" wirken. Muss NACH dem Einfügen ins DOM laufen, da
-// scrollWidth/clientWidth an einem noch nicht angehängten Element nicht
-// verlässlich sind.
-const MARQUEE_PX_PER_SECOND = 45;
-function applyExpenseMarquee(el) {
-  if (el.scrollWidth <= el.clientWidth + 1) return;
-  const original = el.innerHTML;
-  const duration = Math.max(4, el.scrollWidth / MARQUEE_PX_PER_SECOND);
-  el.innerHTML = `<span class="marquee-track" style="animation-duration:${duration}s"><span class="marquee-seg">${original}</span><span class="marquee-seg" aria-hidden="true">${original}</span></span>`;
-}
-
 // "Von X": X hat bezahlt (Zahler). "Für X": X war Beteiligter/Nutznießer
 // (auch bei sich selbst) — unabhängig davon, wer bezahlt hat.
 function renderExpenseList() {
@@ -2770,9 +2756,6 @@ function renderExpenseList() {
     }</p></div>`;
   } else {
     pageGroups.forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, lastExpensesIsAdmin, lastExpensesMeUsername)));
-    expenseListEl
-      .querySelectorAll(".list-card-text.no-wrap .list-card-title, .list-card-text.no-wrap .list-card-meta")
-      .forEach(applyExpenseMarquee);
   }
   if (expenseJumpTopBtn) expenseJumpTopBtn.classList.toggle("hidden", expensePage <= 1);
   renderPager(expensePagerEl, {
