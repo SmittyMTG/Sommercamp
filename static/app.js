@@ -2135,8 +2135,7 @@ function calTimeGridEventLabel(event) {
 function calEventChipHtml(event, cssClass) {
   const color = calEventColor(event);
   const pale = hexToRgba(color, 0.18);
-  const time = calEventTimeLabel(event);
-  return `<div class="${cssClass}" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">${time ? `${time} ` : ""}${escapeHtml(event.bezeichnung)}</div>`;
+  return `<div class="${cssClass}" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">${escapeHtml(event.bezeichnung)}</div>`;
 }
 
 // Mehrtägige Termine (datum_ende gesetzt) landen unter JEDEM Tag, den sie
@@ -2337,7 +2336,7 @@ function renderTimeGridView(days) {
       const color = calEventColor(event);
       const pale = hexToRgba(color, 0.18);
       const left = dayIndex * dayWidthPct + lane * laneWidthPct;
-      const time = calTimeGridEventLabel(event);
+      const time = days.length === 1 ? calTimeGridEventLabel(event) : "";
       const role = event._dayRole || "single";
       eventsHtml += `
         <div class="cal-time-event" data-id="${event.id}" data-day-role="${role}" style="--ev-color:${color};--ev-pale:${pale};top:${top}px;height:${height}px;left:${left}%;width:calc(${laneWidthPct}% - 2px)">
