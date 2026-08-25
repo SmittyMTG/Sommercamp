@@ -2649,8 +2649,7 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
       : group.entries.find((e) => e.schuldner === myUsername);
   const breakdownParts = [];
   if (focusEntry) {
-    const focusLabel = focusEntry.selbst ? `${escapeHtml(focusEntry.schuldner)} (eigen)` : escapeHtml(focusEntry.schuldner);
-    breakdownParts.push(`${focusLabel}: ${formatEuro(focusEntry.cash)}`);
+    breakdownParts.push(`${escapeHtml(focusEntry.schuldner)}: ${formatEuro(focusEntry.cash)}`);
   }
   // Durchschnitt nur bei mehr als einer Person sinnvoll — bei nur einer
   // Person wäre er ohnehin identisch zu deren Anteil.
