@@ -3,10 +3,6 @@
 // Screen-Navigation + Countdown. Datenanbindung folgt später.
 // ===========================================================
 
-const CAMP_START = new Date("2026-08-05T06:00:00");
-const CAMP_END = new Date("2026-08-16T23:59:59");
-const PARTY_TIME = new Date("2026-08-15T17:00:00"); // Abschlussfeier — Leaderboard schaltet dann frei
-
 // Zentrale 401-Behandlung für ALLE fetch()-Aufrufe in dieser Datei: sobald die
 // Session ungültig ist (abgelaufenes Cookie, Logout auf einem anderen Gerät),
 // sofort zum Login weiterleiten — statt dass Listen im Hintergrund still
@@ -50,56 +46,6 @@ function initNavigation() {
   document.querySelectorAll("[data-go]").forEach((btn) => {
     btn.addEventListener("click", () => goToScreen(btn.dataset.go));
   });
-}
-
-/* ---------- Countdown ---------- */
-// Zählt bis zum Camp-Ende runter (nicht mehr bis zum Start) — die Fortschrittsleiste
-// zeigt entsprechend, wie viel vom Zeitraum Start–Ende bereits vergangen ist.
-function updateCountdown() {
-  const el = document.getElementById("countdown");
-  const progressEl = document.getElementById("countdownProgress");
-  if (!el) return;
-
-  const now = new Date();
-
-  if (now > CAMP_END) {
-    el.innerHTML = `Vorbei <small>🏕️</small>`;
-    if (progressEl) progressEl.style.width = "100%";
-    return;
-  }
-
-  const diffMs = CAMP_END - now;
-  const days = Math.floor(diffMs / 86400000);
-  const hours = Math.floor((diffMs % 86400000) / 3600000);
-  const minutes = Math.floor((diffMs % 3600000) / 60000);
-
-  el.innerHTML = `${days} <small>T</small> ${hours} <small>Std</small> ${minutes} <small>Min</small>`;
-
-  if (progressEl) {
-    const totalMs = CAMP_END - CAMP_START;
-    const elapsed = Math.max(0, now - CAMP_START);
-    const pct = Math.min(100, Math.max(0, Math.round((elapsed / totalMs) * 100)));
-    progressEl.style.width = `${pct}%`;
-  }
-}
-
-// Countdown bis zur Abschlussfeier für die gesperrte Leaderboard-Ansicht.
-function updateLeaderboardCountdown() {
-  const el = document.getElementById("leaderboardCountdown");
-  if (!el) return;
-
-  const now = new Date();
-  if (now > PARTY_TIME) {
-    el.innerHTML = `Jetzt <small>🎉</small>`;
-    return;
-  }
-
-  const diffMs = PARTY_TIME - now;
-  const days = Math.floor(diffMs / 86400000);
-  const hours = Math.floor((diffMs % 86400000) / 3600000);
-  const minutes = Math.floor((diffMs % 3600000) / 60000);
-
-  el.innerHTML = `${days} <small>T</small> ${hours} <small>Std</small> ${minutes} <small>Min</small>`;
 }
 
 /* ---------- Helpers ---------- */
@@ -225,340 +171,6 @@ modalForm.addEventListener("submit", async (e) => {
     await modalSubmitHandler();
   }
 });
-
-/* ---------- Einkaufsliste ---------- */
-const shoppingListEl = document.getElementById("shoppingList");
-const quickShoppingEl = document.getElementById("quickShopping");
-
-function renderShoppingItem(item) {
-  const card = document.createElement("div");
-  card.className = "list-card clickable" + (item.done ? " done" : "");
-  card.dataset.id = item.id;
-
-  const sourceTag = item.woher
-    ? `<span class="source-tag" style="background:${escapeHtml(item.woher.farbe)}">${escapeHtml(item.woher.bezeichnung)}</span>`
-    : "";
-  const urgentTag = item.deadline ? `<p class="list-card-meta danger">❗ wird heute gebraucht</p>` : "";
-
-  card.innerHTML = `
-    <div class="list-card-content">
-      <button type="button" class="list-card-checkbox${item.done ? " checked" : ""}" aria-label="Erledigt"></button>
-      <div class="list-card-text">
-        <p class="list-card-title">${escapeHtml(item.name)}</p>
-        ${sourceTag}
-        ${urgentTag}
-      </div>
-    </div>
-    <div class="list-card-actions">
-      <button type="button" class="urgent-btn${item.deadline ? " active" : ""}" aria-label="Wird heute gebraucht">❗</button>
-      <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
-    </div>
-  `;
-
-  // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button überflüssig)
-  // — alle anderen interaktiven Elemente in der Karte stoppen die Propagation,
-  // damit ein Klick darauf nicht zusätzlich den Bearbeiten-Dialog öffnet.
-  card.addEventListener("click", () => openEditShoppingModal(item));
-
-  // Der Klick aktualisiert die eigene Ansicht sofort über die HTTP-Antwort.
-  // Andere Geräte sehen die Änderung über das Sekunden-Polling (pollShoppingList).
-  const checkbox = card.querySelector(".list-card-checkbox");
-  checkbox.addEventListener("click", async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const res = await fetch(`/api/shopping/${item.id}/toggle`, { method: "PATCH" });
-    if (res.ok) {
-      const data = await res.json();
-      checkbox.classList.toggle("checked", data.done);
-      card.classList.toggle("done", data.done);
-      updateQuickShoppingCount();
-    }
-  });
-
-  card.querySelector(".urgent-btn").addEventListener("click", async (e) => {
-    e.stopPropagation();
-    const res = await fetch(`/api/shopping/${item.id}/deadline-today`, { method: "PATCH" });
-    if (res.ok) {
-      const data = await res.json();
-      item.deadline = data.deadline;
-      renderSortedShoppingList();
-    }
-  });
-
-  card.querySelector(".delete-btn").addEventListener("click", (e) => {
-    e.stopPropagation();
-    openModal({
-      eyebrow: "Einkauf",
-      title: `„${item.name}" löschen?`,
-      bodyHtml: `<p class="muted warning-text">Der Artikel wird für alle aus der Liste entfernt. Das lässt sich nicht rückgängig machen.</p>`,
-      submitLabel: "Löschen",
-      danger: true,
-      onSubmit: async () => {
-        const res = await fetch(`/api/shopping/${item.id}`, { method: "DELETE" });
-        if (res.ok) {
-          card.remove();
-          updateQuickShoppingCount();
-          if (!shoppingListEl.querySelector(".list-card")) {
-            shoppingListEl.innerHTML = `<div class="empty"><p>Einkaufsliste ist noch leer.</p></div>`;
-          }
-        }
-        closeModal();
-      },
-    });
-  });
-
-  return card;
-}
-
-function updateQuickShoppingCount() {
-  if (!quickShoppingEl) return;
-  const open = shoppingListEl.querySelectorAll(".list-card:not(.done)").length;
-  quickShoppingEl.textContent = `${open} offen`;
-}
-
-// Die DB liefert immer dieselbe statische Reihenfolge (Erstellzeit). Sortieren
-// nach Name/Woher/Status ist rein clientseitig und ändert nichts an der
-// zugrunde liegenden, stabilen Basis-Reihenfolge.
-let lastShoppingItems = [];
-let shoppingSortMode = "neu";
-
-// Offene Einträge stehen immer vor erledigten; die gewählte Sortierung
-// (Name/Woher/Neu) gilt jeweils nur innerhalb dieser beiden Gruppen.
-function sortShoppingItems(items, mode) {
-  const sortWithin = (arr) => {
-    const out = [...arr];
-    if (mode === "name") {
-      out.sort((a, b) => a.name.localeCompare(b.name, "de"));
-    } else if (mode === "woher") {
-      out.sort((a, b) => {
-        const an = a.woher ? a.woher.bezeichnung : "￿"; // ohne Woher ans Ende
-        const bn = b.woher ? b.woher.bezeichnung : "￿";
-        return an.localeCompare(bn, "de");
-      });
-    }
-    return out;
-  };
-  const open = items.filter((i) => !i.done);
-  const done = items.filter((i) => i.done);
-  return [...sortWithin(open), ...sortWithin(done)];
-}
-
-function renderShoppingListItems(items) {
-  shoppingListEl.innerHTML = "";
-  if (items.length === 0) {
-    shoppingListEl.innerHTML = `<div class="empty"><p>Einkaufsliste ist noch leer.</p></div>`;
-  } else {
-    items.forEach((item) => shoppingListEl.appendChild(renderShoppingItem(item)));
-  }
-  updateQuickShoppingCount();
-}
-
-function renderSortedShoppingList() {
-  renderShoppingListItems(sortShoppingItems(lastShoppingItems, shoppingSortMode));
-}
-
-const shoppingSortSelect = document.getElementById("shoppingSortSelect");
-if (shoppingSortSelect) {
-  shoppingSortSelect.addEventListener("change", () => {
-    shoppingSortMode = shoppingSortSelect.value;
-    renderSortedShoppingList();
-  });
-}
-
-let lastShoppingSignature = null;
-
-async function loadShoppingList() {
-  try {
-    const res = await fetch("/api/shopping");
-    if (!res.ok) throw new Error("Fehler beim Laden");
-    const items = await res.json();
-    lastShoppingSignature = JSON.stringify(items);
-    lastShoppingItems = items;
-    renderSortedShoppingList();
-  } catch (err) {
-    shoppingListEl.innerHTML = `<div class="empty"><p>Liste konnte nicht geladen werden.</p></div>`;
-  }
-}
-
-// Fragt die Einkaufsliste regelmäßig ab und rendert nur neu, wenn sich
-// wirklich etwas geändert hat — so sehen alle Geräte Änderungen anderer
-// Nutzer nahezu live, ohne WebSocket/Reverse-Proxy-Abhängigkeit.
-async function pollShoppingList() {
-  try {
-    const res = await fetch("/api/shopping");
-    if (!res.ok) return;
-    const items = await res.json();
-    const signature = JSON.stringify(items);
-    if (signature === lastShoppingSignature) return;
-    lastShoppingSignature = signature;
-    lastShoppingItems = items;
-    renderSortedShoppingList();
-  } catch (err) {
-    // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
-  }
-}
-
-let cachedShoppingSources = null;
-
-async function fetchShoppingSources(forceRefresh) {
-  if (cachedShoppingSources && !forceRefresh) return cachedShoppingSources;
-  const res = await fetch("/api/shopping-sources");
-  cachedShoppingSources = res.ok ? await res.json() : [];
-  return cachedShoppingSources;
-}
-
-function shoppingSourceOptionsHtml(sources, selectedId) {
-  return sources
-    .map(
-      (s) =>
-        `<option value="${s.id}"${s.id === selectedId ? " selected" : ""}>${escapeHtml(s.bezeichnung)}</option>`
-    )
-    .join("");
-}
-
-function shoppingModalBodyHtml(sources, prefill = {}) {
-  const selectedWoherId = prefill.woher ? prefill.woher.id : null;
-  return `
-    <div class="form-stack">
-      <label>Produktname
-        <input type="text" id="shoppingNameInput" maxlength="80" value="${escapeHtml(prefill.name || "")}" placeholder="z. B. Kohle für den Grill" required>
-      </label>
-      <label>Woher (optional)
-        <select id="shoppingWoherSelect">
-          <option value="">— keine Angabe —</option>
-          ${shoppingSourceOptionsHtml(sources, selectedWoherId)}
-          <option value="__new__">+ Neue Quelle anlegen…</option>
-        </select>
-      </label>
-      <div id="newSourceFields" class="form-stack hidden">
-        <label>Farbe
-          <input type="color" id="newSourceColor" value="#ffd400">
-        </label>
-        <label>Bezeichnung
-          <input type="text" id="newSourceLabel" maxlength="16" placeholder="z. B. Rewe">
-        </label>
-        <button type="button" id="createSourceBtn" class="secondary compact">Quelle anlegen</button>
-        <p class="error-text hidden new-source-error"></p>
-      </div>
-    </div>
-  `;
-}
-
-// Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten Felder im DOM).
-function wireShoppingSourcePicker() {
-  const woherSelect = document.getElementById("shoppingWoherSelect");
-  const newSourceFields = document.getElementById("newSourceFields");
-  woherSelect.addEventListener("change", () => {
-    newSourceFields.classList.toggle("hidden", woherSelect.value !== "__new__");
-  });
-
-  document.getElementById("createSourceBtn").addEventListener("click", async () => {
-    const colorInput = document.getElementById("newSourceColor");
-    const labelInput = document.getElementById("newSourceLabel");
-    const errEl = document.querySelector(".new-source-error");
-    const bezeichnung = labelInput.value.trim();
-    errEl.classList.add("hidden");
-
-    if (!bezeichnung) {
-      errEl.textContent = "Bitte eine Bezeichnung eingeben.";
-      errEl.classList.remove("hidden");
-      return;
-    }
-
-    const res = await fetch("/api/shopping-sources", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ farbe: colorInput.value, bezeichnung }),
-    });
-
-    if (res.ok) {
-      const created = await res.json();
-      const sources = await fetchShoppingSources(true);
-      woherSelect.innerHTML = `
-        <option value="">— keine Angabe —</option>
-        ${shoppingSourceOptionsHtml(sources, created.id)}
-        <option value="__new__">+ Neue Quelle anlegen…</option>
-      `;
-      newSourceFields.classList.add("hidden");
-    } else {
-      const data = await res.json().catch(() => ({}));
-      errEl.textContent = data.error || "Konnte nicht angelegt werden.";
-      errEl.classList.remove("hidden");
-    }
-  });
-}
-
-function readShoppingForm() {
-  const name = document.getElementById("shoppingNameInput").value.trim();
-  const woherSelect = document.getElementById("shoppingWoherSelect");
-  if (woherSelect.value === "__new__") return null; // erst Quelle anlegen, dann erneut speichern
-  const woher_id = woherSelect.value ? parseInt(woherSelect.value, 10) : null;
-  if (!name) return null;
-  return { name, woher_id };
-}
-
-async function openAddShoppingModal() {
-  const sources = await fetchShoppingSources();
-
-  openModal({
-    eyebrow: "Einkauf",
-    title: "Artikel hinzufügen",
-    bodyHtml: shoppingModalBodyHtml(sources),
-    onSubmit: async () => {
-      const form = readShoppingForm();
-      if (!form) return;
-
-      const res = await fetch("/api/shopping", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-
-      if (res.ok) {
-        const newItem = await res.json();
-        lastShoppingItems = [newItem, ...lastShoppingItems];
-        lastShoppingSignature = JSON.stringify(lastShoppingItems);
-        renderSortedShoppingList();
-        closeModal();
-      }
-    },
-  });
-
-  wireShoppingSourcePicker();
-}
-
-async function openEditShoppingModal(item) {
-  const sources = await fetchShoppingSources();
-
-  openModal({
-    eyebrow: "Einkauf",
-    title: "Artikel bearbeiten",
-    submitLabel: "Speichern",
-    bodyHtml: shoppingModalBodyHtml(sources, item),
-    onSubmit: async () => {
-      const form = readShoppingForm();
-      if (!form) return;
-
-      const res = await fetch(`/api/shopping/${item.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
-      });
-
-      if (res.ok) {
-        const updated = await res.json();
-        lastShoppingItems = lastShoppingItems.map((i) => (i.id === updated.id ? updated : i));
-        lastShoppingSignature = JSON.stringify(lastShoppingItems);
-        renderSortedShoppingList();
-        closeModal();
-      }
-    },
-  });
-
-  wireShoppingSourcePicker();
-}
-
-document.getElementById("addShoppingButton").addEventListener("click", openAddShoppingModal);
 
 /* ---------- Aufgaben (geteilt, mehrere Personen zuweisbar, mit Deadline) ---------- */
 const taskListEl = document.getElementById("taskList");
@@ -738,13 +350,9 @@ function renderTaskItem(task) {
       checkbox.classList.toggle("checked", data.done);
       card.classList.toggle("done", data.done);
       task.done = data.done;
-      // Badge (rote Zahl am Aufgaben-Icon) und "Deine Aufgaben" auf der
-      // Startseite hängen sonst am nächsten Poll-Takt (bis zu 3s) statt sich
-      // sofort mit dem Klick zu aktualisieren.
+      // Badge (rote Zahl am Aufgaben-Icon) hängt sonst am nächsten Poll-Takt
+      // (bis zu 3s) statt sich sofort mit dem Klick zu aktualisieren.
       loadTasks(true);
-      // Kann einen Activity-Feed-Eintrag auslösen ("hat deine Aufgabe
-      // abgeschlossen") — sonst erst nach bis zu 5s im "Neu für dich"-Feed sichtbar.
-      loadActivityFeed();
     }
   });
 
@@ -788,7 +396,6 @@ async function renderFilteredSortedTasks() {
     sorted.forEach((t) => taskListEl.appendChild(renderTaskItem(t)));
   }
 
-  renderMyOpenTasks(me);
   updateMyTasksBadge(me);
 }
 
@@ -804,264 +411,6 @@ function updateMyTasksBadge(me) {
     : 0;
   el.textContent = String(count);
   el.classList.toggle("hidden", count === 0);
-}
-
-/* ---------- Dashboard: Wetter am Camp (echte Daten von Open-Meteo) ---------- */
-const WEATHER_CODES = {
-  0: { icon: "☀️", label: "Klar" },
-  1: { icon: "🌤️", label: "Überwiegend klar" },
-  2: { icon: "⛅", label: "Teilweise bewölkt" },
-  3: { icon: "☁️", label: "Bedeckt" },
-  45: { icon: "🌫️", label: "Nebel" },
-  48: { icon: "🌫️", label: "Reifnebel" },
-  51: { icon: "🌦️", label: "Leichter Nieselregen" },
-  53: { icon: "🌦️", label: "Nieselregen" },
-  55: { icon: "🌧️", label: "Starker Nieselregen" },
-  56: { icon: "🌧️", label: "Gefrierender Niesel" },
-  57: { icon: "🌧️", label: "Starker gefrierender Niesel" },
-  61: { icon: "🌦️", label: "Leichter Regen" },
-  63: { icon: "🌧️", label: "Regen" },
-  65: { icon: "🌧️", label: "Starker Regen" },
-  66: { icon: "🌧️", label: "Gefrierender Regen" },
-  67: { icon: "🌧️", label: "Starker gefrierender Regen" },
-  71: { icon: "🌨️", label: "Leichter Schneefall" },
-  73: { icon: "🌨️", label: "Schneefall" },
-  75: { icon: "❄️", label: "Starker Schneefall" },
-  77: { icon: "❄️", label: "Schneekörner" },
-  80: { icon: "🌦️", label: "Leichte Schauer" },
-  81: { icon: "🌧️", label: "Schauer" },
-  82: { icon: "⛈️", label: "Heftige Schauer" },
-  85: { icon: "🌨️", label: "Leichte Schneeschauer" },
-  86: { icon: "❄️", label: "Starke Schneeschauer" },
-  95: { icon: "⛈️", label: "Gewitter" },
-  96: { icon: "⛈️", label: "Gewitter mit Hagel" },
-  99: { icon: "⛈️", label: "Schweres Gewitter mit Hagel" },
-};
-function weatherInfo(code) {
-  return WEATHER_CODES[code] || { icon: "🌡️", label: "" };
-}
-function windDirLabel(deg) {
-  if (deg == null) return "";
-  const dirs = ["N", "NO", "O", "SO", "S", "SW", "W", "NW"];
-  return dirs[Math.round(deg / 45) % 8];
-}
-
-// Fasst aufeinanderfolgende Warn-Stunden desselben Typs zu einer Zeitspanne
-// zusammen, statt für jede einzelne Stunde eine eigene Zeile zu zeigen.
-function groupWeatherWarnings(warnings) {
-  const groups = [];
-  warnings.forEach((w) => {
-    const last = groups[groups.length - 1];
-    if (last && last.type === w.type && new Date(w.time) - new Date(last.endTime) <= 3600000) {
-      last.endTime = w.time;
-    } else {
-      groups.push({ type: w.type, startTime: w.time, endTime: w.time });
-    }
-  });
-  const fmt = (iso) => new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  return groups.map((g) => {
-    const icon = g.type === "gewitter" ? "⛈️" : "💨";
-    const label = g.type === "gewitter" ? "Gewitter möglich" : "Starke Böen möglich";
-    const range = g.startTime === g.endTime ? fmt(g.startTime) : `${fmt(g.startTime)}–${fmt(g.endTime)}`;
-    return { icon, text: `${label}, ${range} Uhr` };
-  });
-}
-
-// Trocken/Regen/Starkregen kommt direkt vom Backend (aus dem WMO-Tagescode
-// abgeleitet, siehe _classify_precip_status) — Gewitter ist ein eigenes,
-// zusätzliches Flag, unabhängig von der Niederschlags-Einstufung.
-const FORECAST_STATUS_INFO = {
-  trocken: { icon: "☀️", label: "Trocken" },
-  regen: { icon: "🌧️", label: "Regen" },
-  starkregen: { icon: "⛈️", label: "Starkregen" },
-};
-const FORECAST_DAY_LABELS = ["Heute", "Morgen", "Übermorgen"];
-
-function renderForecastDay(day, idx) {
-  const label = FORECAST_DAY_LABELS[idx] || new Date(day.date).toLocaleDateString("de-DE", { weekday: "long" });
-  const status = FORECAST_STATUS_INFO[day.status] || FORECAST_STATUS_INFO.trocken;
-  const rainTimeText =
-    day.rain_from != null
-      ? day.rain_from === day.rain_to
-        ? ` ca. ${day.rain_from} Uhr`
-        : ` ca. ${day.rain_from}–${day.rain_to} Uhr`
-      : "";
-  return `
-    <div class="weather-forecast-day">
-      <div class="weather-forecast-day-head">
-        <span class="weather-forecast-day-label">${label}</span>
-        <span class="weather-forecast-day-temp">${day.temp_max}°/${day.temp_min}°</span>
-      </div>
-      <div class="weather-forecast-day-status">
-        <span class="weather-forecast-icon">${status.icon}</span>
-        <span>${status.label}${rainTimeText}</span>
-        ${day.thunderstorm ? `<span class="weather-forecast-thunder">⚡ Gewitter</span>` : ""}
-      </div>
-      <div class="weather-forecast-day-wind">💨 ${day.wind_max} km/h, Böen bis ${day.gust_max} km/h${day.gust_max >= 40 ? ` (Spitze ca. ${day.gust_peak_hour} Uhr)` : ""}</div>
-    </div>
-  `;
-}
-
-function renderWeather(data) {
-  const el = document.getElementById("weatherCard");
-  if (!el) return;
-  if (!data || !data.current) {
-    el.classList.add("hidden");
-    return;
-  }
-  el.classList.remove("hidden");
-
-  const cur = data.current;
-  const info = weatherInfo(cur.weather_code);
-
-  const warningsHtml = (data.warnings || []).length
-    ? groupWeatherWarnings(data.warnings)
-        .map((w) => `<div class="weather-warning">${w.icon} ${escapeHtml(w.text)}</div>`)
-        .join("")
-    : "";
-
-  const forecastHtml = (data.forecast || []).map((d, i) => renderForecastDay(d, i)).join("");
-
-  el.innerHTML = `
-    <div class="weather-header">
-      <div>
-        <div class="eyebrow">Wetter am Camp</div>
-        <div class="weather-now"><span class="weather-icon">${info.icon}</span><span class="weather-temp">${Math.round(cur.temperature_2m)}°</span></div>
-        <div class="muted">${escapeHtml(info.label)} · Gefühlt ${Math.round(cur.apparent_temperature)}° · Luftfeuchte ${Math.round(cur.relative_humidity_2m)}%</div>
-      </div>
-    </div>
-    ${warningsHtml}
-    <div class="weather-wind-row">💨 ${Math.round(cur.wind_speed_10m)} km/h aus ${windDirLabel(cur.wind_direction_10m)}, Böen bis ${Math.round(cur.wind_gusts_10m)} km/h</div>
-    <p class="weather-subhead">Heute, morgen, übermorgen</p>
-    <div class="weather-forecast-row">${forecastHtml}</div>
-  `;
-}
-
-let lastWeatherSignature = null;
-
-async function loadWeather() {
-  try {
-    const res = await fetch("/api/weather");
-    if (!res.ok) return;
-    const data = await res.json();
-    const signature = JSON.stringify(data);
-    if (signature === lastWeatherSignature) return;
-    lastWeatherSignature = signature;
-    renderWeather(data);
-  } catch (err) {
-    // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
-  }
-}
-
-/* ---------- Dashboard: "Neu für dich" (Activity-Log-Feed) ---------- */
-const activityFeedSectionEl = document.getElementById("activityFeedSection");
-const activityFeedEl = document.getElementById("activityFeed");
-
-function formatActivityTime(iso) {
-  const d = new Date(iso);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  return sameDay
-    ? d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
-    : d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
-}
-
-const ACTIVITY_ICONS = {
-  task_created: "📋",
-  task_done: "✅",
-  expense_created: "💶",
-  payment_reported: "📤",
-  payment_confirmed: "📥",
-};
-
-function renderActivityItem(entry) {
-  const card = document.createElement("div");
-  card.className = "list-card";
-  // Name im fertigen Satz einfärben: Nachricht kommt vom Server als reiner
-  // Text, escapen und dann den (ebenfalls escapten) Namen gegen den farbigen
-  // Tag tauschen — ersetzt nur das erste Vorkommen, das reicht hier immer.
-  const messageHtml = escapeHtml(entry.message).replace(escapeHtml(entry.actor), nameTag(entry.actor));
-  card.innerHTML = `
-    <div class="list-card-text">
-      <p class="list-card-title">${ACTIVITY_ICONS[entry.action] || "•"} ${messageHtml}</p>
-      <p class="list-card-meta">${formatActivityTime(entry.created_at)}</p>
-    </div>
-  `;
-  return card;
-}
-
-let lastActivitySignature = null;
-
-async function loadActivityFeed() {
-  if (!activityFeedEl || !activityFeedSectionEl) return;
-  try {
-    const res = await fetch("/api/activity");
-    if (!res.ok) throw new Error("Fehler beim Laden");
-    const entries = await res.json();
-
-    const signature = JSON.stringify(entries);
-    if (signature === lastActivitySignature) return;
-    lastActivitySignature = signature;
-
-    activityFeedSectionEl.classList.toggle("hidden", entries.length === 0);
-    activityFeedEl.innerHTML = "";
-    entries.forEach((e) => activityFeedEl.appendChild(renderActivityItem(e)));
-  } catch (err) {
-    // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
-  }
-}
-
-/* ---------- Dashboard: "Deine Aufgaben"-Vorschau auf der Startseite ---------- */
-const myOpenTasksEl = document.getElementById("myOpenTasks");
-
-function renderMyOpenTaskCard(task) {
-  const card = document.createElement("div");
-  card.className = "list-card clickable";
-
-  const overdue = isTaskOverdue(task);
-  const metaParts = [];
-  if (task.deadline) {
-    const label = `📅 ${formatDeadline(task.deadline)}`;
-    metaParts.push(overdue ? `<span class="danger">⚠️ ${label}</span>` : label);
-  }
-  const metaHtml = metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : "";
-  const categoryTag = task.category
-    ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
-    : "";
-
-  card.innerHTML = `
-    <div class="list-card-text">
-      <p class="list-card-title">${escapeHtml(task.titel)}</p>
-      ${categoryTag}
-      ${metaHtml}
-    </div>
-  `;
-  card.addEventListener("click", () => goToScreen("more"));
-  return card;
-}
-
-// Eigene + nicht zugewiesene (= für alle geltende) offene Aufgaben — nächste
-// Deadline zuerst, damit heute fällige/überfällige Sachen ganz oben stehen.
-// Läuft am Task-Polling mit, braucht also keinen eigenen Fetch.
-function renderMyOpenTasks(me) {
-  if (!myOpenTasksEl) return;
-
-  const mine = lastTaskItems
-    .filter((t) => !t.done && me && isTaskMine(t, me.id))
-    .sort((a, b) => {
-      if (!a.deadline && !b.deadline) return 0;
-      if (!a.deadline) return 1;
-      if (!b.deadline) return -1;
-      return new Date(a.deadline) - new Date(b.deadline);
-    })
-    .slice(0, 4);
-
-  myOpenTasksEl.innerHTML = "";
-  if (mine.length === 0) {
-    myOpenTasksEl.innerHTML = `<div class="empty-state"><p>Keine offenen Aufgaben für dich.</p></div>`;
-  } else {
-    mine.forEach((t) => myOpenTasksEl.appendChild(renderMyOpenTaskCard(t)));
-  }
 }
 
 let lastTaskSignature = null;
@@ -1380,7 +729,6 @@ async function openAddTaskModal() {
       if (res.ok) {
         closeModal();
         loadTasks(true);
-        loadActivityFeed();
       }
     },
   });
@@ -2194,7 +1542,7 @@ fetchUsersAndMe().then(({ me }) => {
   const tasksNavButton = document.querySelector('.bottom-nav [data-screen="tasks"]');
   const bottomNavEl = document.getElementById("bottomNav");
   if (tasksNavButton) tasksNavButton.classList.remove("hidden");
-  if (bottomNavEl) bottomNavEl.classList.add("nav-5");
+  if (bottomNavEl) bottomNavEl.classList.add("nav-4");
 
   fetchProjects(true).then((projects) => populateProjectFilterSelect(projects));
   loadPrivateTasks(true);
@@ -2343,12 +1691,6 @@ function adminUsersModalBodyHtml(users) {
         <label>Nutzername
           <input type="text" id="newUserUsernameInput" maxlength="40" placeholder="z. B. Mara">
         </label>
-        <label>Rolle
-          <select id="newUserRoleSelect">
-            <option value="user">user</option>
-            <option value="admin">admin</option>
-          </select>
-        </label>
         <button type="button" id="createUserBtn" class="secondary compact">Nutzer anlegen</button>
         <p class="error-text hidden new-user-error"></p>
         <div id="newUserPasswordResult" class="hidden">
@@ -2379,7 +1721,6 @@ async function openAdminUsersModal() {
 
   document.getElementById("createUserBtn").addEventListener("click", async () => {
     const usernameInput = document.getElementById("newUserUsernameInput");
-    const roleSelect = document.getElementById("newUserRoleSelect");
     const errEl = document.querySelector(".new-user-error");
     const resultEl = document.getElementById("newUserPasswordResult");
     errEl.classList.add("hidden");
@@ -2394,7 +1735,7 @@ async function openAdminUsersModal() {
     const createRes = await fetch("/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, role: roleSelect.value }),
+      body: JSON.stringify({ username }),
     });
 
     if (!createRes.ok) {
@@ -2510,9 +1851,6 @@ function renderPlanEvent(event, isAdmin) {
           const res = await fetch(`/api/plan/${event.id}`, { method: "DELETE" });
           if (res.ok) {
             loadPlanList(true);
-            // "Heute geplant" auf der Startseite hat ein eigenes Poll-Intervall
-            // (5s) und würde die Löschung sonst erst mit Verzögerung zeigen.
-            loadTodayPlan();
           }
           closeModal();
         },
@@ -2660,46 +1998,6 @@ async function loadPlanList(force) {
   }
 }
 
-/* ---------- Heute geplant (Startseite) ---------- */
-const todayPlanEl = document.getElementById("todayPlan");
-let lastTodayPlanSignature = null;
-
-function todayIsoDate() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-async function loadTodayPlan() {
-  if (!todayPlanEl) return;
-  try {
-    const res = await fetch("/api/plan");
-    if (!res.ok) throw new Error("Fehler beim Laden");
-    const events = await res.json();
-    const today = todayIsoDate();
-    const todaysEvents = events
-      .filter((e) => e.datum === today)
-      .sort((a, b) => a.uhrzeit.localeCompare(b.uhrzeit));
-
-    const signature = JSON.stringify(todaysEvents);
-    if (signature === lastTodayPlanSignature) return;
-    lastTodayPlanSignature = signature;
-
-    todayPlanEl.innerHTML = "";
-    if (todaysEvents.length === 0) {
-      todayPlanEl.innerHTML = `<div class="empty-state"><p>Noch nichts geplant für heute.</p></div>`;
-    } else {
-      // isAdmin=false: die Startseite ist eine schlanke Übersicht, Bearbeiten/
-      // Löschen bleibt der vollen Camp-Plan-Seite vorbehalten.
-      todaysEvents.forEach((event) => todayPlanEl.appendChild(renderPlanEvent(event, false)));
-    }
-  } catch (err) {
-    todayPlanEl.innerHTML = `<div class="empty-state"><p>Plan konnte nicht geladen werden.</p></div>`;
-  }
-}
-
 function planModalBodyHtml(prefill = {}) {
   // Uhrzeit ohne Datum ergibt keinen Sinn ("noch offen" hat bewusst keine Zeit)
   // — daher nur vorbefüllen, wenn auch ein Datum feststeht. wirePlanForm()
@@ -2764,9 +2062,6 @@ async function submitPlanForm(url, method) {
   if (res.ok) {
     closeModal();
     loadPlanList(true);
-    // "Heute geplant" auf der Startseite hat ein eigenes Poll-Intervall (5s)
-    // und würde neue/geänderte Termine sonst erst mit Verzögerung zeigen.
-    loadTodayPlan();
   } else {
     const data = await res.json().catch(() => ({}));
     const errEl = document.querySelector(".plan-modal-error");
@@ -2846,6 +2141,7 @@ function groupExpenses(expenses) {
         glaeubiger: new Set(),
         glaubigerId: e.glaubiger_id,
         beneficiaryIds: new Set(),
+        createdBy: e.created_by,
         total: 0,
         entries: [],
       });
@@ -2859,10 +2155,10 @@ function groupExpenses(expenses) {
   return Array.from(groups.values());
 }
 
-function renderExpenseGroup(group, isAdmin) {
+function renderExpenseGroup(group, isAdmin, myUsername) {
   const card = document.createElement("div");
   card.className = "list-card";
-  const canManage = isAdmin && group.batchId;
+  const canManage = !!group.batchId && (isAdmin || (!!myUsername && group.createdBy === myUsername));
   if (canManage) card.classList.add("clickable");
   // Namen bleiben hier bewusst unhighlighted — die Randfarbe des Zahlers an
   // der ganzen Kachel reicht als visuelle Zuordnung.
@@ -2893,9 +2189,10 @@ function renderExpenseGroup(group, isAdmin) {
   `;
 
   if (canManage) {
-    // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button überflüssig,
-    // weiterhin nur für Admins) — Löschen stoppt die Propagation, damit ein Klick
-    // darauf nicht zusätzlich den Bearbeiten-Dialog öffnet.
+    // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button überflüssig) —
+    // nur für Admins oder den:die ursprüngliche:n Ersteller:in sichtbar. Löschen
+    // stoppt die Propagation, damit ein Klick darauf nicht zusätzlich den
+    // Bearbeiten-Dialog öffnet.
     card.addEventListener("click", () => openEditExpenseModal(group));
     card.querySelector(".delete-btn").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -2923,6 +2220,7 @@ function renderExpenseGroup(group, isAdmin) {
 const expenseFilterSelect = document.getElementById("expenseFilterSelect");
 let lastExpenses = [];
 let lastExpensesIsAdmin = false;
+let lastExpensesMeUsername = null;
 let expenseFilterMode = null; // "von" | "fuer" | null (= alle)
 let expenseFilterUserId = null;
 let expenseFilterOptionsPopulated = false;
@@ -2981,7 +2279,7 @@ function renderExpenseList() {
       lastExpenses.length === 0 ? "Noch keine Einträge." : "Keine Ausgaben für diese Auswahl."
     }</p></div>`;
   } else {
-    groups.forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, lastExpensesIsAdmin)));
+    groups.forEach((g) => expenseListEl.appendChild(renderExpenseGroup(g, lastExpensesIsAdmin, lastExpensesMeUsername)));
   }
 
   updateExpensesHeroCard();
@@ -3005,6 +2303,7 @@ async function loadExpenses() {
 
     const { me } = await fetchUsersAndMe();
     lastExpensesIsAdmin = !!me && isAdminRole(me.role);
+    lastExpensesMeUsername = me ? me.username : null;
 
     renderExpenseList();
   } catch (err) {
@@ -3292,7 +2591,6 @@ async function openAddExpenseModal() {
       if (res.ok) {
         closeModal();
         refreshAllCostsData();
-        loadActivityFeed();
       }
     },
   });
@@ -3353,7 +2651,7 @@ const costsViews = {
   entry: document.getElementById("costsViewEntry"),
   open: document.getElementById("costsViewOpen"),
   received: document.getElementById("costsViewReceived"),
-  leaderboard: document.getElementById("costsViewLeaderboard"),
+  log: document.getElementById("costsViewLog"),
 };
 
 function switchCostsView(view) {
@@ -3362,6 +2660,7 @@ function switchCostsView(view) {
   });
   if (view === "open") loadOpenSettlements();
   if (view === "received") loadReceivedPayments();
+  if (view === "log") loadExpenseLog();
 }
 
 if (costsViewRow) {
@@ -3655,7 +2954,6 @@ function openConfirmSettleModal(s) {
       if (res.ok) {
         closeModal();
         refreshAllCostsData();
-        loadActivityFeed();
       } else {
         const data = await res.json().catch(() => ({}));
         errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
@@ -4102,7 +3400,6 @@ function renderReceivedItem(r) {
 
     if (res.ok) {
       refreshAllCostsData();
-      loadActivityFeed();
     } else {
       const data = await res.json().catch(() => ({}));
       errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
@@ -4152,10 +3449,68 @@ async function loadReceivedPayments() {
   }
 }
 
-/* ---------- Kosten: Leaderboard ---------- */
-// Bewusst komplett gesperrt bis zur Abschlussparty — auch die eigene
-// Platzierung wird nicht mehr vorab angezeigt (siehe #leaderboardLockHero
-// in index.html), daher gibt es hier nichts mehr zu laden/rendern.
+/* ---------- Kosten: Log (wer hat Ausgaben erstellt/bearbeitet/gelöscht) ---------- */
+const expenseLogListEl = document.getElementById("expenseLogList");
+const expenseLogFilterSelect = document.getElementById("expenseLogFilterSelect");
+let lastExpenseLog = [];
+let expenseLogFilterAction = "";
+
+function formatExpenseLogTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+const EXPENSE_LOG_ICONS = {
+  expense_created: "💶",
+  expense_edited: "✏️",
+  expense_deleted: "🗑️",
+};
+
+function renderExpenseLogItem(entry) {
+  const card = document.createElement("div");
+  card.className = "list-card";
+  const messageHtml = escapeHtml(entry.message).replace(escapeHtml(entry.actor), nameTag(entry.actor));
+  card.innerHTML = `
+    <div class="list-card-text">
+      <p class="list-card-title">${EXPENSE_LOG_ICONS[entry.action] || "•"} ${messageHtml}</p>
+      <p class="list-card-meta">${formatExpenseLogTime(entry.created_at)}</p>
+    </div>
+  `;
+  return card;
+}
+
+function renderExpenseLog() {
+  if (!expenseLogListEl) return;
+  const filtered = expenseLogFilterAction
+    ? lastExpenseLog.filter((e) => e.action === expenseLogFilterAction)
+    : lastExpenseLog;
+
+  expenseLogListEl.innerHTML = "";
+  if (filtered.length === 0) {
+    expenseLogListEl.innerHTML = `<div class="empty-state"><p>Noch keine Einträge.</p></div>`;
+  } else {
+    filtered.forEach((e) => expenseLogListEl.appendChild(renderExpenseLogItem(e)));
+  }
+}
+
+async function loadExpenseLog() {
+  if (!expenseLogListEl) return;
+  try {
+    const res = await fetch("/api/expenses/log");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    lastExpenseLog = await res.json();
+    renderExpenseLog();
+  } catch (err) {
+    expenseLogListEl.innerHTML = `<div class="empty-state"><p>Log konnte nicht geladen werden.</p></div>`;
+  }
+}
+
+if (expenseLogFilterSelect) {
+  expenseLogFilterSelect.addEventListener("change", () => {
+    expenseLogFilterAction = expenseLogFilterSelect.value;
+    renderExpenseLog();
+  });
+}
 
 /* ---------- Kosten: alles alle 3 Sekunden aktualisieren ---------- */
 // Läuft unabhängig davon, welche Unteransicht gerade sichtbar ist (gleiches
@@ -4211,24 +3566,10 @@ async function checkAppVersion() {
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
-  updateCountdown();
-  updateLeaderboardCountdown();
-  setInterval(() => {
-    updateCountdown();
-    updateLeaderboardCountdown();
-  }, 30000); // keine Sekundenanzeige mehr, reicht alle 30s
-  loadShoppingList();
-  setInterval(pollShoppingList, 3000);
   loadTasks();
   setInterval(loadTasks, 3000);
   loadPlanList();
   setInterval(loadPlanList, 5000);
-  loadTodayPlan();
-  setInterval(loadTodayPlan, 5000);
-  loadActivityFeed();
-  setInterval(loadActivityFeed, 5000);
-  loadWeather();
-  setInterval(loadWeather, 600000);
   pollCostsViews();
   setInterval(pollCostsViews, 3000);
   setInterval(checkAppVersion, 60000);

@@ -60,32 +60,8 @@ class UserSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Woher-Tag für Einkaufslisten-Items: erweiterbare Liste aus Farbe + Kurzname
-# (z. B. "Rewe", "Aldi", "Bau"), wird direkt beim Anlegen eines Items mit erstellt.
-class ShoppingSource(Base):
-    __tablename__ = "shopping_sources"
-    id = Column(Integer, primary_key=True, index=True)
-    farbe = Column(String(20), nullable=False)
-    bezeichnung = Column(String(16), nullable=False, unique=True)
-
-
-# NEU: Einkaufslisten-Eintrag
-class ShoppingItem(Base):
-    __tablename__ = "shopping_items"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    done = Column(Boolean, default=False)
-    added_by = Column(String, nullable=True)
-    woher_id = Column(Integer, ForeignKey("shopping_sources.id"), nullable=True)
-    # Schnellaktion (❗-Button): "wird heute gebraucht", kein volles Datumsfeld
-    # im Formular — nur gesetzt/entfernt über den Toggle-Endpunkt.
-    deadline = Column(Date, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-# Kategorie-Tag für Aufgaben (z. B. "Einkauf", "Aufbau") — gleiches Muster wie
-# ShoppingSource: erweiterbare Liste aus Farbe + Kurzname, direkt beim Anlegen
-# einer Aufgabe mit erstellbar.
+# Kategorie-Tag für Aufgaben (z. B. "Einkauf", "Aufbau") — erweiterbare Liste
+# aus Farbe + Kurzname, direkt beim Anlegen einer Aufgabe mit erstellbar.
 class TaskCategory(Base):
     __tablename__ = "task_categories"
     id = Column(Integer, primary_key=True, index=True)
@@ -195,7 +171,7 @@ class PlanEvent(Base):
 
 # Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
 # (schuldner_id == glaubiger_id ist erlaubt: Eintrag für sich selbst, z. B. eigener
-# Snackkauf ohne Beteiligte — zählt fürs Leaderboard, ist aber keine echte Schuld.)
+# Snackkauf ohne Beteiligte — ist aber keine echte Schuld.)
 class Ausgabe(Base):
     __tablename__ = "ausgaben"
     id = Column(Integer, primary_key=True, index=True)
@@ -222,6 +198,12 @@ class Ausgabe(Base):
     # ob das Bearbeiten-Formular den Betrag vorausfüllt (fest) oder leer lässt, damit
     # er bei jeder Bearbeitung neu aufgeteilt wird (auto).
     fixed = Column(Boolean, nullable=False, default=True)
+    # Wer die Ausgabe ursprünglich angelegt hat — bestimmt, wer sie später
+    # bearbeiten/löschen darf (neben Admins). NULL bei Alt-Ausgaben von vor
+    # Einführung dieses Felds; die bleiben bewusst nur admin-verwaltbar, da der
+    # echte Ersteller nicht mehr rekonstruierbar ist. Bleibt beim Bearbeiten
+    # unverändert (auch wenn ein Admin die Ausgabe einer anderen Person editiert).
+    created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -258,8 +240,7 @@ _ensure_column("ausgaben", "gezahlt", "BOOLEAN", "DEFAULT 0")
 _ensure_column("ausgaben", "status", "TEXT", "DEFAULT 'offen'")
 _ensure_column("ausgaben", "batch_id", "TEXT")
 _ensure_column("ausgaben", "fixed", "BOOLEAN", "DEFAULT 1")
-_ensure_column("shopping_items", "woher_id", "INTEGER")
-_ensure_column("shopping_items", "deadline", "DATE")
+_ensure_column("ausgaben", "created_by", "TEXT")
 _ensure_column("tasks", "category_id", "INTEGER")
 _ensure_column("tasks", "aufwand_min", "INTEGER")
 _ensure_column("users", "avatar_path", "TEXT")

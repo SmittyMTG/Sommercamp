@@ -6,7 +6,6 @@ from datetime import date, datetime as dt
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import httpx
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,8 +16,6 @@ from pydantic import BaseModel
 from database import (
     SessionLocal,
     User,
-    ShoppingItem,
-    ShoppingSource,
     PlanEvent,
     Task,
     TaskAssignee,
@@ -96,16 +93,6 @@ def log_action(db: Session, actor: str, affected: str | None, action: str, messa
 
 
 # --- Schemas ---
-class ShoppingItemCreate(BaseModel):
-    name: str
-    woher_id: int | None = None
-
-
-class ShoppingSourceCreate(BaseModel):
-    farbe: str
-    bezeichnung: str
-
-
 class TaskCreate(BaseModel):
     titel: str
     beschreibung: str | None = None
@@ -177,7 +164,6 @@ class ProjectUpdate(BaseModel):
 
 class UserCreate(BaseModel):
     username: str
-    role: str = "user"
 
 
 class PasswordChangeRequest(BaseModel):
@@ -224,175 +210,6 @@ def get_app_version():
     abgefragt, damit die App einen neuen Deploy selbstständig erkennt und sich
     neu lädt, statt dass man manuell aktualisieren muss."""
     return {"version": app_version()}
-
-
-# --- Einkaufsliste ---
-
-def _serialize_shopping_item(item: ShoppingItem, woher: ShoppingSource | None) -> dict:
-    return {
-        "id": item.id,
-        "name": item.name,
-        "done": item.done,
-        "added_by": item.added_by,
-        "deadline": item.deadline.isoformat() if item.deadline else None,
-        "woher": {"id": woher.id, "farbe": woher.farbe, "bezeichnung": woher.bezeichnung} if woher else None,
-    }
-
-
-@app.get("/api/shopping")
-def get_shopping_items(request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    # Statische Sortierung: rein nach Erstellzeit, unabhängig vom "erledigt"-Status.
-    # Sonst springt ein Item beim Abhaken sofort ans Listenende, was beim schnellen
-    # Abhaken mehrerer Dinge nervig ist. Umsortieren nach Name/Woher/Status passiert
-    # nur clientseitig, wenn gewünscht.
-    items = db.query(ShoppingItem).order_by(ShoppingItem.created_at.desc()).all()
-    sources = {s.id: s for s in db.query(ShoppingSource).all()}
-    return [_serialize_shopping_item(i, sources.get(i.woher_id)) for i in items]
-
-
-@app.post("/api/shopping")
-def create_shopping_item(
-    request: Request, item: ShoppingItemCreate, db: Session = Depends(get_db)
-):
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    name = item.name.strip()
-    if not name:
-        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
-    if len(name) > 80:
-        return JSONResponse(status_code=400, content={"error": "Name darf maximal 80 Zeichen haben"})
-
-    woher = None
-    if item.woher_id is not None:
-        woher = db.query(ShoppingSource).filter(ShoppingSource.id == item.woher_id).first()
-        if not woher:
-            return JSONResponse(status_code=400, content={"error": "Unbekannte Quelle"})
-
-    new_item = ShoppingItem(name=name, added_by=user, woher_id=woher.id if woher else None)
-    db.add(new_item)
-    db.commit()
-    db.refresh(new_item)
-
-    return _serialize_shopping_item(new_item, woher)
-
-
-@app.patch("/api/shopping/{item_id}")
-def update_shopping_item(
-    item_id: int, request: Request, item: ShoppingItemCreate, db: Session = Depends(get_db)
-):
-    if not get_current_user(request):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    existing = db.query(ShoppingItem).filter(ShoppingItem.id == item_id).first()
-    if not existing:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-
-    name = item.name.strip()
-    if not name:
-        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
-    if len(name) > 80:
-        return JSONResponse(status_code=400, content={"error": "Name darf maximal 80 Zeichen haben"})
-
-    woher = None
-    if item.woher_id is not None:
-        woher = db.query(ShoppingSource).filter(ShoppingSource.id == item.woher_id).first()
-        if not woher:
-            return JSONResponse(status_code=400, content={"error": "Unbekannte Quelle"})
-
-    existing.name = name
-    existing.woher_id = woher.id if woher else None
-    db.commit()
-
-    return _serialize_shopping_item(existing, woher)
-
-
-# --- Woher-Quellen für die Einkaufsliste ---
-
-@app.get("/api/shopping-sources")
-def list_shopping_sources(request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    sources = db.query(ShoppingSource).order_by(ShoppingSource.bezeichnung.asc()).all()
-    return [{"id": s.id, "farbe": s.farbe, "bezeichnung": s.bezeichnung} for s in sources]
-
-
-@app.post("/api/shopping-sources")
-def create_shopping_source(
-    request: Request, payload: ShoppingSourceCreate, db: Session = Depends(get_db)
-):
-    if not get_current_user(request):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    bezeichnung = payload.bezeichnung.strip()
-    if not bezeichnung:
-        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
-    if len(bezeichnung) > 16:
-        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 16 Zeichen haben"})
-
-    farbe = payload.farbe.strip().lower()
-    if not re.fullmatch(r"#[0-9a-f]{6}", farbe):
-        return JSONResponse(status_code=400, content={"error": "Farbe muss ein Hex-Code sein, z. B. #ffd400"})
-
-    existing = db.query(ShoppingSource).filter(ShoppingSource.bezeichnung == bezeichnung).first()
-    if existing:
-        return JSONResponse(status_code=400, content={"error": "Diese Bezeichnung gibt es schon"})
-
-    source = ShoppingSource(farbe=farbe, bezeichnung=bezeichnung)
-    db.add(source)
-    db.commit()
-    db.refresh(source)
-    return {"id": source.id, "farbe": source.farbe, "bezeichnung": source.bezeichnung}
-
-
-@app.patch("/api/shopping/{item_id}/toggle")
-def toggle_shopping_item(item_id: int, request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    item = db.query(ShoppingItem).filter(ShoppingItem.id == item_id).first()
-    if not item:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-
-    item.done = not item.done
-    db.commit()
-    return {"id": item.id, "done": item.done}
-
-
-@app.patch("/api/shopping/{item_id}/deadline-today")
-def toggle_shopping_deadline_today(item_id: int, request: Request, db: Session = Depends(get_db)):
-    """Schnellaktion (❗-Button): markiert "wird heute gebraucht". Steht das
-    Datum schon auf heute, wird es stattdessen wieder entfernt (Toggle)."""
-    if not get_current_user(request):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    item = db.query(ShoppingItem).filter(ShoppingItem.id == item_id).first()
-    if not item:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-
-    item.deadline = None if item.deadline == today_berlin() else today_berlin()
-    db.commit()
-    return {"id": item.id, "deadline": item.deadline.isoformat() if item.deadline else None}
-
-
-@app.delete("/api/shopping/{item_id}")
-def delete_shopping_item(item_id: int, request: Request, db: Session = Depends(get_db)):
-    user = get_current_user(request)
-    if not user:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    item = db.query(ShoppingItem).filter(ShoppingItem.id == item_id).first()
-    if item:
-        db.delete(item)
-        db.commit()
-    return {"ok": True}
 
 
 # --- Aufgaben (geteilt, mehrere Personen zuweisbar, mit Deadline) ---
@@ -1328,15 +1145,14 @@ def create_user(request: Request, payload: UserCreate, db: Session = Depends(get
     if db.query(User).filter(User.username == new_username).first():
         return JSONResponse(status_code=400, content={"error": "Diesen Nutzernamen gibt es schon"})
 
-    role = payload.role.strip().lower() if payload.role else "user"
-    if role not in ("user", "admin"):
-        return JSONResponse(status_code=400, content={"error": "Ungültige Rolle"})
-
+    # Admin-Rolle lässt sich (noch) nicht über die UI vergeben — neue User
+    # sind immer normale User, ein Admin muss die Rolle bei Bedarf manuell in
+    # der Datenbank ändern.
     generated_password = _generate_password()
     user = User(
         username=new_username,
         hashed_password=pwd_context.hash(generated_password),
-        role=role,
+        role="user",
     )
     db.add(user)
     db.commit()
@@ -1459,8 +1275,32 @@ def list_expenses(request: Request, db: Session = Depends(get_db)):
             "datum": r.datum.isoformat(),
             "selbst": r.schuldner_id == r.glaubiger_id,
             "fixed": bool(r.fixed),
+            "created_by": r.created_by,
         }
         for r in rows
+    ]
+
+
+@app.get("/api/expenses/log")
+def get_expense_log(request: Request, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    entries = (
+        db.query(ActivityLog)
+        .filter(ActivityLog.action.in_(["expense_created", "expense_edited", "expense_deleted"]))
+        .order_by(ActivityLog.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": e.id,
+            "actor": e.actor_username,
+            "action": e.action,
+            "message": e.message,
+            "created_at": e.created_at.isoformat(),
+        }
+        for e in entries
     ]
 
 
@@ -1557,8 +1397,8 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
         )
 
     # Ein Eintrag pro ausgewählter Person, auch für den Zahler selbst (z. B. eigener
-    # Snackkauf ohne Beteiligte). schuldner_id == glaubiger_id ist keine echte Schuld,
-    # zählt aber fürs Leaderboard mit und wird in Saldo/Offene-Zahlungen ausgeblendet.
+    # Snackkauf ohne Beteiligte). schuldner_id == glaubiger_id ist keine echte Schuld
+    # und wird in Saldo/Offene-Zahlungen ausgeblendet.
     # Cent-genau aufteilen statt jeden Anteil einzeln zu runden: sonst kann die
     # Summe der gespeicherten Beträge vom tatsächlichen Gesamtbetrag abweichen
     # (z. B. 100 € / 3 Personen -> 33,33 € x 3 = 99,99 €), was Salden schleichend
@@ -1581,7 +1421,8 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
 def create_expense(
     request: Request, payload: ExpenseCreate, db: Session = Depends(get_db)
 ):
-    if not get_current_user(request):
+    username = get_current_user(request)
+    if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     validated = _validate_expense_payload(payload, db)
@@ -1600,6 +1441,7 @@ def create_expense(
             datum=expense_date,
             batch_id=batch_id,
             fixed=uid in fixed_ids,
+            created_by=username,
         )
         db.add(row)
         created.append(row)
@@ -1619,21 +1461,30 @@ def create_expense(
     return {"created": len(created), "amounts": amounts, "betreff": betreff, "batch_id": batch_id}
 
 
+def _can_manage_expense_batch(user: User, rows: list[Ausgabe]) -> bool:
+    if _is_admin_user(user):
+        return True
+    creator = rows[0].created_by if rows else None
+    return creator is not None and creator == user.username
+
+
 @app.patch("/api/expenses/batch/{batch_id}")
 def update_expense_batch(
     batch_id: str, request: Request, payload: ExpenseCreate, db: Session = Depends(get_db)
 ):
     username = get_current_user(request)
-    if not username:
+    me = db.query(User).filter(User.username == username).first() if username else None
+    if not me:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    if not _require_admin(db, username):
-        return JSONResponse(status_code=403, content={"error": "Nur Admins können Ausgaben bearbeiten"})
 
     existing_rows = (
         db.query(Ausgabe).filter(Ausgabe.batch_id == batch_id, Ausgabe.status == "offen").all()
     )
     if not existing_rows:
         return JSONResponse(status_code=404, content={"error": "Ausgabe nicht gefunden"})
+    if not _can_manage_expense_batch(me, existing_rows):
+        return JSONResponse(status_code=403, content={"error": "Du kannst nur deine eigenen Ausgaben bearbeiten"})
+    original_created_by = existing_rows[0].created_by
 
     validated = _validate_expense_payload(payload, db)
     if isinstance(validated, JSONResponse):
@@ -1654,8 +1505,12 @@ def update_expense_batch(
                 datum=expense_date,
                 batch_id=batch_id,
                 fixed=uid in fixed_ids,
+                # Ersteller bleibt beim Bearbeiten unverändert, auch wenn ein
+                # Admin die Ausgabe einer anderen Person editiert.
+                created_by=original_created_by,
             )
         )
+    log_action(db, username, None, "expense_edited", f"{username} hat die Ausgabe „{betreff}“ bearbeitet")
     db.commit()
 
     return {"batch_id": batch_id, "created": len(beneficiary_ids), "amounts": amounts, "betreff": betreff}
@@ -1664,19 +1519,26 @@ def update_expense_batch(
 @app.delete("/api/expenses/batch/{batch_id}")
 def delete_expense_batch(batch_id: str, request: Request, db: Session = Depends(get_db)):
     username = get_current_user(request)
-    if not username:
+    me = db.query(User).filter(User.username == username).first() if username else None
+    if not me:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    if not _require_admin(db, username):
-        return JSONResponse(status_code=403, content={"error": "Nur Admins können Ausgaben löschen"})
+
+    existing_rows = (
+        db.query(Ausgabe).filter(Ausgabe.batch_id == batch_id, Ausgabe.status == "offen").all()
+    )
+    if not existing_rows:
+        return JSONResponse(status_code=404, content={"error": "Ausgabe nicht gefunden"})
+    if not _can_manage_expense_batch(me, existing_rows):
+        return JSONResponse(status_code=403, content={"error": "Du kannst nur deine eigenen Ausgaben löschen"})
+    betreff = existing_rows[0].betreff
 
     deleted = (
         db.query(Ausgabe)
         .filter(Ausgabe.batch_id == batch_id, Ausgabe.status == "offen")
         .delete(synchronize_session=False)
     )
+    log_action(db, username, None, "expense_deleted", f"{username} hat die Ausgabe „{betreff}“ gelöscht")
     db.commit()
-    if deleted == 0:
-        return JSONResponse(status_code=404, content={"error": "Ausgabe nicht gefunden"})
     return {"ok": True, "deleted": deleted}
 
 
@@ -2205,221 +2067,6 @@ def get_settled_payments(request: Request, db: Session = Depends(get_db)):
         }
         for r in rows
     ]
-
-
-@app.get("/api/expenses/leaderboard")
-def get_expense_leaderboard(request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    if not username:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    # Nur echte Ausgaben zählen fürs Leaderboard, keine Tilgungs-Buchungen.
-    totals = dict(
-        db.query(Ausgabe.schuldner_id, func.sum(Ausgabe.cash))
-        .filter(Ausgabe.status == "offen")
-        .group_by(Ausgabe.schuldner_id)
-        .all()
-    )
-    users = db.query(User).all()
-    ranking = sorted(
-        ({"user_id": u.id, "total": float(totals.get(u.id, 0) or 0)} for u in users),
-        key=lambda x: -x["total"],
-    )
-
-    # Das volle Ranking bleibt bis zum Ende des Camps geheim (siehe Frontend-
-    # Hinweis) — hier wird deshalb nur der eigene Platz zurückgegeben, nie die
-    # Beträge der anderen.
-    me = next((u for u in users if u.username == username), None)
-    rank = next((i + 1 for i, r in enumerate(ranking) if me and r["user_id"] == me.id), None)
-
-    return {
-        "rank": rank,
-        "total_participants": len(ranking),
-        "your_total": float(totals.get(me.id, 0) or 0) if me else 0,
-    }
-
-
-# --- Wetter (Open-Meteo, keine Anmeldung/API-Key nötig) ---
-# Feste Koordinaten des Camp-Standorts.
-CAMP_LAT = 47.6738659
-CAMP_LON = 9.7418924
-WEATHER_CACHE_SECONDS = 600  # 10 Minuten — genug Aktualität, schont die kostenlose API
-THUNDERSTORM_CODES = {95, 96, 99}
-STORM_GUST_THRESHOLD_KMH = 70
-# WMO-Wettercodes zu Niederschlags-Intensität gruppiert — unabhängig von
-# Gewitter (das wird separat über THUNDERSTORM_CODES geflaggt, damit "Regen"/
-# "Starkregen" rein die Intensität beschreiben und Gewitter ein eigenes,
-# zusätzliches Signal bleibt).
-HEAVY_RAIN_CODES = {65, 67, 82, 86, 96, 99}
-RAIN_CODES = {51, 53, 55, 56, 57, 61, 63, 66, 71, 73, 75, 77, 80, 81, 85, 95}
-
-
-def _classify_precip_status(code: int) -> str:
-    if code in HEAVY_RAIN_CODES:
-        return "starkregen"
-    if code in RAIN_CODES:
-        return "regen"
-    return "trocken"
-
-_weather_cache = {"data": None, "fetched_at": 0.0}
-
-
-def _fetch_weather_raw() -> dict:
-    now = time.time()
-    if _weather_cache["data"] and now - _weather_cache["fetched_at"] < WEATHER_CACHE_SECONDS:
-        return _weather_cache["data"]
-
-    resp = httpx.get(
-        "https://api.open-meteo.com/v1/forecast",
-        params={
-            "latitude": CAMP_LAT,
-            "longitude": CAMP_LON,
-            "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,"
-            "wind_gusts_10m,wind_direction_10m,relative_humidity_2m,precipitation",
-            "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code,"
-            "wind_speed_10m,wind_gusts_10m",
-            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
-            "wind_speed_10m_max,wind_gusts_10m_max,sunrise,sunset",
-            "timezone": "Europe/Berlin",
-            "forecast_days": 4,
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    _weather_cache["data"] = data
-    _weather_cache["fetched_at"] = now
-    return data
-
-
-@app.get("/api/weather")
-def get_weather(request: Request):
-    """Kein Standort-Handling nötig — der Camp-Standort ist fix. Ableitung von
-    Gewitter-/Sturmwarnungen passiert hier aus den echten Open-Meteo-Rohdaten
-    (Wettercode 95/96/99 bzw. Böen ab 70 km/h in den nächsten 72h) — das ist
-    keine offizielle DWD-Unwetterwarnung, sondern eine eigene, transparente
-    Schwellenwert-Auswertung auf Basis echter Vorhersagedaten."""
-    if not get_current_user(request):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    try:
-        data = _fetch_weather_raw()
-    except Exception:
-        return JSONResponse(status_code=502, content={"error": "Wetterdaten aktuell nicht abrufbar"})
-
-    hourly = data.get("hourly", {})
-    times = hourly.get("time", [])
-    codes = hourly.get("weather_code", [])
-    gusts = hourly.get("wind_gusts_10m", [])
-    # current.time hat Minutenauflösung (z. B. "...T12:30"), hourly.time nur
-    # volle Stunden — ein exakter String-Vergleich träfe daher nie. ISO8601 in
-    # diesem Format ("YYYY-MM-DDTHH:MM") vergleicht sich lexikografisch korrekt
-    # chronologisch, daher reicht ">=" um die nächste kommende Stunde zu finden.
-    current_time = data.get("current", {}).get("time") or ""
-    start_idx = next((i for i, t in enumerate(times) if t >= current_time), 0)
-    # 72h statt nur 24h: die 3-Tage-Prognose (heute/morgen/übermorgen) braucht
-    # stündliche Auflösung für alle drei Tage, nicht nur für den ersten, sonst
-    # lässt sich für Tag 2/3 keine Uhrzeit für Regen/Böen angeben.
-    # codes/gusts können bei einer degradierten Open-Meteo-Antwort kürzer als
-    # times sein — end_idx muss auch das begrenzen, sonst crasht codes[i]/gusts[i]
-    # weiter unten ungefangen mit IndexError.
-    end_idx = min(start_idx + 72, len(times), len(codes), len(gusts))
-
-    warnings = []
-    for i in range(start_idx, end_idx):
-        if codes[i] in THUNDERSTORM_CODES:
-            warnings.append({"type": "gewitter", "time": times[i], "message": "Gewitter möglich"})
-        elif gusts[i] >= STORM_GUST_THRESHOLD_KMH:
-            warnings.append(
-                {"type": "sturm", "time": times[i], "message": f"Starke Böen bis {round(gusts[i])} km/h"}
-            )
-
-    hourly_out = [
-        {
-            "time": times[i],
-            "temp": hourly.get("temperature_2m", [None])[i] if i < len(hourly.get("temperature_2m", [])) else None,
-            "precip_prob": hourly.get("precipitation_probability", [None])[i]
-            if i < len(hourly.get("precipitation_probability", []))
-            else None,
-            "precip": hourly.get("precipitation", [None])[i] if i < len(hourly.get("precipitation", [])) else None,
-            "code": codes[i],
-            "wind": hourly.get("wind_speed_10m", [None])[i] if i < len(hourly.get("wind_speed_10m", [])) else None,
-            "gust": gusts[i] if i < len(gusts) else None,
-        }
-        for i in range(start_idx, end_idx)
-    ]
-
-    daily = data.get("daily", {})
-    daily_out = [
-        {
-            "date": daily["time"][i],
-            "code": daily["weather_code"][i],
-            "temp_max": daily["temperature_2m_max"][i],
-            "temp_min": daily["temperature_2m_min"][i],
-            "precip_prob": daily["precipitation_probability_max"][i],
-            "wind_max": daily["wind_speed_10m_max"][i],
-            "gust_max": daily["wind_gusts_10m_max"][i],
-        }
-        for i in range(len(daily.get("time", [])))
-    ]
-
-    # Fokussierte 3-Tage-Prognose (heute/morgen/übermorgen) mit genau den vier
-    # relevanten Signalen: Niederschlags-Intensität (trocken/regen/starkregen)
-    # MIT Uhrzeit-Fenster, Gewitter, Windgeschwindigkeit mit Böen-Spitze samt
-    # Uhrzeit. Bewusst aus den STÜNDLICHEN Daten abgeleitet (nicht aus dem
-    # einzelnen Tages-Code) — so bleibt die Einstufung immer konsistent mit der
-    # angezeigten Uhrzeit, statt wie vorher zwei unabhängige Signale zu zeigen,
-    # die sich scheinbar widersprechen konnten.
-    precips = hourly.get("precipitation", [])
-    precip_probs = hourly.get("precipitation_probability", [])
-
-    day_groups: dict[str, list[int]] = {}
-    for i in range(start_idx, end_idx):
-        day_groups.setdefault(times[i][:10], []).append(i)
-
-    forecast = []
-    for date, idxs in list(day_groups.items())[:3]:
-        rain_idxs = [
-            i
-            for i in idxs
-            if (precips[i] if i < len(precips) else 0) >= 0.1
-            or (precip_probs[i] if i < len(precip_probs) else 0) >= 30
-        ]
-        if rain_idxs:
-            status = "starkregen" if any(codes[i] in HEAVY_RAIN_CODES for i in rain_idxs) else "regen"
-            rain_from = int(times[rain_idxs[0]][11:13])
-            rain_to = int(times[rain_idxs[-1]][11:13])
-        else:
-            status = "trocken"
-            rain_from = None
-            rain_to = None
-
-        gust_peak_idx = max(idxs, key=lambda i: gusts[i] if i < len(gusts) else 0)
-        day_info = next((d for d in daily_out if d["date"] == date), None)
-
-        forecast.append(
-            {
-                "date": date,
-                "status": status,
-                "rain_from": rain_from,
-                "rain_to": rain_to,
-                "thunderstorm": any(codes[i] in THUNDERSTORM_CODES for i in idxs),
-                "wind_max": round(day_info["wind_max"]) if day_info else None,
-                "gust_max": round(gusts[gust_peak_idx]),
-                "gust_peak_hour": int(times[gust_peak_idx][11:13]),
-                "temp_max": round(day_info["temp_max"]) if day_info else None,
-                "temp_min": round(day_info["temp_min"]) if day_info else None,
-            }
-        )
-
-    return {
-        "current": data.get("current"),
-        "hourly": hourly_out,
-        "daily": daily_out,
-        "forecast": forecast,
-        "warnings": warnings,
-        "fetched_at": _weather_cache["fetched_at"],
-    }
 
 
 if __name__ == "__main__":

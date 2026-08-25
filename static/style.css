@@ -23,17 +23,15 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .app-shell::-webkit-scrollbar-track{background:transparent}
 .app-shell::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px}
 .app-shell::-webkit-scrollbar-thumb:hover{background:var(--surface2)}
-.topbar{display:flex;justify-content:space-between;align-items:center;margin:4px 0 16px}
+.topbar{display:flex;justify-content:flex-end;align-items:center;margin:4px 0 16px}
 .topbar-actions{display:flex;gap:8px;align-items:center}
 .avatar-button{border-radius:999px;width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:17px}
 .avatar-img{width:100%;height:100%;object-fit:cover;border-radius:999px}
 .avatar-preview{width:64px;height:64px;border-radius:999px;object-fit:cover;background:var(--surface2);display:block}
-.brand{font-weight:1000;font-size:26px;letter-spacing:.12em}.subtitle{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em}
 .hero-card,.card{background:linear-gradient(145deg,#212127,#141418);border:1px solid var(--line);border-radius:24px;padding:20px;box-shadow:var(--shadow)}
 .hero-card{padding:24px}.mini-hero{margin-bottom:18px}
 .eyebrow{text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-size:11px;font-weight:850}
 .countdown{font-size:34px;line-height:1.05;font-weight:1000;margin:10px 0 8px}.countdown small{font-size:.4em;font-weight:800;color:var(--muted);letter-spacing:.02em;margin-right:.35em}.muted{color:var(--muted);font-size:13px}
-.progress{height:10px;background:#303038;border-radius:999px;overflow:hidden;margin-top:18px}.progress span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--yellow),var(--yellow2))}
 .section-heading{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:12px;margin:24px 0 12px}.section-heading h2{margin:2px 0 0;font-size:21px}
 .sticky-heading{position:sticky;top:0;background:linear-gradient(var(--bg) 76%,transparent);padding:12px 0;z-index:5}
 .stack{display:grid;gap:10px}.plan-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:15px}
@@ -85,8 +83,8 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .action-row{display:flex;flex-wrap:wrap;gap:7px}.tiny{padding:8px 10px;border-radius:11px;border:none;background:var(--surface2);color:var(--text);font-weight:850;min-height:32px;display:flex;align-items:center;justify-content:center}
 .filter-row{display:flex;gap:8px;overflow:auto;padding-bottom:10px}.filter{white-space:nowrap;border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:8px 11px;border-radius:999px}.filter.active{background:var(--yellow);color:#111;border-color:var(--yellow);font-weight:900}
 .filter-row.two-row{flex-wrap:wrap;overflow:visible}
-.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(760px,100%);display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:rgba(16,16,20,.94);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:8px 5px calc(8px + env(safe-area-inset-bottom));z-index:20}
-.bottom-nav.nav-5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(760px,100%);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:rgba(16,16,20,.94);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:8px 5px calc(8px + env(safe-area-inset-bottom));z-index:20}
+.bottom-nav.nav-4{grid-template-columns:repeat(4,minmax(0,1fr))}
 .compact-hero{padding:14px 16px}.compact-hero .eyebrow{margin-bottom:1px}.compact-hero .countdown{font-size:22px;margin:4px 0 2px}.compact-hero .muted{font-size:12px}
 .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--red);color:#fff;font-size:10px;font-weight:900;line-height:1;margin-left:6px;vertical-align:middle}
 .bottom-nav button{position:relative}
@@ -184,24 +182,5 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .money-flow-node-label{font-size:11px;font-weight:700;fill:var(--text)}
 .money-flow-node-amount{font-size:10px;fill:var(--muted)}
 .money-flow-edge-label{font-size:10px;font-weight:800;paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
-
-/* Wetter */
-.weather-card{margin-top:18px;margin-bottom:16px}
-.weather-header{display:flex;justify-content:space-between;align-items:flex-start}
-.weather-now{display:flex;align-items:center;gap:8px;margin:4px 0 2px}
-.weather-icon{font-size:32px;line-height:1}
-.weather-temp{font-size:32px;font-weight:900}
-.weather-warning{display:flex;align-items:center;gap:6px;background:rgba(255,98,98,.15);border:1px solid var(--red);color:var(--red);border-radius:12px;padding:8px 10px;font-size:12px;font-weight:800;margin-top:10px}
-.weather-subhead{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 8px}
-.weather-wind-row{font-size:13px;color:var(--text);background:var(--surface2);border-radius:12px;padding:8px 10px;margin-top:8px}
-.weather-forecast-row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.weather-forecast-day{background:var(--surface2);border-radius:14px;padding:10px 8px;display:flex;flex-direction:column;gap:6px}
-.weather-forecast-day-head{display:flex;justify-content:space-between;align-items:baseline;font-size:12px}
-.weather-forecast-day-label{font-weight:800}
-.weather-forecast-day-temp{color:var(--muted);font-size:11px}
-.weather-forecast-day-status{display:flex;flex-direction:column;align-items:flex-start;gap:2px;font-size:12px;font-weight:700}
-.weather-forecast-icon{font-size:20px}
-.weather-forecast-thunder{color:var(--red);font-size:11px;font-weight:800}
-.weather-forecast-day-wind{font-size:11px;color:var(--muted)}
 
 @media(min-width:650px){.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}

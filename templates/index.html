@@ -18,10 +18,6 @@
 
   <main class="app-shell">
     <header class="topbar">
-      <div>
-        <div class="brand">Sommercamp<span class="brand-accent">26</span></div>
-        <div class="subtitle">Final Chapter · 04.–16. August</div>
-      </div>
       <div class="topbar-actions">
         <button id="adminUsersButton" class="icon-button hidden" aria-label="Nutzer verwalten">👥</button>
         <button id="profileButton" class="icon-button avatar-button" aria-label="Profil">
@@ -32,58 +28,6 @@
     </header>
 
     <section id="appContent">
-      <!-- ============ HOME ============ -->
-      <section id="screen-home" class="screen">
-        <div class="hero-card">
-          <div class="contour-field" aria-hidden="true">
-            <span></span><span></span><span></span><span></span>
-          </div>
-          <div class="hero-inner">
-            <div class="eyebrow">Countdown bis Camp-Ende</div>
-            <div id="countdown" class="countdown">-- <small>T</small> -- <small>Std</small> -- <small>Min</small></div>
-            <div id="campRange" class="muted">04.–16. August 2026</div>
-            <div class="progress"><span id="countdownProgress"></span></div>
-          </div>
-        </div>
-
-        <div id="weatherCard" class="card weather-card hidden"></div>
-
-        <div id="activityFeedSection" class="hidden">
-          <div class="section-heading">
-            <div>
-              <div class="eyebrow">Für dich</div>
-              <h2>Neu für dich</h2>
-            </div>
-          </div>
-          <div id="activityFeed" class="stack"></div>
-        </div>
-
-        <div class="section-heading">
-          <div>
-            <div class="eyebrow">Dashboard</div>
-            <h2 id="todayHeading">Heute geplant</h2>
-          </div>
-        </div>
-        <div id="todayPlan" class="stack">
-          <div class="empty-state">
-            <p>Noch nichts geplant für heute.</p>
-          </div>
-        </div>
-
-        <div class="section-heading">
-          <div>
-            <div class="eyebrow">Für dich offen</div>
-            <h2>Deine Aufgaben</h2>
-          </div>
-        </div>
-        <div id="myOpenTasks" class="stack">
-          <div class="empty-state">
-            <p>Keine offenen Aufgaben für dich.</p>
-          </div>
-        </div>
-
-      </section>
-
       <!-- ============ PLAN ============ -->
       <section id="screen-plan" class="screen">
         <div class="plan-sticky-top">
@@ -119,7 +63,7 @@
           <button type="button" class="filter active" data-view="entry">Ausgaben</button>
           <button type="button" class="filter" data-view="open">Offene Zahlungen</button>
           <button type="button" class="filter" data-view="received">Erhaltene Zahlungen<span id="receivedTabBadge" class="nav-badge hidden">0</span></button>
-          <button type="button" class="filter" data-view="leaderboard">Leaderboard</button>
+          <button type="button" class="filter" data-view="log">Log</button>
         </div>
 
         <div id="costsViewEntry" class="costs-view">
@@ -167,30 +111,18 @@
           </div>
         </div>
 
-        <div id="costsViewLeaderboard" class="costs-view hidden">
-          <h3>Leaderboard</h3>
-          <p class="muted">Wer hat für sich am meisten Geld ausgegeben?</p>
-          <div id="leaderboardLockHero" class="hero-card mini-hero">
-            <div class="eyebrow">🔒 Gesperrt bis zur Abschlussparty</div>
-            <div id="leaderboardCountdown" class="countdown">-- <small>T</small> -- <small>Std</small> -- <small>Min</small></div>
-            <div class="muted">Das vollständige Leaderboard wird bei der Abschlussparty freigeschaltet.</div>
+        <div id="costsViewLog" class="costs-view hidden">
+          <h3>Log</h3>
+          <p class="muted">Wer hat welche Ausgabe angelegt, bearbeitet oder gelöscht.</p>
+          <select id="expenseLogFilterSelect" class="sort-select">
+            <option value="">Alle</option>
+            <option value="expense_created">Erstellt</option>
+            <option value="expense_edited">Bearbeitet</option>
+            <option value="expense_deleted">Gelöscht</option>
+          </select>
+          <div id="expenseLogList" class="stack">
+            <div class="empty-state"><p>Lädt …</p></div>
           </div>
-        </div>
-      </section>
-
-      <!-- ============ SHOPPING ============ -->
-      <section id="screen-shopping" class="screen">
-        <div class="section-heading sticky-heading">
-          <div><div class="eyebrow">Für alle synchron</div><h2>Einkaufsliste</h2></div>
-          <button id="addShoppingButton" class="primary compact">＋ Artikel</button>
-        </div>
-        <select id="shoppingSortSelect" class="sort-select">
-          <option value="neu">Sortieren nach: Neu zuerst</option>
-          <option value="name">Sortieren nach: Bezeichnung (A–Z)</option>
-          <option value="woher">Sortieren nach: Woher (Markt)</option>
-        </select>
-        <div id="shoppingList" class="stack">
-          <div class="empty-state">Lädt …</div>
         </div>
       </section>
 
@@ -258,10 +190,8 @@
   </main>
 
   <nav id="bottomNav" class="bottom-nav">
-    <button class="nav-item hidden" data-screen="home"><span>⌂</span>Heute</button>
     <button class="nav-item" data-screen="plan"><span>▣</span>Plan</button>
     <button class="nav-item active" data-screen="costs"><span>€</span>Kosten<span id="costsNavBadge" class="nav-badge hidden">0</span></button>
-    <button class="nav-item" data-screen="shopping"><span>✓</span>Einkauf</button>
     <button class="nav-item" data-screen="more"><span>☑</span>Aufgaben<span id="myTasksNavBadge" class="nav-badge hidden">0</span></button>
     <button class="nav-item hidden" data-screen="tasks"><span>✦</span>Tasks</button>
   </nav>

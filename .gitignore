@@ -76,6 +76,10 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+uploads
+
+*.webp
+
 # PyBuilder
 .pybuilder/
 target/
