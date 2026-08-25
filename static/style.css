@@ -56,6 +56,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    eigene Nutzerfarbe statt festem Gelb, mit .primary.fab-button für höhere
    Spezifität als die .primary-Regel oben. */
 .primary.fab-button{position:fixed;right:16px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:21;box-shadow:0 10px 25px rgba(0,0,0,.4);background:var(--me-color,var(--yellow))}
+/* Zweiter schwebender Button auf derselben Seite (z. B. Admin-Funktion
+   "+ Projekt" neben dem normalen "+ Task") — gestapelt über dem Standard. */
+.primary.fab-button.fab-button-stacked{bottom:calc(136px + env(safe-area-inset-bottom))}
 .danger{color:var(--red)}.secondary.danger{border-color:var(--red)}.success{color:var(--green)}
 .list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}
 .list-card.clickable{cursor:pointer}.list-card.clickable:active{background:var(--surface2)}
@@ -194,7 +197,10 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 
 
 /* Geldfluss-Diagramm (Offene Zahlungen) */
-.money-flow-card{margin-bottom:16px}
+/* Deutlich schmalerer Seiten-Rand als der geerbte .card-Standard (20px) —
+   das Diagramm soll möglichst viel der verfügbaren Breite nutzen, nicht an
+   den Seiten von ungenutzter Fläche eingerahmt werden. */
+.money-flow-card{margin-bottom:16px;padding:16px 6px}
 .money-flow-diagram{width:100%}
 .money-flow-diagram svg{display:block;width:100%;height:auto}
 .money-flow-node-amount{font-size:10px;fill:var(--muted)}

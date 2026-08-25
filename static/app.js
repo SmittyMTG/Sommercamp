@@ -1655,9 +1655,12 @@ fetchUsersAndMe().then(({ me }) => {
   loadPrivateTasks(true);
   setInterval(loadPrivateTasks, 5000);
 
-  if (isAdminRole(me.role) && projectAdminPanelEl) {
-    projectAdminPanelEl.classList.remove("hidden");
-    renderProjectAdminPanel();
+  if (isAdminRole(me.role)) {
+    if (projectAdminPanelEl) {
+      projectAdminPanelEl.classList.remove("hidden");
+      renderProjectAdminPanel();
+    }
+    if (addProjectButton) addProjectButton.classList.remove("hidden");
   }
 });
 
@@ -2969,8 +2972,12 @@ function buildMoneyFlowSvg(settlements) {
   // MIN_LABEL_GAP der Bänder-Labels weiter unten, ein Mindestabstand
   // zwischen den Label-MITTELPUNKTEN erzwungen (die farbigen Balken selbst
   // bleiben unverändert, nur die Textposition wird bei Bedarf verschoben).
-  const NODE_LABEL_MIN_GAP = 24;
-  const NODE_AVATAR_R = 6;
+  // Etwas kleinere Pille als vorher plus fester Abstand zur Betrags-Zeile
+  // darunter, damit sich beide nicht mehr überlappen — Mindestabstand
+  // zwischen den Label-MITTELPUNKTEN daher entsprechend größer als die
+  // Gesamthöhe von Pille+Lücke+Betrag (NODE_GROUP_H weiter unten).
+  const NODE_LABEL_MIN_GAP = 34;
+  const NODE_AVATAR_R = 5;
   function nodeLabelCenters(nodes, positions) {
     const centers = nodes.map((n) => positions[n.id].y + positions[n.id].h / 2);
     for (let i = 1; i < centers.length; i++) {
@@ -2986,24 +2993,28 @@ function buildMoneyFlowSvg(settlements) {
   // verfügbar) — reicht, um die Pille passgenau um Avatar+Name zu legen statt
   // eine großzügige Pauschalbreite anzunehmen.
   function estimateNameWidth(name) {
-    return name.length * 6.6;
+    return name.length * 6.0;
   }
 
-  const NODE_PILL_PAD_LEFT = 3;
-  const NODE_PILL_PAD_RIGHT = 7;
-  const NODE_PILL_GAP = 4;
-  const NODE_PILL_H = 16;
+  const NODE_PILL_PAD_LEFT = 2;
+  const NODE_PILL_PAD_RIGHT = 6;
+  const NODE_PILL_GAP = 3;
+  const NODE_PILL_H = 14;
+  const NODE_PILL_TO_AMOUNT_GAP = 4;
+  const NODE_AMOUNT_FONT_SIZE = 10;
+  const NODE_AMOUNT_ROW_H = 12;
+  const NODE_GROUP_H = NODE_PILL_H + NODE_PILL_TO_AMOUNT_GAP + NODE_AMOUNT_ROW_H;
 
-  // Avatar + Name als EIN geschlossenes, farbiges Element — genau wie
-  // nameTag() im übrigen UI (siehe .name-pill in style.css): Avatar (oder
-  // "?"-Platzhalter) immer LINKS vom Namen, beides vertikal zentriert auf
-  // der Namenszeile. "side" bestimmt nur, ob die Pille von edgeX aus nach
-  // links (Schuldner-Spalte, Balken rechts) oder rechts (Gläubiger-Spalte,
-  // Balken links) wächst — die Avatar-vor-Name-Reihenfolge bleibt immer
-  // gleich. Eigene <clipPath> pro Vorkommen, da dieselbe Person sowohl
-  // links als auch rechts auftauchen kann.
+  // Avatar+Name-Pille UND Betrag als ein gemeinsam vertikal zentrierter
+  // Wrapper (<g>) — genau wie nameTag() im übrigen UI (siehe .name-pill in
+  // style.css): Avatar (oder "?"-Platzhalter) immer LINKS vom Namen, Betrag
+  // mit festem Abstand darunter, an derselben Kante verankert. "side"
+  // bestimmt nur, ob die Pille von edgeX aus nach links (Schuldner-Spalte,
+  // Balken rechts) oder rechts (Gläubiger-Spalte, Balken links) wächst — die
+  // Avatar-vor-Name-Reihenfolge bleibt immer gleich. Eigene <clipPath> pro
+  // Vorkommen, da dieselbe Person sowohl links als auch rechts auftauchen kann.
   let clipIdCounter = 0;
-  function nodeAvatarPillSvg(username, side, edgeX, centerY) {
+  function nodeLabelGroupSvg(username, total, side, edgeX, groupCenterY) {
     clipIdCounter += 1;
     const clipId = `mf-avatar-clip-${clipIdCounter}`;
     const color = USER_COLORS[username] || "#ffd400";
@@ -3011,19 +3022,29 @@ function buildMoneyFlowSvg(settlements) {
     const nameWidth = estimateNameWidth(username);
     const pillWidth = NODE_PILL_PAD_LEFT + avatarD + NODE_PILL_GAP + nameWidth + NODE_PILL_PAD_RIGHT;
     const pillLeft = side === "left" ? edgeX - pillWidth : edgeX;
-    const pillTop = centerY - NODE_PILL_H / 2;
+
+    const groupTop = groupCenterY - NODE_GROUP_H / 2;
+    const pillTop = groupTop;
+    const pillCenterY = pillTop + NODE_PILL_H / 2;
+    const amountBaselineY = pillTop + NODE_PILL_H + NODE_PILL_TO_AMOUNT_GAP + NODE_AMOUNT_FONT_SIZE * 0.8;
+
     const avatarCx = pillLeft + NODE_PILL_PAD_LEFT + NODE_AVATAR_R;
     const textX = avatarCx + NODE_AVATAR_R + NODE_PILL_GAP;
 
     const avatarPath = USER_AVATARS[username];
     const avatarSvg = avatarPath
-      ? `<clipPath id="${clipId}"><circle cx="${avatarCx.toFixed(1)}" cy="${centerY.toFixed(1)}" r="${NODE_AVATAR_R}"/></clipPath><image href="${avatarPath}" x="${(avatarCx - NODE_AVATAR_R).toFixed(1)}" y="${(centerY - NODE_AVATAR_R).toFixed(1)}" width="${avatarD}" height="${avatarD}" clip-path="url(#${clipId})" preserveAspectRatio="xMidYMid slice"/>`
-      : `<circle cx="${avatarCx.toFixed(1)}" cy="${centerY.toFixed(1)}" r="${NODE_AVATAR_R}" fill="var(--surface2)"/><text x="${avatarCx.toFixed(1)}" y="${centerY.toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${NODE_AVATAR_R}" font-weight="800" fill="var(--muted)">?</text>`;
+      ? `<clipPath id="${clipId}"><circle cx="${avatarCx.toFixed(1)}" cy="${pillCenterY.toFixed(1)}" r="${NODE_AVATAR_R}"/></clipPath><image href="${avatarPath}" x="${(avatarCx - NODE_AVATAR_R).toFixed(1)}" y="${(pillCenterY - NODE_AVATAR_R).toFixed(1)}" width="${avatarD}" height="${avatarD}" clip-path="url(#${clipId})" preserveAspectRatio="xMidYMid slice"/>`
+      : `<circle cx="${avatarCx.toFixed(1)}" cy="${pillCenterY.toFixed(1)}" r="${NODE_AVATAR_R}" fill="var(--surface2)"/><text x="${avatarCx.toFixed(1)}" y="${pillCenterY.toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${NODE_AVATAR_R}" font-weight="800" fill="var(--muted)">?</text>`;
+
+    const amountAnchor = side === "left" ? "end" : "start";
 
     return `
-      <rect x="${pillLeft.toFixed(1)}" y="${pillTop.toFixed(1)}" width="${pillWidth.toFixed(1)}" height="${NODE_PILL_H}" rx="${NODE_PILL_H / 2}" fill="${color}"/>
-      ${avatarSvg}
-      <text x="${textX.toFixed(1)}" y="${(centerY + 3.5).toFixed(1)}" text-anchor="start" font-size="11" font-weight="800" fill="#111">${escapeHtml(username)}</text>
+      <g>
+        <rect x="${pillLeft.toFixed(1)}" y="${pillTop.toFixed(1)}" width="${pillWidth.toFixed(1)}" height="${NODE_PILL_H}" rx="${NODE_PILL_H / 2}" fill="${color}"/>
+        ${avatarSvg}
+        <text x="${textX.toFixed(1)}" y="${(pillCenterY + 2.8).toFixed(1)}" text-anchor="start" font-size="10" font-weight="800" fill="#111">${escapeHtml(username)}</text>
+        <text class="money-flow-node-amount" x="${edgeX.toFixed(1)}" y="${amountBaselineY.toFixed(1)}" text-anchor="${amountAnchor}">${formatEuro(total)}</text>
+      </g>
     `;
   }
 
@@ -3032,19 +3053,15 @@ function buildMoneyFlowSvg(settlements) {
     const pos = left.positions[n.id];
     const y = pos.y + leftOffset;
     const labelY = leftLabelCenters[i] + leftOffset;
-    const nameCenterY = labelY - 6;
     nodesSvg += `<rect x="${LABEL_W}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
-    nodesSvg += nodeAvatarPillSvg(n.name, "left", LABEL_W - 8, nameCenterY);
-    nodesSvg += `<text class="money-flow-node-amount" x="${LABEL_W - 8}" y="${(labelY + 9).toFixed(1)}" text-anchor="end">${formatEuro(n.total)}</text>`;
+    nodesSvg += nodeLabelGroupSvg(n.name, n.total, "left", LABEL_W - 8, labelY);
   });
   rightNodes.forEach((n, i) => {
     const pos = right.positions[n.id];
     const y = pos.y + rightOffset;
     const labelY = rightLabelCenters[i] + rightOffset;
-    const nameCenterY = labelY - 6;
     nodesSvg += `<rect x="${rightXStart.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
-    nodesSvg += nodeAvatarPillSvg(n.name, "right", VW - LABEL_W + 8, nameCenterY);
-    nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
+    nodesSvg += nodeLabelGroupSvg(n.name, n.total, "right", VW - LABEL_W + 8, labelY);
   });
 
   // y0 (Startposition je Band am linken Knoten) und y1 (am rechten Knoten)
@@ -3122,7 +3139,11 @@ function buildMoneyFlowSvg(settlements) {
     leftLabelCenters.length ? leftLabelCenters[leftLabelCenters.length - 1] + leftOffset : 0,
     rightLabelCenters.length ? rightLabelCenters[rightLabelCenters.length - 1] + rightOffset : 0
   );
-  const fullH = Math.max(plotH + 2 * MARGIN_Y, maxLabelY + MARGIN_Y, maxNodeLabelY + 9 + MARGIN_Y);
+  const fullH = Math.max(
+    plotH + 2 * MARGIN_Y,
+    maxLabelY + MARGIN_Y,
+    maxNodeLabelY + NODE_GROUP_H / 2 + MARGIN_Y
+  );
   return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}${labelsSvg}</svg>`;
 }
 
