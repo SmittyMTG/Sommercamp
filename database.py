@@ -44,6 +44,9 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     role = Column(String)
+    # Profilbild: relativer /static-Pfad inkl. Cache-Busting-Query, NULL solange
+    # kein Bild hochgeladen wurde (siehe POST /api/me/avatar in main.py).
+    avatar_path = Column(String, nullable=True)
 
 
 # Sessions in der DB statt nur im Prozessspeicher (siehe auth.py) — sonst wirft
@@ -123,6 +126,51 @@ class TaskSubitem(Base):
     __tablename__ = "task_subitems"
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    titel = Column(String(120), nullable=False)
+    done = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Projekt-Tag für die private "Tasks"-Seite (main.py: /api/private-tasks): eine
+# Aufgabe ohne project_id gilt als "privat" (nur für created_by sichtbar), mit
+# project_id als geteilt mit allen Usern, die eine ProjectAccess-Zeile dafür
+# haben. Admin-verwaltbar (anlegen + Mitglieder pflegen), s. /api/projects.
+class Project(Base):
+    __tablename__ = "projects"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(60), nullable=False, unique=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ProjectAccess(Base):
+    __tablename__ = "project_access"
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+
+# Private Tasks-Seite (main.py: /api/private-tasks): funktional fast identisch
+# zu Task oben, aber ohne Mehrfach-Zuweisung — Sichtbarkeit läuft stattdessen
+# über created_by ("privat") bzw. Projekt-Mitgliedschaft (project_id).
+class PrivateTask(Base):
+    __tablename__ = "private_tasks"
+    id = Column(Integer, primary_key=True, index=True)
+    titel = Column(String(80), nullable=False)
+    beschreibung = Column(Text, nullable=True)
+    done = Column(Boolean, nullable=False, default=False)
+    deadline = Column(DateTime, nullable=True)
+    category_id = Column(Integer, ForeignKey("task_categories.id"), nullable=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    created_by = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    aufwand_min = Column(Integer, nullable=True)
+
+
+class PrivateTaskSubitem(Base):
+    __tablename__ = "private_task_subitems"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("private_tasks.id"), nullable=False, index=True)
     titel = Column(String(120), nullable=False)
     done = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -214,6 +262,7 @@ _ensure_column("shopping_items", "woher_id", "INTEGER")
 _ensure_column("shopping_items", "deadline", "DATE")
 _ensure_column("tasks", "category_id", "INTEGER")
 _ensure_column("tasks", "aufwand_min", "INTEGER")
+_ensure_column("users", "avatar_path", "TEXT")
 
 
 # Gegenstück zu _ensure_column: entfernt eine Spalte, falls sie noch von einem

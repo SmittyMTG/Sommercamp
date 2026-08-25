@@ -1,4 +1,5 @@
 import re
+import secrets
 import time
 import uuid
 from datetime import date, datetime as dt
@@ -6,7 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import FastAPI, Request, Depends, Form
+from fastapi import FastAPI, Request, Depends, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -23,15 +24,22 @@ from database import (
     TaskAssignee,
     TaskCategory,
     TaskSubitem,
+    Project,
+    ProjectAccess,
+    PrivateTask,
+    PrivateTaskSubitem,
     Ausgabe,
     ActivityLog,
+    pwd_context,
     get_db,
 )
-from auth import login, logout, get_current_user
+from auth import login, logout, get_current_user, verify_password
 import uvicorn
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+AVATAR_DIR = STATIC_DIR / "uploads" / "avatars"
+AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -143,6 +151,38 @@ class SettleRequest(BaseModel):
 class ConfirmReceivedRequest(BaseModel):
     expense_id: int
     amount: float
+
+
+class PrivateTaskCreate(BaseModel):
+    titel: str
+    beschreibung: str | None = None
+    deadline: str | None = None
+    category_id: int | None = None
+    project_id: int | None = None
+    aufwand_min: int | None = None
+
+
+class PrivateTaskSubitemCreate(BaseModel):
+    titel: str
+
+
+class ProjectCreate(BaseModel):
+    name: str
+
+
+class ProjectUpdate(BaseModel):
+    name: str
+    member_ids: list[int] = []
+
+
+class UserCreate(BaseModel):
+    username: str
+    role: str = "user"
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 # --- Routes ---
@@ -670,6 +710,315 @@ def delete_task_subitem(task_id: int, sub_id: int, request: Request, db: Session
     return {"ok": True}
 
 
+# --- "Tasks"-Seite (privat/projekt-getaggt, aktuell nur für Felix erreichbar
+# über die Nav, siehe app.js) — Sichtbarkeit läuft über created_by ("privat")
+# bzw. ProjectAccess (geteiltes Projekt), nicht über eine feste Zuweisungsliste
+# wie bei den geteilten Aufgaben oben.
+
+def _user_by_username(db: Session, username: str) -> User | None:
+    return db.query(User).filter(User.username == username).first()
+
+
+def _is_admin_user(user: User) -> bool:
+    return bool(user.role and user.role.strip().lower() == "admin")
+
+
+def _user_project_ids(db: Session, user_id: int) -> set[int]:
+    return {a.project_id for a in db.query(ProjectAccess).filter(ProjectAccess.user_id == user_id).all()}
+
+
+def _can_access_private_task(db: Session, user: User, task: PrivateTask) -> bool:
+    if task.created_by == user.username or _is_admin_user(user):
+        return True
+    return bool(task.project_id and task.project_id in _user_project_ids(db, user.id))
+
+
+def _can_use_private_project(db: Session, user: User, project_id: int | None) -> bool:
+    if project_id is None or _is_admin_user(user):
+        return True
+    return project_id in _user_project_ids(db, user.id)
+
+
+def _validate_private_task_payload(payload: PrivateTaskCreate, db: Session):
+    titel = payload.titel.strip()
+    if not titel:
+        return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
+    if len(titel) > 80:
+        return JSONResponse(status_code=400, content={"error": "Titel darf maximal 80 Zeichen haben"})
+
+    beschreibung = (payload.beschreibung or "").strip() or None
+
+    deadline = None
+    if payload.deadline:
+        try:
+            deadline = dt.fromisoformat(payload.deadline)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültige Deadline"})
+
+    category_id = payload.category_id
+    if category_id is not None and not db.query(TaskCategory).filter(TaskCategory.id == category_id).first():
+        return JSONResponse(status_code=400, content={"error": "Unbekannte Kategorie"})
+
+    project_id = payload.project_id
+    if project_id is not None and not db.query(Project).filter(Project.id == project_id).first():
+        return JSONResponse(status_code=400, content={"error": "Unbekanntes Projekt"})
+
+    aufwand_min = payload.aufwand_min
+    if aufwand_min is not None and aufwand_min < 0:
+        return JSONResponse(status_code=400, content={"error": "Aufwand darf nicht negativ sein"})
+
+    return titel, beschreibung, deadline, category_id, project_id, aufwand_min
+
+
+def _serialize_private_task(
+    task: PrivateTask,
+    categories: dict[int, TaskCategory],
+    projects: dict[int, Project],
+    subitems: list[PrivateTaskSubitem] | None = None,
+) -> dict:
+    category = categories.get(task.category_id) if task.category_id else None
+    project = projects.get(task.project_id) if task.project_id else None
+    return {
+        "id": task.id,
+        "titel": task.titel,
+        "beschreibung": task.beschreibung,
+        "done": task.done,
+        "deadline": task.deadline.isoformat() if task.deadline else None,
+        "created_by": task.created_by,
+        "aufwand_min": task.aufwand_min,
+        "category": (
+            {"id": category.id, "farbe": category.farbe, "bezeichnung": category.bezeichnung}
+            if category
+            else None
+        ),
+        "project": ({"id": project.id, "name": project.name} if project else None),
+        "subitems": [{"id": s.id, "titel": s.titel, "done": s.done} for s in (subitems or [])],
+    }
+
+
+@app.get("/api/private-tasks")
+def list_private_tasks(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    tasks = db.query(PrivateTask).order_by(PrivateTask.created_at.desc()).all()
+    visible = [t for t in tasks if _can_access_private_task(db, me, t)]
+
+    categories = {c.id: c for c in db.query(TaskCategory).all()}
+    projects = {p.id: p for p in db.query(Project).all()}
+    subitems_by_task: dict[int, list[PrivateTaskSubitem]] = {}
+    for s in db.query(PrivateTaskSubitem).order_by(PrivateTaskSubitem.created_at.asc()).all():
+        subitems_by_task.setdefault(s.task_id, []).append(s)
+
+    return [
+        _serialize_private_task(t, categories, projects, subitems_by_task.get(t.id, []))
+        for t in visible
+    ]
+
+
+@app.post("/api/private-tasks")
+def create_private_task(request: Request, payload: PrivateTaskCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    validated = _validate_private_task_payload(payload, db)
+    if isinstance(validated, JSONResponse):
+        return validated
+    titel, beschreibung, deadline, category_id, project_id, aufwand_min = validated
+
+    if not _can_use_private_project(db, me, project_id):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
+
+    task = PrivateTask(
+        titel=titel,
+        beschreibung=beschreibung,
+        deadline=deadline,
+        created_by=username,
+        category_id=category_id,
+        project_id=project_id,
+        aufwand_min=aufwand_min,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    categories = {c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()}
+    projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
+    return _serialize_private_task(task, categories, projects, [])
+
+
+@app.patch("/api/private-tasks/{task_id}")
+def update_private_task(task_id: int, request: Request, payload: PrivateTaskCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    if not _can_access_private_task(db, me, task):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
+
+    validated = _validate_private_task_payload(payload, db)
+    if isinstance(validated, JSONResponse):
+        return validated
+    titel, beschreibung, deadline, category_id, project_id, aufwand_min = validated
+
+    if project_id != task.project_id and not _can_use_private_project(db, me, project_id):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
+
+    task.titel = titel
+    task.beschreibung = beschreibung
+    task.deadline = deadline
+    task.category_id = category_id
+    task.project_id = project_id
+    task.aufwand_min = aufwand_min
+    db.commit()
+
+    categories = {c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()}
+    projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
+    subitems = (
+        db.query(PrivateTaskSubitem)
+        .filter(PrivateTaskSubitem.task_id == task.id)
+        .order_by(PrivateTaskSubitem.created_at.asc())
+        .all()
+    )
+    return _serialize_private_task(task, categories, projects, subitems)
+
+
+@app.patch("/api/private-tasks/{task_id}/toggle")
+def toggle_private_task(task_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    if not _can_access_private_task(db, me, task):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
+
+    task.done = not task.done
+    db.commit()
+    return {"id": task.id, "done": task.done}
+
+
+@app.patch("/api/private-tasks/{task_id}/deadline-today")
+def toggle_private_task_deadline_today(task_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    if not _can_access_private_task(db, me, task):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
+
+    if task.deadline and task.deadline.date() == today_berlin():
+        task.deadline = None
+    else:
+        task.deadline = dt.combine(today_berlin(), dt.min.time())
+    db.commit()
+    return {"id": task.id, "deadline": task.deadline.isoformat() if task.deadline else None}
+
+
+@app.delete("/api/private-tasks/{task_id}")
+def delete_private_task(task_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
+    if task:
+        if not _can_access_private_task(db, me, task):
+            return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
+        db.query(PrivateTaskSubitem).filter(PrivateTaskSubitem.task_id == task.id).delete(synchronize_session=False)
+        db.delete(task)
+        db.commit()
+    return {"ok": True}
+
+
+# --- Teilaufgaben der privaten Tasks ---
+
+@app.post("/api/private-tasks/{task_id}/subitems")
+def create_private_task_subitem(
+    task_id: int, request: Request, payload: PrivateTaskSubitemCreate, db: Session = Depends(get_db)
+):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
+    if not task:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    if not _can_access_private_task(db, me, task):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
+
+    titel = payload.titel.strip()
+    if not titel:
+        return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
+    if len(titel) > 120:
+        return JSONResponse(status_code=400, content={"error": "Titel darf maximal 120 Zeichen haben"})
+
+    sub = PrivateTaskSubitem(task_id=task_id, titel=titel)
+    db.add(sub)
+    db.commit()
+    db.refresh(sub)
+    return {"id": sub.id, "titel": sub.titel, "done": sub.done}
+
+
+@app.patch("/api/private-tasks/{task_id}/subitems/{sub_id}/toggle")
+def toggle_private_task_subitem(task_id: int, sub_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
+    if not task or not _can_access_private_task(db, me, task):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
+
+    sub = (
+        db.query(PrivateTaskSubitem)
+        .filter(PrivateTaskSubitem.id == sub_id, PrivateTaskSubitem.task_id == task_id)
+        .first()
+    )
+    if not sub:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    sub.done = not sub.done
+    db.commit()
+    return {"id": sub.id, "done": sub.done}
+
+
+@app.delete("/api/private-tasks/{task_id}/subitems/{sub_id}")
+def delete_private_task_subitem(task_id: int, sub_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
+    if not task or not _can_access_private_task(db, me, task):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
+
+    db.query(PrivateTaskSubitem).filter(
+        PrivateTaskSubitem.id == sub_id, PrivateTaskSubitem.task_id == task_id
+    ).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True}
+
+
 # --- Camp-Plan (Termine, nur Admins legen an) ---
 
 def _require_admin(db: Session, username: str) -> User | None:
@@ -677,6 +1026,116 @@ def _require_admin(db: Session, username: str) -> User | None:
     if not user or not user.role or user.role.strip().lower() != "admin":
         return None
     return user
+
+
+# --- Projekte (Admin-verwaltet: steuert, wer Zugriff auf projekt-getaggte
+# Tasks auf der "Tasks"-Seite hat, siehe oben) ---
+
+@app.get("/api/projects")
+def list_projects(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    projects = db.query(Project).order_by(Project.name.asc()).all()
+
+    if _is_admin_user(me):
+        usernames = {u.id: u.username for u in db.query(User).all()}
+        members_by_project: dict[int, list[dict]] = {}
+        for a in db.query(ProjectAccess).all():
+            members_by_project.setdefault(a.project_id, []).append(
+                {"id": a.user_id, "username": usernames.get(a.user_id, "?")}
+            )
+        return [
+            {"id": p.id, "name": p.name, "members": members_by_project.get(p.id, [])} for p in projects
+        ]
+
+    my_project_ids = _user_project_ids(db, me.id)
+    return [{"id": p.id, "name": p.name} for p in projects if p.id in my_project_ids]
+
+
+@app.post("/api/projects")
+def create_project(request: Request, payload: ProjectCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Projekte anlegen"})
+
+    name = payload.name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+    if len(name) > 60:
+        return JSONResponse(status_code=400, content={"error": "Name darf maximal 60 Zeichen haben"})
+    if db.query(Project).filter(Project.name == name).first():
+        return JSONResponse(status_code=400, content={"error": "Dieses Projekt gibt es schon"})
+
+    project = Project(name=name, created_by=username)
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return {"id": project.id, "name": project.name, "members": []}
+
+
+@app.patch("/api/projects/{project_id}")
+def update_project(project_id: int, request: Request, payload: ProjectUpdate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Projekte verwalten"})
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    name = payload.name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+    if len(name) > 60:
+        return JSONResponse(status_code=400, content={"error": "Name darf maximal 60 Zeichen haben"})
+    existing = db.query(Project).filter(Project.name == name, Project.id != project_id).first()
+    if existing:
+        return JSONResponse(status_code=400, content={"error": "Dieses Projekt gibt es schon"})
+
+    member_ids = sorted(set(payload.member_ids))
+    if member_ids:
+        valid_ids = {u.id for u in db.query(User).filter(User.id.in_(member_ids)).all()}
+        if not set(member_ids).issubset(valid_ids):
+            return JSONResponse(status_code=400, content={"error": "Unbekannte Person ausgewählt"})
+
+    project.name = name
+    db.query(ProjectAccess).filter(ProjectAccess.project_id == project.id).delete(synchronize_session=False)
+    for uid in member_ids:
+        db.add(ProjectAccess(project_id=project.id, user_id=uid))
+    db.commit()
+
+    usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(member_ids)).all()}
+    return {
+        "id": project.id,
+        "name": project.name,
+        "members": [{"id": uid, "username": usernames.get(uid, "?")} for uid in member_ids],
+    }
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Projekte löschen"})
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if project:
+        db.query(ProjectAccess).filter(ProjectAccess.project_id == project.id).delete(synchronize_session=False)
+        db.query(PrivateTask).filter(PrivateTask.project_id == project.id).update(
+            {PrivateTask.project_id: None}, synchronize_session=False
+        )
+        db.delete(project)
+        db.commit()
+    return {"ok": True}
 
 
 def _validate_plan_payload(payload: PlanEventCreate):
@@ -835,7 +1294,7 @@ def get_me(request: Request, db: Session = Depends(get_db)):
     me = db.query(User).filter(User.username == username).first()
     if not me:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    return {"id": me.id, "username": me.username, "role": me.role}
+    return {"id": me.id, "username": me.username, "role": me.role, "avatar_path": me.avatar_path}
 
 
 @app.get("/api/users")
@@ -844,7 +1303,102 @@ def list_users(request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     users = db.query(User).order_by(User.username.asc()).all()
-    return [{"id": u.id, "username": u.username} for u in users]
+    return [{"id": u.id, "username": u.username, "role": u.role} for u in users]
+
+
+# Erzeugt ein zufälliges, ausreichend starkes Passwort für neu angelegte User —
+# wird dem Admin nach dem Anlegen EINMALIG im Klartext angezeigt (Kopieren-
+# Button im Frontend), danach nur noch als Hash gespeichert und nicht mehr
+# abrufbar.
+def _generate_password() -> str:
+    return secrets.token_urlsafe(9)
+
+
+@app.post("/api/users")
+def create_user(request: Request, payload: UserCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Nutzer anlegen"})
+
+    new_username = payload.username.strip()
+    if not new_username:
+        return JSONResponse(status_code=400, content={"error": "Nutzername darf nicht leer sein"})
+    if db.query(User).filter(User.username == new_username).first():
+        return JSONResponse(status_code=400, content={"error": "Diesen Nutzernamen gibt es schon"})
+
+    role = payload.role.strip().lower() if payload.role else "user"
+    if role not in ("user", "admin"):
+        return JSONResponse(status_code=400, content={"error": "Ungültige Rolle"})
+
+    generated_password = _generate_password()
+    user = User(
+        username=new_username,
+        hashed_password=pwd_context.hash(generated_password),
+        role=role,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+        "generated_password": generated_password,
+    }
+
+
+@app.patch("/api/me/password")
+def change_own_password(request: Request, payload: PasswordChangeRequest, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    me = db.query(User).filter(User.username == username).first()
+    if not me:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    if not verify_password(payload.current_password, me.hashed_password):
+        return JSONResponse(status_code=400, content={"error": "Aktuelles Passwort ist falsch"})
+    if len(payload.new_password) < 8:
+        return JSONResponse(status_code=400, content={"error": "Neues Passwort muss mindestens 8 Zeichen haben"})
+
+    me.hashed_password = pwd_context.hash(payload.new_password)
+    db.commit()
+    return {"ok": True}
+
+
+_AVATAR_CONTENT_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+_AVATAR_MAX_BYTES = 3 * 1024 * 1024
+
+
+@app.post("/api/me/avatar")
+async def upload_own_avatar(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    me = db.query(User).filter(User.username == username).first()
+    if not me:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    ext = _AVATAR_CONTENT_TYPES.get(file.content_type)
+    if not ext:
+        return JSONResponse(status_code=400, content={"error": "Nur PNG, JPEG oder WebP erlaubt"})
+
+    content = await file.read()
+    if len(content) > _AVATAR_MAX_BYTES:
+        return JSONResponse(status_code=400, content={"error": "Bild darf maximal 3 MB groß sein"})
+
+    # Alte Datei mit ggf. anderer Endung entfernen, damit sich keine Leichen ansammeln.
+    for old in AVATAR_DIR.glob(f"{me.id}.*"):
+        old.unlink(missing_ok=True)
+
+    (AVATAR_DIR / f"{me.id}.{ext}").write_bytes(content)
+    me.avatar_path = f"/static/uploads/avatars/{me.id}.{ext}?v={int(time.time())}"
+    db.commit()
+    return {"avatar_path": me.avatar_path}
 
 
 @app.get("/api/activity")

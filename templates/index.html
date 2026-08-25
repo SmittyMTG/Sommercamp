@@ -22,6 +22,13 @@
         <div class="brand">Sommercamp<span class="brand-accent">26</span></div>
         <div class="subtitle">Final Chapter · 04.–16. August</div>
       </div>
+      <div class="topbar-actions">
+        <button id="adminUsersButton" class="icon-button hidden" aria-label="Nutzer verwalten">👥</button>
+        <button id="profileButton" class="icon-button avatar-button" aria-label="Profil">
+          <img id="profileAvatarImg" class="avatar-img hidden" alt="">
+          <span id="profileAvatarFallback">👤</span>
+        </button>
+      </div>
     </header>
 
     <section id="appContent">
@@ -212,6 +219,41 @@
         </div>
 
       </section>
+
+      <!-- ============ TASKS (privat, nur Felix) ============ -->
+      <section id="screen-tasks" class="screen">
+        <div id="projectAdminPanel" class="hidden">
+          <div class="section-heading">
+            <div><div class="eyebrow">Admin</div><h2>Projekte verwalten</h2></div>
+            <button id="addProjectButton" class="primary compact">＋ Projekt</button>
+          </div>
+          <div id="projectAdminList" class="stack"></div>
+        </div>
+
+        <div class="section-heading">
+          <div><div class="eyebrow">Privat</div><h2>Tasks</h2></div>
+          <button id="addPrivateTaskButton" class="primary compact">＋ Task</button>
+        </div>
+
+        <div class="filter-row" id="privateTaskFilterRow">
+          <button type="button" class="filter active" data-filter="alle">Alle</button>
+          <button type="button" class="filter" data-filter="offen">Offen</button>
+          <button type="button" class="filter" data-filter="ueberfaellig">Überfällig</button>
+        </div>
+        <select id="privateTaskProjectFilterSelect" class="sort-select">
+          <option value="">Alle Projekte</option>
+        </select>
+        <select id="privateTaskSortSelect" class="sort-select">
+          <option value="deadline">Sortieren nach: Deadline</option>
+          <option value="neu">Sortieren nach: Neu zuerst</option>
+          <option value="titel">Sortieren nach: Titel (A–Z)</option>
+          <option value="kategorie">Sortieren nach: Kategorie</option>
+          <option value="projekt">Sortieren nach: Projekt</option>
+        </select>
+        <div id="privateTaskList" class="stack">
+          <div class="empty-state"><p>Noch keine Tasks.</p></div>
+        </div>
+      </section>
     </section>
   </main>
 
@@ -221,6 +263,7 @@
     <button class="nav-item active" data-screen="costs"><span>€</span>Kosten<span id="costsNavBadge" class="nav-badge hidden">0</span></button>
     <button class="nav-item" data-screen="shopping"><span>✓</span>Einkauf</button>
     <button class="nav-item" data-screen="more"><span>☑</span>Aufgaben<span id="myTasksNavBadge" class="nav-badge hidden">0</span></button>
+    <button class="nav-item hidden" data-screen="tasks"><span>✦</span>Tasks</button>
   </nav>
 
   <dialog id="modal">

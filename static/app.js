@@ -1421,6 +1421,1013 @@ async function openEditTaskModal(task) {
 const addTaskButton = document.getElementById("addTaskButton");
 if (addTaskButton) addTaskButton.addEventListener("click", openAddTaskModal);
 
+/* ---------- "Tasks" (privat/projekt-getaggt, aktuell nur für Felix sichtbar
+   über die Nav — Zugriff wird zusätzlich serverseitig geprüft, siehe main.py) ---------- */
+const privateTaskListEl = document.getElementById("privateTaskList");
+const privateTaskSortSelect = document.getElementById("privateTaskSortSelect");
+const privateTaskFilterRow = document.getElementById("privateTaskFilterRow");
+const privateTaskProjectFilterSelect = document.getElementById("privateTaskProjectFilterSelect");
+
+let lastPrivateTaskItems = [];
+let privateTaskSortMode = "deadline";
+let privateTaskFilterMode = "alle";
+let privateTaskProjectFilterId = "";
+let cachedProjects = null;
+
+function isPrivateTaskOverdue(task) {
+  if (task.done || !task.deadline) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return new Date(task.deadline) < today;
+}
+
+function filterPrivateTasks(items, mode, projectId) {
+  let out = items;
+  if (mode === "offen") out = out.filter((t) => !t.done);
+  else if (mode === "ueberfaellig") out = out.filter((t) => isPrivateTaskOverdue(t));
+  if (projectId === "privat") out = out.filter((t) => !t.project);
+  else if (projectId) out = out.filter((t) => t.project && String(t.project.id) === String(projectId));
+  return out;
+}
+
+function sortPrivateTasks(items, mode) {
+  const sortWithin = (arr) => {
+    const out = [...arr];
+    if (mode === "titel") {
+      out.sort((a, b) => a.titel.localeCompare(b.titel, "de"));
+    } else if (mode === "deadline") {
+      out.sort((a, b) => {
+        if (!a.deadline && !b.deadline) return 0;
+        if (!a.deadline) return 1;
+        if (!b.deadline) return -1;
+        return new Date(a.deadline) - new Date(b.deadline);
+      });
+    } else if (mode === "kategorie") {
+      out.sort((a, b) => {
+        const an = a.category ? a.category.bezeichnung : "￿";
+        const bn = b.category ? b.category.bezeichnung : "￿";
+        return an.localeCompare(bn, "de");
+      });
+    } else if (mode === "projekt") {
+      out.sort((a, b) => {
+        const an = a.project ? a.project.name : "￿";
+        const bn = b.project ? b.project.name : "￿";
+        return an.localeCompare(bn, "de");
+      });
+    }
+    // "neu" = Server-Reihenfolge (created_at absteigend), keine Änderung nötig
+    return out;
+  };
+  const open = items.filter((t) => !t.done);
+  const done = items.filter((t) => t.done);
+  return [...sortWithin(open), ...sortWithin(done)];
+}
+
+function renderPrivateTaskItem(task) {
+  const card = document.createElement("div");
+  card.className = "list-card clickable" + (task.done ? " done" : "");
+  card.dataset.id = task.id;
+
+  const overdue = isPrivateTaskOverdue(task);
+  const metaParts = [];
+  if (task.deadline) {
+    const label = `📅 ${formatDeadline(task.deadline)}`;
+    metaParts.push(overdue ? `<span class="danger">⚠️ ${label}</span>` : label);
+  }
+  if (task.aufwand_min != null) metaParts.push(`⏱ ${task.aufwand_min} Min`);
+
+  const categoryTag = task.category
+    ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
+    : "";
+  const projectTag = `<span class="category-tag project-tag">🗂 ${task.project ? escapeHtml(task.project.name) : "Privat"}</span>`;
+
+  const descHtml = task.beschreibung
+    ? `<p class="list-card-meta">${escapeHtml(task.beschreibung)}</p>`
+    : "";
+
+  const subitems = task.subitems || [];
+  const subitemsDone = subitems.filter((s) => s.done).length;
+  const subitemsHtml = subitems.length
+    ? `
+      <p class="list-card-meta subitems-progress">Teilaufgaben: ${subitemsDone}/${subitems.length}</p>
+      <div class="subitems-list">
+        ${subitems
+          .map(
+            (s) => `
+              <label class="subitem-row${s.done ? " done" : ""}">
+                <input type="checkbox" data-sub-id="${s.id}"${s.done ? " checked" : ""}>
+                <span>${escapeHtml(s.titel)}</span>
+              </label>
+            `
+          )
+          .join("")}
+      </div>
+    `
+    : "";
+
+  const isUrgentToday = isDeadlineToday(task.deadline);
+
+  card.innerHTML = `
+    <div class="list-card-content">
+      <button type="button" class="list-card-checkbox${task.done ? " checked" : ""}" aria-label="Erledigt"></button>
+      <div class="list-card-text">
+        <p class="list-card-title">${escapeHtml(task.titel)}</p>
+        ${categoryTag}${projectTag}
+        ${metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : ""}
+        ${descHtml}
+        ${subitemsHtml}
+      </div>
+    </div>
+    <div class="list-card-actions">
+      <button type="button" class="urgent-btn${isUrgentToday ? " active" : ""}" aria-label="Deadline auf heute setzen">❗</button>
+      <button type="button" class="delete-btn" aria-label="Löschen">🗑️</button>
+    </div>
+  `;
+
+  card.addEventListener("click", () => openEditPrivateTaskModal(task));
+
+  card.querySelector(".urgent-btn").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const res = await fetch(`/api/private-tasks/${task.id}/deadline-today`, { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      task.deadline = data.deadline;
+      loadPrivateTasks(true);
+    }
+  });
+
+  const checkbox = card.querySelector(".list-card-checkbox");
+  checkbox.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const res = await fetch(`/api/private-tasks/${task.id}/toggle`, { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      checkbox.classList.toggle("checked", data.done);
+      card.classList.toggle("done", data.done);
+      task.done = data.done;
+      loadPrivateTasks(true);
+    }
+  });
+
+  card.querySelectorAll(".subitem-row input[type=checkbox]").forEach((cb) => {
+    cb.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const res = await fetch(`/api/private-tasks/${task.id}/subitems/${cb.dataset.subId}/toggle`, { method: "PATCH" });
+      if (res.ok) loadPrivateTasks(true);
+    });
+  });
+
+  card.querySelector(".delete-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openModal({
+      eyebrow: "Task",
+      title: `„${task.titel}" löschen?`,
+      bodyHtml: `<p class="muted warning-text">Das lässt sich nicht rückgängig machen.</p>`,
+      submitLabel: "Löschen",
+      danger: true,
+      onSubmit: async () => {
+        const res = await fetch(`/api/private-tasks/${task.id}`, { method: "DELETE" });
+        if (res.ok) loadPrivateTasks(true);
+        closeModal();
+      },
+    });
+  });
+
+  return card;
+}
+
+function renderFilteredSortedPrivateTasks() {
+  if (!privateTaskListEl) return;
+  const filtered = filterPrivateTasks(lastPrivateTaskItems, privateTaskFilterMode, privateTaskProjectFilterId);
+  const sorted = sortPrivateTasks(filtered, privateTaskSortMode);
+
+  privateTaskListEl.innerHTML = "";
+  if (sorted.length === 0) {
+    privateTaskListEl.innerHTML = `<div class="empty-state"><p>Noch keine Tasks.</p></div>`;
+  } else {
+    sorted.forEach((t) => privateTaskListEl.appendChild(renderPrivateTaskItem(t)));
+  }
+}
+
+let lastPrivateTaskSignature = "";
+async function loadPrivateTasks(force) {
+  if (!privateTaskListEl) return;
+  try {
+    const res = await fetch("/api/private-tasks");
+    if (!res.ok) return;
+    const data = await res.json();
+    const signature = JSON.stringify(data);
+    if (!force && signature === lastPrivateTaskSignature) return;
+    lastPrivateTaskSignature = signature;
+    lastPrivateTaskItems = data;
+    renderFilteredSortedPrivateTasks();
+  } catch (err) {
+    // Netzwerkhänger ignorieren, nächster Poll versucht es erneut
+  }
+}
+
+if (privateTaskFilterRow) {
+  privateTaskFilterRow.querySelectorAll(".filter").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      privateTaskFilterRow.querySelectorAll(".filter").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      privateTaskFilterMode = btn.dataset.filter;
+      renderFilteredSortedPrivateTasks();
+    });
+  });
+}
+
+if (privateTaskSortSelect) {
+  privateTaskSortSelect.addEventListener("change", () => {
+    privateTaskSortMode = privateTaskSortSelect.value;
+    renderFilteredSortedPrivateTasks();
+  });
+}
+
+if (privateTaskProjectFilterSelect) {
+  privateTaskProjectFilterSelect.addEventListener("change", () => {
+    privateTaskProjectFilterId = privateTaskProjectFilterSelect.value;
+    renderFilteredSortedPrivateTasks();
+  });
+}
+
+/* ---------- Tasks: Projekte (privat / geteilte Projekt-Tags) ---------- */
+
+async function fetchProjects(forceRefresh) {
+  if (cachedProjects && !forceRefresh) return cachedProjects;
+  const res = await fetch("/api/projects");
+  cachedProjects = res.ok ? await res.json() : [];
+  return cachedProjects;
+}
+
+function privateTaskProjectOptionsHtml(projects, selectedId) {
+  return projects
+    .map(
+      (p) =>
+        `<option value="${p.id}"${String(p.id) === String(selectedId) ? " selected" : ""}>${escapeHtml(p.name)}</option>`
+    )
+    .join("");
+}
+
+function populateProjectFilterSelect(projects) {
+  if (!privateTaskProjectFilterSelect) return;
+  const current = privateTaskProjectFilterSelect.value;
+  privateTaskProjectFilterSelect.innerHTML = `
+    <option value="">Alle Projekte</option>
+    <option value="privat">Privat</option>
+    ${privateTaskProjectOptionsHtml(projects, "")}
+  `;
+  privateTaskProjectFilterSelect.value = current;
+}
+
+function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
+  const currentCategoryId = prefill.category ? prefill.category.id : null;
+  const currentProjectId = prefill.project ? prefill.project.id : "";
+  const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 10) : "";
+
+  return `
+    <div class="form-stack">
+      <label>Titel
+        <input type="text" id="privTaskTitelInput" maxlength="80" value="${escapeHtml(prefill.titel || "")}" placeholder="z. B. Angebot einholen" required>
+      </label>
+      <label>Beschreibung (optional)
+        <textarea id="privTaskBeschreibungInput" placeholder="Details …">${escapeHtml(prefill.beschreibung || "")}</textarea>
+      </label>
+      <label>Projekt
+        <select id="privTaskProjectSelect">
+          <option value=""${currentProjectId === "" ? " selected" : ""}>Privat</option>
+          ${privateTaskProjectOptionsHtml(projects, currentProjectId)}
+          ${isAdmin ? `<option value="__new__">+ Neues Projekt anlegen…</option>` : ""}
+        </select>
+      </label>
+      ${
+        isAdmin
+          ? `
+      <div id="newPrivTaskProjectFields" class="form-stack hidden">
+        <label>Projektname
+          <input type="text" id="newPrivTaskProjectName" maxlength="60" placeholder="z. B. Sommercamp 2026">
+        </label>
+        <button type="button" id="createPrivTaskProjectBtn" class="secondary compact">Projekt anlegen</button>
+        <p class="error-text hidden new-priv-task-project-error"></p>
+      </div>
+      `
+          : ""
+      }
+      <label>Kategorie (optional)
+        <select id="privTaskCategorySelect">
+          <option value="">— keine Angabe —</option>
+          ${taskCategoryOptionsHtml(categories, currentCategoryId)}
+          <option value="__new__">+ Neue Kategorie anlegen…</option>
+        </select>
+      </label>
+      <div id="newPrivTaskCategoryFields" class="form-stack hidden">
+        <label>Farbe
+          <input type="color" id="newPrivTaskCategoryColor" value="#ffd400">
+        </label>
+        <label>Bezeichnung
+          <input type="text" id="newPrivTaskCategoryLabel" maxlength="16" placeholder="z. B. Einkauf">
+        </label>
+        <button type="button" id="createPrivTaskCategoryBtn" class="secondary compact">Kategorie anlegen</button>
+        <p class="error-text hidden new-priv-task-category-error"></p>
+      </div>
+      <label>Deadline (optional)
+        <input type="date" id="privTaskDeadlineInput" value="${deadlineValue}">
+      </label>
+      <label>Aufwand in Minuten (optional)
+        <input type="number" id="privTaskAufwandInput" min="0" step="1" inputmode="numeric" value="${prefill.aufwand_min != null ? prefill.aufwand_min : ""}" placeholder="z. B. 30">
+      </label>
+      ${
+        prefill.id
+          ? `
+        <div class="checkbox-group" data-live-save>
+          <div class="eyebrow">Teilaufgaben</div>
+          <div id="privTaskSubitemsList" class="stack"></div>
+          <div class="action-row">
+            <input type="text" id="newPrivSubitemInput" placeholder="Neue Teilaufgabe…" maxlength="120">
+            <button type="button" id="addPrivSubitemBtn" class="secondary compact">+ Hinzufügen</button>
+          </div>
+        </div>
+      `
+          : ""
+      }
+    </div>
+  `;
+}
+
+function wirePrivateTaskCategoryPicker() {
+  const categorySelect = document.getElementById("privTaskCategorySelect");
+  const newFields = document.getElementById("newPrivTaskCategoryFields");
+  categorySelect.addEventListener("change", () => {
+    newFields.classList.toggle("hidden", categorySelect.value !== "__new__");
+  });
+
+  document.getElementById("createPrivTaskCategoryBtn").addEventListener("click", async () => {
+    const colorInput = document.getElementById("newPrivTaskCategoryColor");
+    const labelInput = document.getElementById("newPrivTaskCategoryLabel");
+    const errEl = document.querySelector(".new-priv-task-category-error");
+    const bezeichnung = labelInput.value.trim();
+    errEl.classList.add("hidden");
+
+    if (!bezeichnung) {
+      errEl.textContent = "Bitte eine Bezeichnung eingeben.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const res = await fetch("/api/task-categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ farbe: colorInput.value, bezeichnung }),
+    });
+
+    if (res.ok) {
+      const created = await res.json();
+      const categories = await fetchTaskCategories(true);
+      categorySelect.innerHTML = `
+        <option value="">— keine Angabe —</option>
+        ${taskCategoryOptionsHtml(categories, created.id)}
+        <option value="__new__">+ Neue Kategorie anlegen…</option>
+      `;
+      newFields.classList.add("hidden");
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errEl.textContent = data.error || "Konnte nicht angelegt werden.";
+      errEl.classList.remove("hidden");
+    }
+  });
+}
+
+function wirePrivateTaskProjectPicker() {
+  const projectSelect = document.getElementById("privTaskProjectSelect");
+  const newFields = document.getElementById("newPrivTaskProjectFields");
+  if (!projectSelect || !newFields) return;
+  projectSelect.addEventListener("change", () => {
+    newFields.classList.toggle("hidden", projectSelect.value !== "__new__");
+  });
+
+  const createBtn = document.getElementById("createPrivTaskProjectBtn");
+  if (!createBtn) return;
+  createBtn.addEventListener("click", async () => {
+    const nameInput = document.getElementById("newPrivTaskProjectName");
+    const errEl = document.querySelector(".new-priv-task-project-error");
+    const name = nameInput.value.trim();
+    errEl.classList.add("hidden");
+
+    if (!name) {
+      errEl.textContent = "Bitte einen Projektnamen eingeben.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+
+    if (res.ok) {
+      const created = await res.json();
+      const projects = await fetchProjects(true);
+      populateProjectFilterSelect(projects);
+      projectSelect.innerHTML = `
+        <option value="">Privat</option>
+        ${privateTaskProjectOptionsHtml(projects, created.id)}
+        <option value="__new__">+ Neues Projekt anlegen…</option>
+      `;
+      newFields.classList.add("hidden");
+      renderProjectAdminPanel();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errEl.textContent = data.error || "Konnte nicht angelegt werden.";
+      errEl.classList.remove("hidden");
+    }
+  });
+}
+
+async function resolvePrivateTaskCategoryId() {
+  const categorySelect = document.getElementById("privTaskCategorySelect");
+  if (categorySelect.value !== "__new__") {
+    return { ok: true, category_id: categorySelect.value ? parseInt(categorySelect.value, 10) : null };
+  }
+
+  const colorInput = document.getElementById("newPrivTaskCategoryColor");
+  const labelInput = document.getElementById("newPrivTaskCategoryLabel");
+  const errEl = document.querySelector(".new-priv-task-category-error");
+  const bezeichnung = labelInput.value.trim();
+  errEl.classList.add("hidden");
+
+  if (!bezeichnung) {
+    errEl.textContent = "Bitte eine Bezeichnung für die neue Kategorie eingeben.";
+    errEl.classList.remove("hidden");
+    return { ok: false };
+  }
+
+  const res = await fetch("/api/task-categories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ farbe: colorInput.value, bezeichnung }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    errEl.textContent = data.error || "Kategorie konnte nicht angelegt werden.";
+    errEl.classList.remove("hidden");
+    return { ok: false };
+  }
+
+  const created = await res.json();
+  await fetchTaskCategories(true);
+  return { ok: true, category_id: created.id };
+}
+
+async function resolvePrivateTaskProjectId() {
+  const projectSelect = document.getElementById("privTaskProjectSelect");
+  if (projectSelect.value !== "__new__") {
+    return { ok: true, project_id: projectSelect.value ? parseInt(projectSelect.value, 10) : null };
+  }
+
+  const nameInput = document.getElementById("newPrivTaskProjectName");
+  const errEl = document.querySelector(".new-priv-task-project-error");
+  const name = nameInput.value.trim();
+  errEl.classList.add("hidden");
+
+  if (!name) {
+    errEl.textContent = "Bitte einen Projektnamen für das neue Projekt eingeben.";
+    errEl.classList.remove("hidden");
+    return { ok: false };
+  }
+
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    errEl.textContent = data.error || "Projekt konnte nicht angelegt werden.";
+    errEl.classList.remove("hidden");
+    return { ok: false };
+  }
+
+  const created = await res.json();
+  await fetchProjects(true);
+  return { ok: true, project_id: created.id };
+}
+
+async function readPrivateTaskForm() {
+  const titel = document.getElementById("privTaskTitelInput").value.trim();
+  if (!titel) return null;
+  const beschreibung = document.getElementById("privTaskBeschreibungInput").value.trim();
+  const deadline = document.getElementById("privTaskDeadlineInput").value || null;
+  const aufwandRaw = document.getElementById("privTaskAufwandInput").value;
+  const aufwand_min = aufwandRaw !== "" ? parseInt(aufwandRaw, 10) : null;
+
+  const categoryResult = await resolvePrivateTaskCategoryId();
+  if (!categoryResult.ok) return null;
+
+  const projectResult = await resolvePrivateTaskProjectId();
+  if (!projectResult.ok) return null;
+
+  return {
+    titel,
+    beschreibung,
+    category_id: categoryResult.category_id,
+    project_id: projectResult.project_id,
+    deadline,
+    aufwand_min,
+  };
+}
+
+function renderPrivateTaskSubitemsEditor(taskId, subitems) {
+  const container = document.getElementById("privTaskSubitemsList");
+  if (!container) return;
+  container.innerHTML = subitems.length
+    ? subitems
+        .map(
+          (s) => `
+            <div class="subitem-edit-row" data-sub-id="${s.id}">
+              <label>
+                <input type="checkbox" class="subitem-toggle" data-sub-id="${s.id}"${s.done ? " checked" : ""}>
+                <span>${escapeHtml(s.titel)}</span>
+              </label>
+              <button type="button" class="icon-button subitem-delete" data-sub-id="${s.id}" aria-label="Löschen">🗑️</button>
+            </div>
+          `
+        )
+        .join("")
+    : `<p class="muted">Noch keine Teilaufgaben.</p>`;
+
+  container.querySelectorAll(".subitem-toggle").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      await fetch(`/api/private-tasks/${taskId}/subitems/${cb.dataset.subId}/toggle`, { method: "PATCH" });
+      const sub = subitems.find((s) => s.id === parseInt(cb.dataset.subId, 10));
+      if (sub) sub.done = cb.checked;
+    });
+  });
+  container.querySelectorAll(".subitem-delete").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await fetch(`/api/private-tasks/${taskId}/subitems/${btn.dataset.subId}`, { method: "DELETE" });
+      const idx = subitems.findIndex((s) => s.id === parseInt(btn.dataset.subId, 10));
+      if (idx !== -1) subitems.splice(idx, 1);
+      renderPrivateTaskSubitemsEditor(taskId, subitems);
+    });
+  });
+}
+
+function wirePrivateTaskSubitems(taskId, initialSubitems) {
+  const subitems = (initialSubitems || []).slice();
+  renderPrivateTaskSubitemsEditor(taskId, subitems);
+
+  const addBtn = document.getElementById("addPrivSubitemBtn");
+  const input = document.getElementById("newPrivSubitemInput");
+  if (!addBtn || !input) return;
+  addBtn.addEventListener("click", async () => {
+    const titel = input.value.trim();
+    if (!titel) return;
+    const res = await fetch(`/api/private-tasks/${taskId}/subitems`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ titel }),
+    });
+    if (res.ok) {
+      const created = await res.json();
+      subitems.push(created);
+      input.value = "";
+      renderPrivateTaskSubitemsEditor(taskId, subitems);
+    }
+  });
+}
+
+async function openAddPrivateTaskModal() {
+  const { me } = await fetchUsersAndMe();
+  const categories = await fetchTaskCategories();
+  const projects = await fetchProjects();
+  const isAdmin = !!(me && isAdminRole(me.role));
+
+  openModal({
+    eyebrow: "Task",
+    title: "Task hinzufügen",
+    submitLabel: "Speichern",
+    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin),
+    onSubmit: async () => {
+      const form = await readPrivateTaskForm();
+      if (!form) return;
+
+      const res = await fetch("/api/private-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (res.ok) {
+        closeModal();
+        loadPrivateTasks(true);
+      }
+    },
+  });
+
+  wirePrivateTaskCategoryPicker();
+  if (isAdmin) wirePrivateTaskProjectPicker();
+}
+
+async function openEditPrivateTaskModal(task) {
+  const { me } = await fetchUsersAndMe();
+  const categories = await fetchTaskCategories();
+  const projects = await fetchProjects();
+  const isAdmin = !!(me && isAdminRole(me.role));
+
+  openModal({
+    eyebrow: "Task",
+    title: "Task bearbeiten",
+    submitLabel: "Speichern",
+    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, task),
+    onSubmit: async () => {
+      const form = await readPrivateTaskForm();
+      if (!form) return;
+
+      const res = await fetch(`/api/private-tasks/${task.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (res.ok) {
+        closeModal();
+        loadPrivateTasks(true);
+      }
+    },
+  });
+
+  wirePrivateTaskCategoryPicker();
+  if (isAdmin) wirePrivateTaskProjectPicker();
+  wirePrivateTaskSubitems(task.id, task.subitems);
+}
+
+const addPrivateTaskButton = document.getElementById("addPrivateTaskButton");
+if (addPrivateTaskButton) addPrivateTaskButton.addEventListener("click", openAddPrivateTaskModal);
+
+/* ---------- Tasks: Projekte verwalten (nur Admins) ---------- */
+
+const projectAdminPanelEl = document.getElementById("projectAdminPanel");
+const projectAdminListEl = document.getElementById("projectAdminList");
+
+function projectEditModalBodyHtml(users, project) {
+  const currentMemberIds = new Set((project.members || []).map((m) => m.id));
+  const memberOptions = users
+    .map(
+      (u) =>
+        `<label class="check-card"><input type="checkbox" class="project-member-checkbox" value="${u.id}"${currentMemberIds.has(u.id) ? " checked" : ""}>${escapeHtml(u.username)}</label>`
+    )
+    .join("");
+
+  return `
+    <div class="form-stack">
+      <label>Projektname
+        <input type="text" id="projectNameInput" maxlength="60" value="${escapeHtml(project.name)}" required>
+      </label>
+      <div class="checkbox-group">
+        <div class="eyebrow">Zugriff (welche User sehen dieses Projekt?)</div>
+        <div class="checkbox-grid">${memberOptions}</div>
+      </div>
+    </div>
+  `;
+}
+
+async function openEditProjectModal(project) {
+  const { users } = await fetchUsersAndMe();
+
+  openModal({
+    eyebrow: "Projekt",
+    title: `„${project.name}" bearbeiten`,
+    submitLabel: "Speichern",
+    bodyHtml: projectEditModalBodyHtml(users, project),
+    onSubmit: async () => {
+      const name = document.getElementById("projectNameInput").value.trim();
+      if (!name) return;
+      const member_ids = Array.from(document.querySelectorAll(".project-member-checkbox:checked")).map((el) =>
+        parseInt(el.value, 10)
+      );
+
+      const res = await fetch(`/api/projects/${project.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, member_ids }),
+      });
+
+      if (res.ok) {
+        closeModal();
+        const projects = await fetchProjects(true);
+        populateProjectFilterSelect(projects);
+        renderProjectAdminPanel();
+      }
+    },
+  });
+}
+
+function renderProjectCard(project) {
+  const card = document.createElement("div");
+  card.className = "list-card clickable";
+  const members = project.members || [];
+  const memberLabel = members.length ? members.map((m) => nameTag(m.username)).join(", ") : "Niemand freigeschaltet";
+  card.innerHTML = `
+    <div class="list-card-content">
+      <div class="list-card-text">
+        <p class="list-card-title">${escapeHtml(project.name)}</p>
+        <p class="list-card-meta">${memberLabel}</p>
+      </div>
+    </div>
+  `;
+  card.addEventListener("click", () => openEditProjectModal(project));
+  return card;
+}
+
+async function renderProjectAdminPanel() {
+  if (!projectAdminListEl) return;
+  const projects = await fetchProjects(true);
+  projectAdminListEl.innerHTML = "";
+  if (projects.length === 0) {
+    projectAdminListEl.innerHTML = `<div class="empty-state"><p>Noch keine Projekte.</p></div>`;
+  } else {
+    projects.forEach((p) => projectAdminListEl.appendChild(renderProjectCard(p)));
+  }
+}
+
+async function openAddProjectModal() {
+  openModal({
+    eyebrow: "Projekt",
+    title: "Projekt anlegen",
+    submitLabel: "Anlegen",
+    bodyHtml: `
+      <div class="form-stack">
+        <label>Projektname
+          <input type="text" id="newProjectNameInput" maxlength="60" placeholder="z. B. Sommercamp 2026" required>
+        </label>
+      </div>
+    `,
+    onSubmit: async () => {
+      const name = document.getElementById("newProjectNameInput").value.trim();
+      if (!name) return;
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        closeModal();
+        const projects = await fetchProjects(true);
+        populateProjectFilterSelect(projects);
+        renderProjectAdminPanel();
+      }
+    },
+  });
+}
+
+const addProjectButton = document.getElementById("addProjectButton");
+if (addProjectButton) addProjectButton.addEventListener("click", openAddProjectModal);
+
+/* ---------- Tasks: Sichtbarkeit (nur Felix) + Init ---------- */
+fetchUsersAndMe().then(({ me }) => {
+  if (!me || me.username !== "Felix") return;
+
+  const tasksNavButton = document.querySelector('.bottom-nav [data-screen="tasks"]');
+  const bottomNavEl = document.getElementById("bottomNav");
+  if (tasksNavButton) tasksNavButton.classList.remove("hidden");
+  if (bottomNavEl) bottomNavEl.classList.add("nav-5");
+
+  fetchProjects(true).then((projects) => populateProjectFilterSelect(projects));
+  loadPrivateTasks(true);
+  setInterval(loadPrivateTasks, 5000);
+
+  if (isAdminRole(me.role) && projectAdminPanelEl) {
+    projectAdminPanelEl.classList.remove("hidden");
+    renderProjectAdminPanel();
+  }
+});
+
+/* ---------- Profil (Passwort ändern, Profilbild) ---------- */
+
+function applyAvatarToButton(avatarPath) {
+  const img = document.getElementById("profileAvatarImg");
+  const fallback = document.getElementById("profileAvatarFallback");
+  if (!img || !fallback) return;
+  if (avatarPath) {
+    img.src = avatarPath;
+    img.classList.remove("hidden");
+    fallback.classList.add("hidden");
+  } else {
+    img.classList.add("hidden");
+    fallback.classList.remove("hidden");
+  }
+}
+
+function profileModalBodyHtml(me) {
+  return `
+    <div class="form-stack">
+      <div class="checkbox-group" data-live-save>
+        <div class="eyebrow">Profilbild</div>
+        <img id="profileAvatarPreviewImg" class="avatar-preview${me.avatar_path ? "" : " hidden"}" src="${me.avatar_path || ""}" alt="">
+        <input type="file" id="profileAvatarFileInput" accept="image/png,image/jpeg,image/webp">
+      </div>
+      <label>Aktuelles Passwort
+        <input type="password" id="profileCurrentPasswordInput" autocomplete="current-password">
+      </label>
+      <label>Neues Passwort (optional, min. 8 Zeichen)
+        <input type="password" id="profileNewPasswordInput" autocomplete="new-password">
+      </label>
+      <label>Neues Passwort bestätigen
+        <input type="password" id="profileNewPasswordConfirmInput" autocomplete="new-password">
+      </label>
+      <p class="error-text hidden profile-error"></p>
+    </div>
+  `;
+}
+
+async function openProfileModal() {
+  const { me } = await fetchUsersAndMe();
+  if (!me) return;
+
+  openModal({
+    eyebrow: "Profil",
+    title: me.username,
+    submitLabel: "Speichern",
+    bodyHtml: profileModalBodyHtml(me),
+    onSubmit: async () => {
+      const errEl = document.querySelector(".profile-error");
+      errEl.classList.add("hidden");
+
+      const fileInput = document.getElementById("profileAvatarFileInput");
+      const file = fileInput.files[0];
+      if (file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/me/avatar", { method: "POST", body: formData });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          errEl.textContent = data.error || "Profilbild konnte nicht gespeichert werden.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        const data = await res.json();
+        cachedMe = null;
+        applyAvatarToButton(data.avatar_path);
+      }
+
+      const currentPassword = document.getElementById("profileCurrentPasswordInput").value;
+      const newPassword = document.getElementById("profileNewPasswordInput").value;
+      const newPasswordConfirm = document.getElementById("profileNewPasswordConfirmInput").value;
+
+      if (currentPassword || newPassword || newPasswordConfirm) {
+        if (newPassword !== newPasswordConfirm) {
+          errEl.textContent = "Die neuen Passwörter stimmen nicht überein.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        if (!currentPassword || !newPassword) {
+          errEl.textContent = "Bitte aktuelles und neues Passwort eingeben.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        const res = await fetch("/api/me/password", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          errEl.textContent = data.error || "Passwort konnte nicht geändert werden.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+      }
+
+      closeModal();
+    },
+  });
+}
+
+const profileButton = document.getElementById("profileButton");
+if (profileButton) profileButton.addEventListener("click", openProfileModal);
+
+fetchUsersAndMe().then(({ me }) => {
+  if (me) applyAvatarToButton(me.avatar_path);
+});
+
+/* ---------- Admin: Nutzer verwalten ---------- */
+
+function adminUsersModalBodyHtml(users) {
+  const rows = users
+    .map(
+      (u) => `
+        <div class="list-card">
+          <div class="list-card-content">
+            <div class="list-card-text">
+              <p class="list-card-title">${escapeHtml(u.username)}</p>
+              <p class="list-card-meta">${escapeHtml(u.role || "user")}</p>
+            </div>
+          </div>
+        </div>
+      `
+    )
+    .join("");
+
+  return `
+    <div class="form-stack">
+      <div class="checkbox-group">
+        <div class="eyebrow">Bestehende Nutzer</div>
+        <div class="stack">${rows || '<div class="empty-state"><p>Noch keine Nutzer.</p></div>'}</div>
+      </div>
+      <div class="checkbox-group" data-live-save>
+        <div class="eyebrow">Neuen Nutzer anlegen</div>
+        <label>Nutzername
+          <input type="text" id="newUserUsernameInput" maxlength="40" placeholder="z. B. Mara">
+        </label>
+        <label>Rolle
+          <select id="newUserRoleSelect">
+            <option value="user">user</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <button type="button" id="createUserBtn" class="secondary compact">Nutzer anlegen</button>
+        <p class="error-text hidden new-user-error"></p>
+        <div id="newUserPasswordResult" class="hidden">
+          <div class="eyebrow">Generiertes Passwort (nur jetzt sichtbar)</div>
+          <div class="action-row">
+            <input type="text" id="newUserGeneratedPassword" readonly>
+            <button type="button" id="copyNewUserPasswordBtn" class="secondary compact">📋 Kopieren</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function openAdminUsersModal() {
+  const res = await fetch("/api/users");
+  const users = res.ok ? await res.json() : [];
+
+  openModal({
+    eyebrow: "Admin",
+    title: "Nutzer verwalten",
+    submitLabel: "Fertig",
+    bodyHtml: adminUsersModalBodyHtml(users),
+    onSubmit: async () => {
+      closeModal();
+    },
+  });
+
+  document.getElementById("createUserBtn").addEventListener("click", async () => {
+    const usernameInput = document.getElementById("newUserUsernameInput");
+    const roleSelect = document.getElementById("newUserRoleSelect");
+    const errEl = document.querySelector(".new-user-error");
+    const resultEl = document.getElementById("newUserPasswordResult");
+    errEl.classList.add("hidden");
+
+    const username = usernameInput.value.trim();
+    if (!username) {
+      errEl.textContent = "Bitte einen Nutzernamen eingeben.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const createRes = await fetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, role: roleSelect.value }),
+    });
+
+    if (!createRes.ok) {
+      const data = await createRes.json().catch(() => ({}));
+      errEl.textContent = data.error || "Nutzer konnte nicht angelegt werden.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const created = await createRes.json();
+    document.getElementById("newUserGeneratedPassword").value = created.generated_password;
+    resultEl.classList.remove("hidden");
+    cachedUsers = null;
+  });
+
+  document.getElementById("copyNewUserPasswordBtn").addEventListener("click", async () => {
+    const input = document.getElementById("newUserGeneratedPassword");
+    try {
+      await navigator.clipboard.writeText(input.value);
+    } catch (err) {
+      input.select();
+    }
+  });
+}
+
+const adminUsersButton = document.getElementById("adminUsersButton");
+if (adminUsersButton) {
+  adminUsersButton.addEventListener("click", openAdminUsersModal);
+  fetchUsersAndMe().then(({ me }) => {
+    if (me && isAdminRole(me.role)) adminUsersButton.classList.remove("hidden");
+  });
+}
+
 /* ---------- Camp-Plan (Termine, nur Admins legen an) ---------- */
 const planListEl = document.getElementById("planList");
 const addPlanButton = document.getElementById("addPlanButton");
