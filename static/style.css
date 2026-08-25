@@ -52,6 +52,10 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .empty{border:1px dashed var(--line);border-radius:18px;padding:25px;text-align:center;color:var(--muted)}
 .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s;display:inline-block}
 .primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--yellow);color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
+/* Zeigt an, dass "Filtern"/"Sortieren" gerade von der Grundeinstellung
+   abweichen — gleiche Sprache wie die aktiven Filter-Pillen (eigene
+   Nutzerfarbe statt neutralem Grau). */
+.secondary.filter-btn-active{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow));color:#111}
 /* Schwebender "+"-Button unten rechts (leichter mit dem Daumen erreichbar) —
    eigene Nutzerfarbe statt festem Gelb, mit .primary.fab-button für höhere
    Spezifität als die .primary-Regel oben. */
@@ -83,7 +87,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .form-stack{display:grid;gap:12px}.form-stack label{display:grid;gap:6px;color:var(--muted);font-size:13px;font-weight:700}.checkbox-group{display:grid;gap:6px}
 .form-row-2col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .sort-select{margin-bottom:16px}.costs-view{display:grid;gap:2px}
-.view-heading-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.view-heading-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .balance-chip{display:flex;flex-direction:column;align-items:flex-end;text-align:right;flex-shrink:0}
 .balance-chip-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
 .balance-chip-value{font-size:16px;font-weight:900}

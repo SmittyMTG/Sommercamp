@@ -157,19 +157,13 @@
 
         <div class="filter-row" id="privateTaskFilterRow">
           <button type="button" class="filter active" data-filter="alle">Alle</button>
-          <button type="button" class="filter" data-filter="offen">Offen</button>
-          <button type="button" class="filter" data-filter="ueberfaellig">Überfällig</button>
+          <button type="button" class="filter" data-filter="meine">Meine</button>
+          <button type="button" class="filter" data-filter="privat">Privat</button>
         </div>
-        <select id="privateTaskProjectFilterSelect" class="sort-select">
-          <option value="">Alle Projekte</option>
-        </select>
-        <select id="privateTaskSortSelect" class="sort-select">
-          <option value="deadline">Sortieren nach: Deadline</option>
-          <option value="neu">Sortieren nach: Neu zuerst</option>
-          <option value="titel">Sortieren nach: Titel (A–Z)</option>
-          <option value="kategorie">Sortieren nach: Kategorie</option>
-          <option value="projekt">Sortieren nach: Projekt</option>
-        </select>
+        <div class="action-row">
+          <button type="button" id="privateTaskFilterBtn" class="secondary compact">🔍 Filtern</button>
+          <button type="button" id="privateTaskSortBtn" class="secondary compact">↕️ Sortieren</button>
+        </div>
         <div id="privateTaskList" class="stack">
           <div class="empty-state"><p>Noch keine Tasks.</p></div>
         </div>
@@ -225,6 +219,22 @@
         <button type="button" id="settlementExplainPrev" class="secondary compact">‹ Zurück</button>
         <div id="settlementExplainDots" class="explain-dots"></div>
         <button type="button" id="settlementExplainNext" class="primary compact">Weiter ›</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="confirmDialog" class="delete-dialog">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <div class="eyebrow">Achtung</div>
+          <h2 id="confirmDialogTitle">Eingaben verwerfen?</h2>
+        </div>
+      </div>
+      <p id="confirmDialogMessage" class="muted warning-text"></p>
+      <div class="modal-actions">
+        <button type="button" id="confirmDialogCancel" class="secondary">Zurück</button>
+        <button type="button" id="confirmDialogOk" class="primary danger">Verwerfen</button>
       </div>
     </div>
   </dialog>

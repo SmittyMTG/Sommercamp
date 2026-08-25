@@ -52,6 +52,12 @@ class User(Base):
     # verwaltbar (siehe PATCH /api/users/{id}/color); neue User bekommen beim
     # Anlegen automatisch eine Farbe aus einer festen Palette zugewiesen.
     color = Column(String(7), nullable=True)
+    # Frei formbarer JSON-Blob für UI-Zustand, der pro User über Geräte hinweg
+    # erhalten bleiben soll (zuletzt offener Screen/Scroll, aktive Filter/
+    # Sortierung auf Tasks & Kosten, …) — siehe GET/PATCH /api/me/ui-state in
+    # main.py. Bewusst ein einziges Blob-Feld statt einzelner Spalten pro
+    # Einstellung, damit neue UI-Zustände ohne Migration dazukommen können.
+    ui_state = Column(Text, nullable=True)
 
 
 # Sessions in der DB statt nur im Prozessspeicher (siehe auth.py) — sonst wirft
@@ -250,6 +256,7 @@ _ensure_column("tasks", "category_id", "INTEGER")
 _ensure_column("tasks", "aufwand_min", "INTEGER")
 _ensure_column("users", "avatar_path", "TEXT")
 _ensure_column("users", "color", "TEXT")
+_ensure_column("users", "ui_state", "TEXT")
 
 
 # Gegenstück zu _ensure_column: entfernt eine Spalte, falls sie noch von einem

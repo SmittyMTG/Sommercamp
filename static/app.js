@@ -62,33 +62,73 @@ function goToScreen(name, opts = {}) {
   saveUiState({ screen: name });
 }
 
-/* ---------- Zustand pro User merken: zuletzt offener Screen + Scrollposition
-   (localStorage, pro Username) — beim nächsten Login landet man genau wieder
-   dort, statt immer bei Kosten. ---------- */
+/* ---------- Zustand pro User merken: zuletzt offener Screen + Scrollposition,
+   aktive Filter/Sortierung bei Tasks & Kosten, … — liegt serverseitig
+   (GET/PATCH /api/me/ui-state), damit es auch geräteübergreifend erhalten
+   bleibt, "bis man es aktiv rausmacht". localStorage dient nur als
+   Sofort-Cache: schreibt ohne Netzwerk-Latenz, synct debounced zum Server. */
 function uiStateKey(username) {
   return `sommercamp_ui_state_${username}`;
 }
+let uiStateCache = {};
+let pendingUiStatePatch = {};
+let uiStateSaveTimeout = null;
+
 function saveUiState(patch) {
   if (!cachedMe) return;
-  let state = {};
+  Object.assign(uiStateCache, patch);
+  Object.assign(pendingUiStatePatch, patch);
   try {
-    state = JSON.parse(localStorage.getItem(uiStateKey(cachedMe.username)) || "{}");
+    localStorage.setItem(uiStateKey(cachedMe.username), JSON.stringify(uiStateCache));
   } catch (err) {
-    state = {};
+    // Privater Modus / Speicher voll — Server-Sync unten läuft trotzdem weiter.
   }
-  Object.assign(state, patch);
-  try {
-    localStorage.setItem(uiStateKey(cachedMe.username), JSON.stringify(state));
-  } catch (err) {
-    // Privater Modus / Speicher voll — einfach ohne Persistenz weitermachen.
-  }
+  clearTimeout(uiStateSaveTimeout);
+  uiStateSaveTimeout = setTimeout(() => {
+    const toSend = pendingUiStatePatch;
+    pendingUiStatePatch = {};
+    if (Object.keys(toSend).length === 0) return;
+    fetch("/api/me/ui-state", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(toSend),
+    }).catch(() => {
+      // Netzwerkhänger — Zustand bleibt zumindest lokal erhalten (siehe oben).
+    });
+  }, 500);
 }
-function loadUiState(username) {
+
+// Server ist die führende Quelle (geräteübergreifend), localStorage nur der
+// Fallback, falls der Request mal fehlschlägt (z. B. offline).
+async function loadUiState(username) {
   try {
-    return JSON.parse(localStorage.getItem(uiStateKey(username)) || "null");
+    const res = await fetch("/api/me/ui-state");
+    if (res.ok) {
+      const state = await res.json();
+      if (state && Object.keys(state).length > 0) {
+        uiStateCache = state;
+        return state;
+      }
+    }
+  } catch (err) {
+    // fällt unten auf localStorage zurück
+  }
+  try {
+    const local = JSON.parse(localStorage.getItem(uiStateKey(username)) || "null");
+    if (local) uiStateCache = local;
+    return local;
   } catch (err) {
     return null;
   }
+}
+
+// Mehrere unabhängige Init-Blöcke (Tasks, Kosten, Screen-Restore) brauchen
+// alle den geladenen Zustand — ein geteiltes Promise sorgt dafür, dass
+// /api/me/ui-state trotzdem nur EINMAL abgerufen wird, egal wer zuerst dran ist.
+let uiStateReadyPromise = null;
+function ensureUiStateLoaded(username) {
+  if (!uiStateReadyPromise) uiStateReadyPromise = loadUiState(username);
+  return uiStateReadyPromise;
 }
 
 function initNavigation() {
@@ -156,6 +196,40 @@ const modalSubmit = document.getElementById("modalSubmit");
 
 let modalSubmitHandler = null;
 
+// Ersatz für das native, unstylbare confirm() — gleicher Look wie der Rest
+// der App (roter Akzent, siehe .delete-dialog), auch während bereits das
+// Haupt-Modal offen ist (verschachtelte <dialog>-Elemente stapeln sich
+// zuverlässig, jede mit eigenem Backdrop).
+const confirmDialogEl = document.getElementById("confirmDialog");
+const confirmDialogMessageEl = document.getElementById("confirmDialogMessage");
+const confirmDialogOkBtn = document.getElementById("confirmDialogOk");
+const confirmDialogCancelBtn = document.getElementById("confirmDialogCancel");
+let confirmDialogResolve = null;
+
+function showConfirm(message, okLabel) {
+  return new Promise((resolve) => {
+    confirmDialogResolve = resolve;
+    confirmDialogMessageEl.textContent = message;
+    confirmDialogOkBtn.textContent = okLabel || "Verwerfen";
+    confirmDialogEl.showModal();
+  });
+}
+function resolveConfirm(result) {
+  if (confirmDialogEl.open) confirmDialogEl.close();
+  if (confirmDialogResolve) {
+    confirmDialogResolve(result);
+    confirmDialogResolve = null;
+  }
+}
+if (confirmDialogOkBtn) confirmDialogOkBtn.addEventListener("click", () => resolveConfirm(true));
+if (confirmDialogCancelBtn) confirmDialogCancelBtn.addEventListener("click", () => resolveConfirm(false));
+if (confirmDialogEl) {
+  confirmDialogEl.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    resolveConfirm(false);
+  });
+}
+
 // Schnappschuss aller Feldwerte im Modal, um beim Schließen zu erkennen, ob
 // sich seit dem Öffnen etwas geändert hat (siehe hasUnsavedModalChanges).
 function snapshotModalFormState() {
@@ -211,8 +285,8 @@ function closeModal() {
 
 // Fragt bei ungespeicherten Eingaben nach, bevor wirklich geschlossen wird —
 // verhindert versehentlichen Datenverlust durch Wegklicken/Zurück/ESC.
-function requestCloseModal() {
-  if (hasUnsavedModalChanges() && !confirm("Eingaben verwerfen? Was du eingegeben hast, geht sonst verloren.")) {
+async function requestCloseModal() {
+  if (hasUnsavedModalChanges() && !(await showConfirm("Was du eingegeben hast, geht sonst verloren."))) {
     return;
   }
   closeModal();
@@ -226,10 +300,10 @@ modal.addEventListener("click", (e) => {
 // "cancel" feuert, wenn der Dialog nativ per ESC geschlossen werden soll —
 // preventDefault() stoppt das native Schließen, damit auch dieser Weg über
 // requestCloseModal läuft statt die Bestätigung zu umgehen.
-modal.addEventListener("cancel", (e) => {
+modal.addEventListener("cancel", async (e) => {
   if (hasUnsavedModalChanges()) {
     e.preventDefault();
-    if (confirm("Eingaben verwerfen? Was du eingegeben hast, geht sonst verloren.")) {
+    if (await showConfirm("Was du eingegeben hast, geht sonst verloren.")) {
       closeModal();
     }
   }
@@ -842,14 +916,17 @@ if (addTaskButton) addTaskButton.addEventListener("click", openAddTaskModal);
 /* ---------- "Tasks" (privat/projekt-getaggt, aktuell nur für Felix sichtbar
    über die Nav — Zugriff wird zusätzlich serverseitig geprüft, siehe main.py) ---------- */
 const privateTaskListEl = document.getElementById("privateTaskList");
-const privateTaskSortSelect = document.getElementById("privateTaskSortSelect");
 const privateTaskFilterRow = document.getElementById("privateTaskFilterRow");
-const privateTaskProjectFilterSelect = document.getElementById("privateTaskProjectFilterSelect");
+const privateTaskFilterBtn = document.getElementById("privateTaskFilterBtn");
+const privateTaskSortBtn = document.getElementById("privateTaskSortBtn");
 
 let lastPrivateTaskItems = [];
-let privateTaskSortMode = "deadline";
-let privateTaskFilterMode = "alle";
+// scopeMode: schnelle Pillen (Alle/Meine/Privat). statusFilter/projectFilterId:
+// Detail-Filter aus dem "Filtern"-Fenster. Alle drei kombinieren sich (UND).
+let privateTaskScopeMode = "alle";
+let privateTaskStatusFilter = "alle";
 let privateTaskProjectFilterId = "";
+let privateTaskSortMode = "deadline";
 let cachedProjects = null;
 
 function isPrivateTaskOverdue(task) {
@@ -859,10 +936,12 @@ function isPrivateTaskOverdue(task) {
   return new Date(task.deadline) < today;
 }
 
-function filterPrivateTasks(items, mode, projectId) {
+function filterPrivateTasks(items, scopeMode, statusFilter, projectId) {
   let out = items;
-  if (mode === "offen") out = out.filter((t) => !t.done);
-  else if (mode === "ueberfaellig") out = out.filter((t) => isPrivateTaskOverdue(t));
+  if (scopeMode === "meine" && cachedMe) out = out.filter((t) => t.created_by === cachedMe.username);
+  else if (scopeMode === "privat") out = out.filter((t) => !t.project);
+  if (statusFilter === "offen") out = out.filter((t) => !t.done);
+  else if (statusFilter === "ueberfaellig") out = out.filter((t) => isPrivateTaskOverdue(t));
   if (projectId === "privat") out = out.filter((t) => !t.project);
   else if (projectId) out = out.filter((t) => t.project && String(t.project.id) === String(projectId));
   return out;
@@ -1017,7 +1096,12 @@ function renderPrivateTaskItem(task) {
 
 function renderFilteredSortedPrivateTasks() {
   if (!privateTaskListEl) return;
-  const filtered = filterPrivateTasks(lastPrivateTaskItems, privateTaskFilterMode, privateTaskProjectFilterId);
+  const filtered = filterPrivateTasks(
+    lastPrivateTaskItems,
+    privateTaskScopeMode,
+    privateTaskStatusFilter,
+    privateTaskProjectFilterId
+  );
   const sorted = sortPrivateTasks(filtered, privateTaskSortMode);
 
   privateTaskListEl.innerHTML = "";
@@ -1045,30 +1129,109 @@ async function loadPrivateTasks(force) {
   }
 }
 
+function setPrivateTaskScopeUI(mode) {
+  privateTaskScopeMode = mode;
+  if (privateTaskFilterRow) {
+    privateTaskFilterRow.querySelectorAll(".filter").forEach((b) => {
+      b.classList.toggle("active", b.dataset.filter === mode);
+    });
+  }
+}
+
 if (privateTaskFilterRow) {
   privateTaskFilterRow.querySelectorAll(".filter").forEach((btn) => {
     btn.addEventListener("click", () => {
-      privateTaskFilterRow.querySelectorAll(".filter").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      privateTaskFilterMode = btn.dataset.filter;
+      setPrivateTaskScopeUI(btn.dataset.filter);
       renderFilteredSortedPrivateTasks();
+      saveUiState({ tasksScope: privateTaskScopeMode });
     });
   });
 }
 
-if (privateTaskSortSelect) {
-  privateTaskSortSelect.addEventListener("change", () => {
-    privateTaskSortMode = privateTaskSortSelect.value;
-    renderFilteredSortedPrivateTasks();
-  });
+// "Filtern" und "Sortieren" markieren sich selbst als aktiv (gleiche Farbe
+// wie die Filter-Pillen), solange etwas von "Alle"/"Deadline" abweicht —
+// sichtbares Zeichen, dass gerade eingegrenzt/umsortiert ist.
+function updatePrivateTaskFilterSortButtons() {
+  if (privateTaskFilterBtn) {
+    const active = privateTaskStatusFilter !== "alle" || !!privateTaskProjectFilterId;
+    privateTaskFilterBtn.classList.toggle("filter-btn-active", active);
+  }
+  if (privateTaskSortBtn) {
+    privateTaskSortBtn.classList.toggle("filter-btn-active", privateTaskSortMode !== "deadline");
+  }
 }
 
-if (privateTaskProjectFilterSelect) {
-  privateTaskProjectFilterSelect.addEventListener("change", () => {
-    privateTaskProjectFilterId = privateTaskProjectFilterSelect.value;
-    renderFilteredSortedPrivateTasks();
+async function openPrivateTaskFilterModal() {
+  const projects = await fetchProjects();
+  openModal({
+    eyebrow: "Tasks",
+    title: "Filtern",
+    submitLabel: "Anwenden",
+    bodyHtml: `
+      <div class="form-stack">
+        <label>Status
+          <select id="taskFilterStatusSelect">
+            <option value="alle">Alle</option>
+            <option value="offen">Offen</option>
+            <option value="ueberfaellig">Überfällig</option>
+          </select>
+        </label>
+        <label>Projekt
+          <select id="taskFilterProjectSelect">
+            <option value="">Alle Projekte</option>
+            <option value="privat">Privat</option>
+            ${privateTaskProjectOptionsHtml(projects, "")}
+          </select>
+        </label>
+      </div>
+    `,
+    onSubmit: async () => {
+      privateTaskStatusFilter = document.getElementById("taskFilterStatusSelect").value;
+      privateTaskProjectFilterId = document.getElementById("taskFilterProjectSelect").value;
+      closeModal();
+      renderFilteredSortedPrivateTasks();
+      updatePrivateTaskFilterSortButtons();
+      saveUiState({
+        tasksStatusFilter: privateTaskStatusFilter,
+        tasksProjectFilter: privateTaskProjectFilterId,
+      });
+    },
   });
+  document.getElementById("taskFilterStatusSelect").value = privateTaskStatusFilter;
+  document.getElementById("taskFilterProjectSelect").value = privateTaskProjectFilterId;
 }
+
+function openPrivateTaskSortModal() {
+  openModal({
+    eyebrow: "Tasks",
+    title: "Sortieren",
+    submitLabel: "Anwenden",
+    bodyHtml: `
+      <div class="form-stack">
+        <label>Sortieren nach
+          <select id="taskSortModalSelect">
+            <option value="deadline">Deadline</option>
+            <option value="neu">Neu zuerst</option>
+            <option value="titel">Titel (A–Z)</option>
+            <option value="kategorie">Kategorie</option>
+            <option value="projekt">Projekt</option>
+          </select>
+        </label>
+      </div>
+    `,
+    onSubmit: async () => {
+      privateTaskSortMode = document.getElementById("taskSortModalSelect").value;
+      closeModal();
+      renderFilteredSortedPrivateTasks();
+      updatePrivateTaskFilterSortButtons();
+      saveUiState({ tasksSort: privateTaskSortMode });
+    },
+  });
+  document.getElementById("taskSortModalSelect").value = privateTaskSortMode;
+}
+
+if (privateTaskFilterBtn) privateTaskFilterBtn.addEventListener("click", openPrivateTaskFilterModal);
+if (privateTaskSortBtn) privateTaskSortBtn.addEventListener("click", openPrivateTaskSortModal);
 
 /* ---------- Tasks: Projekte (privat / geteilte Projekt-Tags) ---------- */
 
@@ -1086,17 +1249,6 @@ function privateTaskProjectOptionsHtml(projects, selectedId) {
         `<option value="${p.id}"${String(p.id) === String(selectedId) ? " selected" : ""}>${escapeHtml(p.name)}</option>`
     )
     .join("");
-}
-
-function populateProjectFilterSelect(projects) {
-  if (!privateTaskProjectFilterSelect) return;
-  const current = privateTaskProjectFilterSelect.value;
-  privateTaskProjectFilterSelect.innerHTML = `
-    <option value="">Alle Projekte</option>
-    <option value="privat">Privat</option>
-    ${privateTaskProjectOptionsHtml(projects, "")}
-  `;
-  privateTaskProjectFilterSelect.value = current;
 }
 
 function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
@@ -1247,7 +1399,6 @@ function wirePrivateTaskProjectPicker() {
     if (res.ok) {
       const created = await res.json();
       const projects = await fetchProjects(true);
-      populateProjectFilterSelect(projects);
       projectSelect.innerHTML = `
         <option value="">Privat</option>
         ${privateTaskProjectOptionsHtml(projects, created.id)}
@@ -1510,9 +1661,9 @@ if (appShellEl) {
 // sich das mal ändert). Verzögert gesetzt, weil der Kalender & Co. ihr DOM
 // erst nach dem eigenen (asynchronen) Laden aufbauen — sonst greift
 // scrollTop teilweise noch ins Leere.
-fetchUsersAndMe().then(({ me }) => {
+fetchUsersAndMe().then(async ({ me }) => {
   if (!me) return;
-  const state = loadUiState(me.username);
+  const state = await ensureUiStateLoaded(me.username);
   if (!state || !state.screen || !document.getElementById(`screen-${state.screen}`)) return;
   goToScreen(state.screen, { preserveScroll: true });
   if (typeof state.scroll === "number") {
@@ -1523,7 +1674,7 @@ fetchUsersAndMe().then(({ me }) => {
 });
 
 /* ---------- Tasks: Sichtbarkeit (nur Felix) + Init ---------- */
-fetchUsersAndMe().then(({ me }) => {
+fetchUsersAndMe().then(async ({ me }) => {
   if (!me || me.username !== "Felix") return;
 
   const tasksNavButton = document.querySelector('.bottom-nav [data-screen="tasks"]');
@@ -1531,7 +1682,18 @@ fetchUsersAndMe().then(({ me }) => {
   if (tasksNavButton) tasksNavButton.classList.remove("hidden");
   if (bottomNavEl) bottomNavEl.classList.add("nav-4");
 
-  fetchProjects(true).then((projects) => populateProjectFilterSelect(projects));
+  fetchProjects(true);
+
+  // Zuletzt gewählte Filter/Sortierung wiederherstellen (siehe ui-state).
+  const state = await ensureUiStateLoaded(me.username);
+  if (state) {
+    if (state.tasksScope) setPrivateTaskScopeUI(state.tasksScope);
+    if (state.tasksStatusFilter) privateTaskStatusFilter = state.tasksStatusFilter;
+    if (typeof state.tasksProjectFilter === "string") privateTaskProjectFilterId = state.tasksProjectFilter;
+    if (state.tasksSort) privateTaskSortMode = state.tasksSort;
+    updatePrivateTaskFilterSortButtons();
+  }
+
   loadPrivateTasks(true);
   setInterval(loadPrivateTasks, 5000);
 });
@@ -2276,6 +2438,7 @@ if (expenseFilterSelect) {
       expenseFilterUserId = parseInt(id, 10);
     }
     renderExpenseList();
+    saveUiState({ costsExpenseFilter: val });
   });
 }
 
@@ -2699,20 +2862,24 @@ const costsViews = {
   log: document.getElementById("costsViewLog"),
 };
 
-function switchCostsView(view) {
+function switchCostsView(view, opts = {}) {
   Object.entries(costsViews).forEach(([key, el]) => {
     if (el) el.classList.toggle("hidden", key !== view);
   });
+  if (costsViewRow) {
+    costsViewRow.querySelectorAll(".filter").forEach((b) => {
+      b.classList.toggle("active", b.dataset.view === view);
+    });
+  }
   if (view === "open") loadOpenSettlements();
   if (view === "received") loadReceivedPayments();
   if (view === "log") loadExpenseLog();
+  if (!opts.skipSave) saveUiState({ costsView: view });
 }
 
 if (costsViewRow) {
   costsViewRow.querySelectorAll(".filter").forEach((btn) => {
     btn.addEventListener("click", () => {
-      costsViewRow.querySelectorAll(".filter").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
       switchCostsView(btn.dataset.view);
     });
   });
@@ -3620,6 +3787,7 @@ if (expenseLogFilterSelect) {
   expenseLogFilterSelect.addEventListener("change", () => {
     expenseLogFilterAction = expenseLogFilterSelect.value;
     renderExpenseLog();
+    saveUiState({ costsLogFilter: expenseLogFilterAction });
   });
 }
 
@@ -3673,6 +3841,36 @@ async function checkAppVersion() {
     // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
   }
 }
+
+/* ---------- Kosten: zuletzt gewählte Unteransicht + Filter wiederherstellen
+   (gleicher Mechanismus wie bei Tasks — siehe ensureUiStateLoaded) ---------- */
+fetchUsersAndMe().then(async ({ me }) => {
+  if (!me) return;
+  const state = await ensureUiStateLoaded(me.username);
+  if (!state) return;
+
+  if (state.costsView && costsViews[state.costsView]) {
+    switchCostsView(state.costsView, { skipSave: true });
+  }
+  if (typeof state.costsExpenseFilter === "string" && expenseFilterSelect) {
+    await populateExpenseFilterOptions();
+    expenseFilterSelect.value = state.costsExpenseFilter;
+    if (!state.costsExpenseFilter) {
+      expenseFilterMode = null;
+      expenseFilterUserId = null;
+    } else {
+      const [mode, id] = state.costsExpenseFilter.split(":");
+      expenseFilterMode = mode;
+      expenseFilterUserId = parseInt(id, 10);
+    }
+    renderExpenseList();
+  }
+  if (typeof state.costsLogFilter === "string" && expenseLogFilterSelect) {
+    expenseLogFilterSelect.value = state.costsLogFilter;
+    expenseLogFilterAction = state.costsLogFilter;
+    renderExpenseLog();
+  }
+});
 
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {

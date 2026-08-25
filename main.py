@@ -1,3 +1,4 @@
+import json
 import re
 import secrets
 import time
@@ -6,7 +7,7 @@ from datetime import date, datetime as dt
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Request, Depends, Form, UploadFile, File
+from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, Body
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -1224,6 +1225,51 @@ def update_user_color(user_id: int, request: Request, payload: UserColorUpdate, 
     user.color = color
     db.commit()
     return {"id": user.id, "color": user.color}
+
+
+def _load_ui_state(user: User) -> dict:
+    try:
+        state = json.loads(user.ui_state) if user.ui_state else {}
+    except (TypeError, ValueError):
+        state = {}
+    return state if isinstance(state, dict) else {}
+
+
+@app.get("/api/me/ui-state")
+def get_ui_state(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    me = db.query(User).filter(User.username == username).first()
+    if not me:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return _load_ui_state(me)
+
+
+# Pro User frei formbarer UI-Zustand (zuletzt offener Screen/Scroll, aktive
+# Filter/Sortierung auf Tasks & Kosten, …) — bewusst ein generischer
+# Merge-Patch statt einzelner Endpunkte pro Einstellung, damit das Frontend
+# neue Zustände speichern kann, ohne dass hier jedes Mal ein neuer Endpunkt
+# nötig wird. Eine grobe Größenbremse verhindert versehentlich endlos
+# wachsende Payloads (z. B. durch einen Frontend-Bug).
+@app.patch("/api/me/ui-state")
+def update_ui_state(request: Request, patch: dict = Body(...), db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    me = db.query(User).filter(User.username == username).first()
+    if not me:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    state = _load_ui_state(me)
+    state.update(patch)
+    serialized = json.dumps(state)
+    if len(serialized) > 20000:
+        return JSONResponse(status_code=400, content={"error": "Zustand zu groß"})
+
+    me.ui_state = serialized
+    db.commit()
+    return state
 
 
 @app.patch("/api/me/password")
