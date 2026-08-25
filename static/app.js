@@ -2805,6 +2805,7 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
   const today = new Date().toISOString().slice(0, 10);
   const payerId = prefill.glaubigerId != null ? prefill.glaubigerId : me.id;
   const beneficiaryIds = prefill.beneficiaryIds || null;
+  const entryAmounts = prefill.entryAmounts || {};
 
   // Echtes Dropdown statt <select> (kann weder Farbe noch Profilbild zeigen)
   // und statt dauerhaft sichtbarer Chips: eingeklappt zeigt der Trigger nur
@@ -2821,13 +2822,26 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
   // Chip statt Checkbox+Text: die ganze Kachel ist der Button, blass in der
   // Nutzerfarbe solange nicht ausgewählt, volle Farbe sobald ausgewählt —
   // dadurch auch kompakter, es passen mehr Personen pro Zeile. Ohne Prefill
-  // (neue Ausgabe) ist standardmäßig niemand ausgewählt.
+  // (neue Ausgabe) ist standardmäßig niemand ausgewählt. Das Betragsfeld
+  // steht IMMER (für alle User, nicht nur ausgewählte) direkt unter dem
+  // jeweiligen Namen im DOM, nur unsichtbar (visibility, nicht display) bis
+  // die Person ausgewählt ist — dadurch ändert sich beim Auswählen weder die
+  // Höhe des Erfassungsfensters noch die Zuordnung Name↔Betragsfeld.
   const beneficiaryOptions = users
     .map((u) => {
       const checked = beneficiaryIds ? beneficiaryIds.has(u.id) : false;
       const color = USER_COLORS[u.username] || "#ffd400";
       const pale = hexToRgba(color, 0.16);
-      return `<label class="beneficiary-chip${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}><span>${escapeHtml(u.username)}</span></label>`;
+      const prefillAmount = entryAmounts[u.id] != null ? entryAmounts[u.id].toFixed(2) : "";
+      return `
+        <div class="beneficiary-slot${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}">
+          <label class="beneficiary-chip${checked ? " checked" : ""}">
+            <input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}>
+            <span>${escapeHtml(u.username)}</span>
+          </label>
+          <input type="number" step="0.01" min="0.01" inputmode="decimal" class="expense-fixed-input" data-uid="${u.id}" placeholder="auto" value="${prefillAmount}">
+        </div>
+      `;
     })
     .join("");
 
@@ -2854,8 +2868,7 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
       </div>
       <div class="checkbox-group">
         <div class="eyebrow">Für wen?</div>
-        <div id="expenseBeneficiaries" class="chip-row">${beneficiaryOptions}</div>
-        <div id="expenseFixedAmounts" class="fixed-amount-chip-row"></div>
+        <div id="expenseBeneficiaries" class="beneficiary-grid">${beneficiaryOptions}</div>
         <p id="expenseSplitHint" class="muted"></p>
       </div>
       <label>Datum
@@ -2865,53 +2878,22 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
   `;
 }
 
-// Baut pro aktuell ausgewählter Person eine Zeile mit optionalem Festbetrag.
-// Wer keinen Wert einträgt, teilt sich später den Rest gleichmäßig auf (siehe
-// updateExpenseSplitHint). Bereits eingetragene Werte bleiben beim Umschalten
-// der Checkboxen erhalten, solange die Person weiterhin ausgewählt ist.
-function renderExpenseFixedAmountInputs(users, entryAmounts) {
-  const container = document.getElementById("expenseFixedAmounts");
-  if (!container) return;
-
-  const checkedIds = Array.from(
-    document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox:checked")
-  ).map((el) => parseInt(el.value, 10));
-
-  const existingValues = {};
-  container.querySelectorAll(".expense-fixed-input").forEach((el) => {
-    if (el.value) existingValues[parseInt(el.dataset.uid, 10)] = el.value;
+// Das Betragsfeld existiert für JEDEN User im DOM (siehe expenseModalBodyHtml),
+// aber nur die Felder ausgewählter Personen zählen für Summe/Aufteilung —
+// unausgewählte sind nur unsichtbar, nicht entfernt.
+function checkedExpenseFixedInputs() {
+  return Array.from(document.querySelectorAll("#expenseBeneficiaries .expense-fixed-input")).filter((el) => {
+    const slot = el.closest(".beneficiary-slot");
+    const cb = slot && slot.querySelector(".beneficiary-checkbox");
+    return !!(cb && cb.checked);
   });
-
-  // Kompakt statt eigener Abschnitt: nur Avatar + schmales Betragsfeld pro
-  // ausgewählter Person, direkt unter "Für wen?" — der Name steht ja schon
-  // auf dem jeweiligen Chip darüber, muss hier nicht wiederholt werden.
-  const byId = new Map(users.map((u) => [u.id, u]));
-  container.innerHTML = checkedIds
-    .map((uid) => {
-      const u = byId.get(uid);
-      if (!u) return "";
-      const prefillValue =
-        existingValues[uid] ?? (entryAmounts[uid] != null ? entryAmounts[uid].toFixed(2) : "");
-      return `
-        <label class="fixed-amount-chip" title="${escapeHtml(u.username)}">
-          <input type="number" step="0.01" min="0.01" inputmode="decimal" class="expense-fixed-input" data-uid="${uid}" placeholder="auto" value="${prefillValue}">
-        </label>
-      `;
-    })
-    .join("");
-
-  container.querySelectorAll(".expense-fixed-input").forEach((el) => {
-    el.addEventListener("input", updateExpenseSplitHint);
-  });
-
-  updateExpenseSplitHint();
 }
 
 function updateExpenseSplitHint() {
   const hintEl = document.getElementById("expenseSplitHint");
   if (!hintEl) return;
 
-  const fixedInputs = Array.from(document.querySelectorAll(".expense-fixed-input"));
+  const fixedInputs = checkedExpenseFixedInputs();
   hintEl.classList.remove("error-text");
 
   if (fixedInputs.length === 0) {
@@ -2938,13 +2920,22 @@ function updateExpenseSplitHint() {
 }
 
 // Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten Felder im DOM).
-// .beneficiary-chip zeigt die volle/blasse Farbe primär über :has(:checked)
-// (siehe style.css) — die .checked-Klasse ist nur ein Fallback für Browser
-// ohne :has()-Unterstützung, deshalb hier nach jeder Änderung mitgezogen.
+// .beneficiary-chip/-slot zeigen die volle/blasse Farbe bzw. das Betragsfeld
+// primär über :has(:checked) (siehe style.css) — die .checked-Klasse ist nur
+// ein Fallback für Browser ohne :has()-Unterstützung, deshalb hier nach jeder
+// Änderung mitgezogen. Beim Abwählen wird der eingetragene Betrag geleert,
+// damit kein unsichtbarer Alt-Wert für eine nicht mehr ausgewählte Person
+// beim Speichern mitgeschickt wird (Backend lehnt das sonst ab).
 function syncBeneficiaryChipClasses() {
-  document.querySelectorAll("#expenseBeneficiaries .beneficiary-chip").forEach((chip) => {
-    const cb = chip.querySelector(".beneficiary-checkbox");
-    chip.classList.toggle("checked", !!cb && cb.checked);
+  document.querySelectorAll("#expenseBeneficiaries .beneficiary-slot").forEach((slot) => {
+    const cb = slot.querySelector(".beneficiary-checkbox");
+    const isChecked = !!cb && cb.checked;
+    slot.classList.toggle("checked", isChecked);
+    slot.querySelector(".beneficiary-chip").classList.toggle("checked", isChecked);
+    if (!isChecked) {
+      const amountInput = slot.querySelector(".expense-fixed-input");
+      if (amountInput) amountInput.value = "";
+    }
   });
 }
 
@@ -2977,19 +2968,21 @@ function wirePayerDropdown(users) {
   });
 }
 
-function wireExpenseForm(users, me, entryAmounts) {
-  renderExpenseFixedAmountInputs(users, entryAmounts);
+function wireExpenseForm(users) {
   wirePayerDropdown(users);
 
-  const checkboxes = () => document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox");
-  checkboxes().forEach((cb) => {
+  document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox").forEach((cb) => {
     cb.addEventListener("change", () => {
       syncBeneficiaryChipClasses();
-      renderExpenseFixedAmountInputs(users, entryAmounts);
+      updateExpenseSplitHint();
     });
+  });
+  document.querySelectorAll("#expenseBeneficiaries .expense-fixed-input").forEach((el) => {
+    el.addEventListener("input", updateExpenseSplitHint);
   });
 
   document.getElementById("expenseCashInput").addEventListener("input", updateExpenseSplitHint);
+  updateExpenseSplitHint();
 }
 
 function readExpenseForm() {
@@ -3003,7 +2996,7 @@ function readExpenseForm() {
   const datum = document.getElementById("expenseDatumInput").value;
 
   const fixed_amounts = {};
-  document.querySelectorAll(".expense-fixed-input").forEach((el) => {
+  checkedExpenseFixedInputs().forEach((el) => {
     const val = parseFloat(el.value);
     if (el.value && val > 0) fixed_amounts[el.dataset.uid] = val;
   });
@@ -3038,12 +3031,22 @@ async function openAddExpenseModal() {
     },
   });
 
-  wireExpenseForm(users, me, {});
+  wireExpenseForm(users);
 }
 
 async function openEditExpenseModal(group) {
   const { users, me } = await fetchUsersAndMe();
   if (!me || users.length === 0) return;
+
+  // Nur vormals fest eingetragene Beträge vorausfüllen, damit ein unveränderter
+  // Save die individuelle Aufteilung nicht stillschweigend verwirft. Personen, die
+  // vorher "auto" waren (Rest gleichmäßig verteilt), bleiben leer, damit sie beim
+  // Speichern automatisch neu aufgeteilt werden (z. B. wenn sich Betrag oder
+  // Beteiligte geändert haben).
+  const entryAmounts = {};
+  group.entries.forEach((e) => {
+    if (e.fixed) entryAmounts[e.schuldner_id] = e.cash;
+  });
 
   openModal({
     eyebrow: "Kosten",
@@ -3055,6 +3058,7 @@ async function openEditExpenseModal(group) {
       total: group.total,
       betreff: group.betreff,
       datum: group.datum,
+      entryAmounts,
     }),
     onSubmit: async () => {
       const form = readExpenseForm();
@@ -3073,16 +3077,7 @@ async function openEditExpenseModal(group) {
     },
   });
 
-  // Nur vormals fest eingetragene Beträge vorausfüllen, damit ein unveränderter
-  // Save die individuelle Aufteilung nicht stillschweigend verwirft. Personen, die
-  // vorher "auto" waren (Rest gleichmäßig verteilt), bleiben leer, damit sie beim
-  // Speichern automatisch neu aufgeteilt werden (z. B. wenn sich Betrag oder
-  // Beteiligte geändert haben).
-  const entryAmounts = {};
-  group.entries.forEach((e) => {
-    if (e.fixed) entryAmounts[e.schuldner_id] = e.cash;
-  });
-  wireExpenseForm(users, me, entryAmounts);
+  wireExpenseForm(users);
 }
 
 const addExpenseButton = document.getElementById("addExpenseButton");

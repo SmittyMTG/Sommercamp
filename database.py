@@ -381,6 +381,38 @@ def _backfill_expense_batch_ids():
 
 _backfill_expense_batch_ids()
 
+
+def _backfill_expense_log_messages():
+    """Einmaliger Nachtrag für "expense_created"-Logeinträge von vor dem Fix, der
+    die betroffene Person namentlich statt mit dem nichtssagenden "für dich"
+    nennt (create_expense in main.py) — bei aufgeteilten Ausgaben sahen sonst
+    mehrere Log-Zeilen identisch aus. affected_username trägt die betroffene
+    Person schon korrekt (nur der Freitext war falsch), außer bei einer
+    Eigenausgabe (Zahler == Beteiligter): dort ist affected_username laut
+    log_action() bewusst NULL, die betroffene Person war dann aber immer der
+    Zahler selbst (actor_username). Läuft nur für Zeilen mit dem alten
+    Nachrichten-Suffix, ist also bei jedem Start ungefährlich erneut ausführbar
+    (No-Op nach dem ersten Mal).
+    """
+    db = SessionLocal()
+    try:
+        old_suffix = " für dich bezahlt"
+        rows = (
+            db.query(ActivityLog)
+            .filter(ActivityLog.action == "expense_created", ActivityLog.message.like(f"%{old_suffix}"))
+            .all()
+        )
+        for r in rows:
+            beneficiary_name = r.affected_username or r.actor_username
+            r.message = r.message[: -len(old_suffix)] + f" für {beneficiary_name} bezahlt"
+        if rows:
+            db.commit()
+    finally:
+        db.close()
+
+
+_backfill_expense_log_messages()
+
 # Dependency to get DB session
 def get_db():
     db = SessionLocal()
