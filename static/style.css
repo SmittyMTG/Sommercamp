@@ -70,7 +70,10 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .urgent-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s,opacity .15s;opacity:.45}.urgent-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}.urgent-btn.active{opacity:1;color:var(--red);background:rgba(255,98,98,.15)}
 .meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:7px}.pill{background:var(--surface2);border:1px solid var(--line);border-radius:999px;padding:5px 8px;font-size:11px;color:var(--muted)}
 .action-row{display:flex;flex-wrap:wrap;gap:7px}.tiny{padding:8px 10px;border-radius:11px;border:none;background:var(--surface2);color:var(--text);font-weight:850;min-height:32px;display:flex;align-items:center;justify-content:center}
-.filter-row{display:flex;gap:8px;overflow:auto;padding-bottom:10px}.filter{white-space:nowrap;border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:8px 11px;border-radius:999px}.filter.active{background:var(--yellow);color:#111;border-color:var(--yellow);font-weight:900}
+/* font-weight ist bei .filter UND .filter.active bewusst identisch (900) —
+   sonst ändert sich beim Umschalten (fett vs. normal) die Textbreite und der
+   Button "springt" sichtbar in der Größe statt nur die Farbe zu wechseln. */
+.filter-row{display:flex;gap:8px;overflow:auto;padding-bottom:10px}.filter{white-space:nowrap;border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:8px 11px;border-radius:999px;font-weight:900}.filter.active{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow));color:#111}
 .filter-row.two-row{flex-wrap:wrap;overflow:visible}
 .bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(760px,100%);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:rgba(16,16,20,.94);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:8px 5px calc(8px + env(safe-area-inset-bottom));z-index:20}
 .bottom-nav.nav-4{grid-template-columns:repeat(4,minmax(0,1fr))}
