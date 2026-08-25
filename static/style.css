@@ -18,14 +18,21 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 /* body scrollt bewusst NICHT mehr (siehe oben) — stattdessen scrollt nur dieser
    Bereich intern. Die fixierte Bottom-Nav liegt außerhalb und kann sich dadurch
    beim iOS-Bounce-Scrolling nicht mehr sichtbar mitbewegen. */
-.app-shell{max-width:760px;margin:auto;padding:18px 16px 110px;height:100%;overflow-y:scroll;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
+.app-shell{position:relative;max-width:760px;margin:auto;padding:18px 16px 110px;height:100%;overflow-y:scroll;scrollbar-gutter:stable;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
 .app-shell::-webkit-scrollbar{width:8px}
 .app-shell::-webkit-scrollbar-track{background:transparent}
 .app-shell::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px}
 .app-shell::-webkit-scrollbar-thumb:hover{background:var(--surface2)}
-.topbar{display:flex;justify-content:flex-end;align-items:center;margin:4px 0 16px}
+/* Kein eigenes Zeilenlayout mehr (kostet Platz) — schwebt stattdessen auf
+   gleicher Höhe wie die erste Überschrift jedes Screens, scrollt mit dem
+   Inhalt mit (App-Shell ist der Scroll-Container). */
+.topbar{position:absolute;top:18px;right:16px;z-index:15;display:flex;justify-content:flex-end;align-items:center}
 .topbar-actions{display:flex;gap:8px;align-items:center}
-.avatar-button{border-radius:999px;width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:17px}
+/* Zwei Klassen (statt nur .avatar-button) für höhere Spezifität als die
+   spätere .icon-button-Regel weiter unten — sonst gewinnt deren
+   border-radius:13px/padding per Cascade-Reihenfolge und der Button ist
+   eckig statt rund. */
+.icon-button.avatar-button{border-radius:999px;width:46px;height:46px;padding:0;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:19px;box-sizing:border-box;border:2px solid var(--me-color,var(--line))}
 .avatar-img{width:100%;height:100%;object-fit:cover;border-radius:999px}
 .avatar-preview{width:64px;height:64px;border-radius:999px;object-fit:cover;background:var(--surface2);display:block}
 .hero-card,.card{background:linear-gradient(145deg,#212127,#141418);border:1px solid var(--line);border-radius:24px;padding:20px;box-shadow:var(--shadow)}
@@ -70,6 +77,10 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .plan-past-panel.collapsed{padding-bottom:4px}
 .plan-past-panel.collapsed .chevron{transform:rotate(-90deg)}
 .primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--yellow);color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
+/* Schwebender "+"-Button unten rechts (leichter mit dem Daumen erreichbar) —
+   eigene Nutzerfarbe statt festem Gelb, mit .primary.fab-button für höhere
+   Spezifität als die .primary-Regel oben. */
+.primary.fab-button{position:fixed;right:16px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:21;box-shadow:0 10px 25px rgba(0,0,0,.4);background:var(--me-color,var(--yellow))}
 .danger{color:var(--red)}.secondary.danger{border-color:var(--red)}.success{color:var(--green)}
 .list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}
 .list-card.clickable{cursor:pointer}.list-card.clickable:active{background:var(--surface2)}
@@ -103,6 +114,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .category-tag-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .category-tag.project-tag{color:var(--yellow2);margin-left:8px}
 .name-tag{display:inline-block;padding:1px 7px;border-radius:999px;font-weight:800;color:#111}
+.name-with-avatar{display:inline-flex;align-items:center;gap:5px;vertical-align:middle}
+.name-avatar{border-radius:999px;object-fit:cover;flex:none}
+.name-avatar-fallback{display:flex;align-items:center;justify-content:center;background:var(--surface2);color:var(--muted);font-weight:800;flex:none}
 .settle-btn{white-space:nowrap}
 .subitems-progress{font-weight:700}
 .subitems-list{display:grid;gap:6px;margin-top:6px}

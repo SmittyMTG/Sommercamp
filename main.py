@@ -166,6 +166,10 @@ class UserCreate(BaseModel):
     username: str
 
 
+class UserColorUpdate(BaseModel):
+    color: str
+
+
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str
@@ -872,6 +876,27 @@ def list_projects(request: Request, db: Session = Depends(get_db)):
     return [{"id": p.id, "name": p.name} for p in projects if p.id in my_project_ids]
 
 
+# "Privat" ist kein echtes Projekt, sondern die implizite Bedeutung von
+# project_id=NULL (jede:r hat den eigenen privaten Bereich automatisch) — ein
+# gleichnamiges Projekt anzulegen wäre verwirrend/doppeldeutig.
+def _validate_project_name(name: str, db: Session, exclude_project_id: int | None = None):
+    name = name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+    if len(name) > 60:
+        return JSONResponse(status_code=400, content={"error": "Name darf maximal 60 Zeichen haben"})
+    if name.strip().lower() == "privat":
+        return JSONResponse(
+            status_code=400, content={"error": "„Privat“ ist reserviert — jede:r hat das automatisch"}
+        )
+    existing_q = db.query(Project).filter(Project.name == name)
+    if exclude_project_id is not None:
+        existing_q = existing_q.filter(Project.id != exclude_project_id)
+    if existing_q.first():
+        return JSONResponse(status_code=400, content={"error": "Dieses Projekt gibt es schon"})
+    return name
+
+
 @app.post("/api/projects")
 def create_project(request: Request, payload: ProjectCreate, db: Session = Depends(get_db)):
     username = get_current_user(request)
@@ -880,13 +905,9 @@ def create_project(request: Request, payload: ProjectCreate, db: Session = Depen
     if not _require_admin(db, username):
         return JSONResponse(status_code=403, content={"error": "Nur Admins können Projekte anlegen"})
 
-    name = payload.name.strip()
-    if not name:
-        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
-    if len(name) > 60:
-        return JSONResponse(status_code=400, content={"error": "Name darf maximal 60 Zeichen haben"})
-    if db.query(Project).filter(Project.name == name).first():
-        return JSONResponse(status_code=400, content={"error": "Dieses Projekt gibt es schon"})
+    name = _validate_project_name(payload.name, db)
+    if isinstance(name, JSONResponse):
+        return name
 
     project = Project(name=name, created_by=username)
     db.add(project)
@@ -907,14 +928,9 @@ def update_project(project_id: int, request: Request, payload: ProjectUpdate, db
     if not project:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
-    name = payload.name.strip()
-    if not name:
-        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
-    if len(name) > 60:
-        return JSONResponse(status_code=400, content={"error": "Name darf maximal 60 Zeichen haben"})
-    existing = db.query(Project).filter(Project.name == name, Project.id != project_id).first()
-    if existing:
-        return JSONResponse(status_code=400, content={"error": "Dieses Projekt gibt es schon"})
+    name = _validate_project_name(payload.name, db, exclude_project_id=project_id)
+    if isinstance(name, JSONResponse):
+        return name
 
     member_ids = sorted(set(payload.member_ids))
     if member_ids:
@@ -1111,7 +1127,13 @@ def get_me(request: Request, db: Session = Depends(get_db)):
     me = db.query(User).filter(User.username == username).first()
     if not me:
         return JSONResponse(status_code=404, content={"error": "not found"})
-    return {"id": me.id, "username": me.username, "role": me.role, "avatar_path": me.avatar_path}
+    return {
+        "id": me.id,
+        "username": me.username,
+        "role": me.role,
+        "avatar_path": me.avatar_path,
+        "color": me.color,
+    }
 
 
 @app.get("/api/users")
@@ -1120,7 +1142,27 @@ def list_users(request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     users = db.query(User).order_by(User.username.asc()).all()
-    return [{"id": u.id, "username": u.username, "role": u.role} for u in users]
+    return [
+        {"id": u.id, "username": u.username, "role": u.role, "avatar_path": u.avatar_path, "color": u.color}
+        for u in users
+    ]
+
+
+# Feste Palette für neu angelegte User (keine der bisher schon vergebenen
+# Handfarben doppelt) — Admins können die Farbe danach über
+# PATCH /api/users/{id}/color jederzeit ändern.
+_DEFAULT_USER_COLOR_PALETTE = [
+    "#ffd400", "#ff9f45", "#ff7a7a", "#c9a3ff", "#4fd8cf",
+    "#72a7ff", "#4bd58d", "#ff6ec7", "#ffb26b", "#8fd3ff",
+]
+
+
+def _pick_default_user_color(db: Session) -> str:
+    used = {u.color for u in db.query(User).filter(User.color.isnot(None)).all()}
+    for color in _DEFAULT_USER_COLOR_PALETTE:
+        if color not in used:
+            return color
+    return secrets.choice(_DEFAULT_USER_COLOR_PALETTE)
 
 
 # Erzeugt ein zufälliges, ausreichend starkes Passwort für neu angelegte User —
@@ -1153,6 +1195,7 @@ def create_user(request: Request, payload: UserCreate, db: Session = Depends(get
         username=new_username,
         hashed_password=pwd_context.hash(generated_password),
         role="user",
+        color=_pick_default_user_color(db),
     )
     db.add(user)
     db.commit()
@@ -1163,6 +1206,27 @@ def create_user(request: Request, payload: UserCreate, db: Session = Depends(get
         "role": user.role,
         "generated_password": generated_password,
     }
+
+
+@app.patch("/api/users/{user_id}/color")
+def update_user_color(user_id: int, request: Request, payload: UserColorUpdate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Nutzerfarben ändern"})
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    color = payload.color.strip().lower()
+    if not re.fullmatch(r"#[0-9a-f]{6}", color):
+        return JSONResponse(status_code=400, content={"error": "Farbe muss ein Hex-Code sein, z. B. #ffd400"})
+
+    user.color = color
+    db.commit()
+    return {"id": user.id, "color": user.color}
 
 
 @app.patch("/api/me/password")

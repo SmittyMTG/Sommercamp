@@ -47,6 +47,11 @@ class User(Base):
     # Profilbild: relativer /static-Pfad inkl. Cache-Busting-Query, NULL solange
     # kein Bild hochgeladen wurde (siehe POST /api/me/avatar in main.py).
     avatar_path = Column(String, nullable=True)
+    # Feste Namensfarbe (Hex), überall im UI verwendet, wo der Username auftaucht
+    # (Namens-Tag, Kachel-Rand, Geldfluss-Diagramm, Profil-Button-Rand). Admin-
+    # verwaltbar (siehe PATCH /api/users/{id}/color); neue User bekommen beim
+    # Anlegen automatisch eine Farbe aus einer festen Palette zugewiesen.
+    color = Column(String(7), nullable=True)
 
 
 # Sessions in der DB statt nur im Prozessspeicher (siehe auth.py) — sonst wirft
@@ -244,6 +249,7 @@ _ensure_column("ausgaben", "created_by", "TEXT")
 _ensure_column("tasks", "category_id", "INTEGER")
 _ensure_column("tasks", "aufwand_min", "INTEGER")
 _ensure_column("users", "avatar_path", "TEXT")
+_ensure_column("users", "color", "TEXT")
 
 
 # Gegenstück zu _ensure_column: entfernt eine Spalte, falls sie noch von einem

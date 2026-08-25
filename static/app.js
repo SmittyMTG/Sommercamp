@@ -23,6 +23,19 @@ window.fetch = async (...args) => {
 let cachedUsers = null;
 let cachedMe = null;
 
+// Wird von fetchUsersAndMe() bei jedem erfolgreichen Abruf aktualisiert —
+// einziger Ort, an dem Farbe/Profilbild pro User zwischengespeichert werden,
+// damit nameTag() sie überall synchron (ohne eigenen Fetch) nutzen kann.
+let USER_COLORS = {};
+let USER_AVATARS = {};
+function updateUserLookupMaps(users) {
+  (users || []).forEach((u) => {
+    if (u.color) USER_COLORS[u.username] = u.color;
+    if (u.avatar_path) USER_AVATARS[u.username] = u.avatar_path;
+    else delete USER_AVATARS[u.username];
+  });
+}
+
 /* ---------- Screen switching ---------- */
 function goToScreen(name) {
   document.querySelectorAll(".screen").forEach((el) => {
@@ -59,21 +72,24 @@ function isAdminRole(role) {
   return typeof role === "string" && role.trim().toLowerCase() === "admin";
 }
 
-// Feste Farbe pro Person, überall im UI verwendet, wo ein Name auftaucht —
-// Wiedererkennung auf einen Blick, unabhängig vom Kontext (Aufgaben, Ausgaben,
-// Zahlungen, Geldfluss-Diagramm). Namen ohne Eintrag bleiben schlicht (kein Tag).
-const NAME_COLORS = {
-  Henning: "#ffd400",
-  Noah: "#ff9f45",
-  Claus: "#ff7a7a",
-  Nick: "#c9a3ff",
-  Felix: "#4fd8cf",
-};
+// Kleines Profilbild (oder "?"-Platzhalter) vor dem Namen — Admin-verwaltbare
+// Farbe (USER_COLORS, aus /api/users) sorgt zusätzlich für Wiedererkennung auf
+// einen Blick, unabhängig vom Kontext (Aufgaben, Ausgaben, Zahlungen,
+// Geldfluss-Diagramm). Namen ohne Farbeintrag bleiben schlicht (kein Tag).
+function avatarCircleHtml(username, size) {
+  size = size || 18;
+  const avatarPath = USER_AVATARS[username];
+  const style = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.55)}px`;
+  return avatarPath
+    ? `<img class="name-avatar" src="${avatarPath}" alt="" style="${style}">`
+    : `<span class="name-avatar name-avatar-fallback" style="${style}">?</span>`;
+}
 
 function nameTag(username) {
   const safe = escapeHtml(username);
-  const color = NAME_COLORS[username];
-  return color ? `<span class="name-tag" style="background:${color}">${safe}</span>` : safe;
+  const color = USER_COLORS[username];
+  const nameHtml = color ? `<span class="name-tag" style="background:${color}">${safe}</span>` : safe;
+  return `<span class="name-with-avatar">${avatarCircleHtml(username)}${nameHtml}</span>`;
 }
 
 /* ---------- Generic modal ---------- */
@@ -475,7 +491,7 @@ function taskModalBodyHtml(users, categories, prefill = {}) {
   const assigneeOptions = users
     .map(
       (u) =>
-        `<label class="check-card"><input type="checkbox" class="assignee-checkbox" value="${u.id}"${currentAssigneeIds.has(u.id) ? " checked" : ""}>${escapeHtml(u.username)}</label>`
+        `<label class="check-card"><input type="checkbox" class="assignee-checkbox" value="${u.id}"${currentAssigneeIds.has(u.id) ? " checked" : ""}>${nameTag(u.username)}</label>`
     )
     .join("");
 
@@ -487,7 +503,7 @@ function taskModalBodyHtml(users, categories, prefill = {}) {
   return `
     <div class="form-stack">
       <label>Titel
-        <input type="text" id="taskTitelInput" maxlength="80" value="${escapeHtml(prefill.titel || "")}" placeholder="z. B. Zelte aufbauen" required>
+        <input type="text" id="taskTitelInput" maxlength="80" value="${escapeHtml(prefill.titel || "")}" required>
       </label>
       <label>Beschreibung (optional)
         <textarea id="taskBeschreibungInput" placeholder="Details …">${escapeHtml(prefill.beschreibung || "")}</textarea>
@@ -508,7 +524,7 @@ function taskModalBodyHtml(users, categories, prefill = {}) {
           <input type="color" id="newTaskCategoryColor" value="#ffd400">
         </label>
         <label>Bezeichnung
-          <input type="text" id="newTaskCategoryLabel" maxlength="16" placeholder="z. B. Einkauf">
+          <input type="text" id="newTaskCategoryLabel" maxlength="16">
         </label>
         <button type="button" id="createTaskCategoryBtn" class="secondary compact">Kategorie anlegen</button>
         <p class="error-text hidden new-task-category-error"></p>
@@ -517,7 +533,7 @@ function taskModalBodyHtml(users, categories, prefill = {}) {
         <input type="date" id="taskDeadlineInput" value="${deadlineValue}">
       </label>
       <label>Aufwand in Minuten (optional)
-        <input type="number" id="taskAufwandInput" min="0" step="1" inputmode="numeric" value="${prefill.aufwand_min != null ? prefill.aufwand_min : ""}" placeholder="z. B. 30">
+        <input type="number" id="taskAufwandInput" min="0" step="1" inputmode="numeric" value="${prefill.aufwand_min != null ? prefill.aufwand_min : ""}">
       </label>
       ${
         prefill.id
@@ -1037,7 +1053,7 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
   return `
     <div class="form-stack">
       <label>Titel
-        <input type="text" id="privTaskTitelInput" maxlength="80" value="${escapeHtml(prefill.titel || "")}" placeholder="z. B. Angebot einholen" required>
+        <input type="text" id="privTaskTitelInput" maxlength="80" value="${escapeHtml(prefill.titel || "")}" required>
       </label>
       <label>Beschreibung (optional)
         <textarea id="privTaskBeschreibungInput" placeholder="Details …">${escapeHtml(prefill.beschreibung || "")}</textarea>
@@ -1054,7 +1070,7 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
           ? `
       <div id="newPrivTaskProjectFields" class="form-stack hidden">
         <label>Projektname
-          <input type="text" id="newPrivTaskProjectName" maxlength="60" placeholder="z. B. Sommercamp 2026">
+          <input type="text" id="newPrivTaskProjectName" maxlength="60">
         </label>
         <button type="button" id="createPrivTaskProjectBtn" class="secondary compact">Projekt anlegen</button>
         <p class="error-text hidden new-priv-task-project-error"></p>
@@ -1074,7 +1090,7 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
           <input type="color" id="newPrivTaskCategoryColor" value="#ffd400">
         </label>
         <label>Bezeichnung
-          <input type="text" id="newPrivTaskCategoryLabel" maxlength="16" placeholder="z. B. Einkauf">
+          <input type="text" id="newPrivTaskCategoryLabel" maxlength="16">
         </label>
         <button type="button" id="createPrivTaskCategoryBtn" class="secondary compact">Kategorie anlegen</button>
         <p class="error-text hidden new-priv-task-category-error"></p>
@@ -1083,7 +1099,7 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}) {
         <input type="date" id="privTaskDeadlineInput" value="${deadlineValue}">
       </label>
       <label>Aufwand in Minuten (optional)
-        <input type="number" id="privTaskAufwandInput" min="0" step="1" inputmode="numeric" value="${prefill.aufwand_min != null ? prefill.aufwand_min : ""}" placeholder="z. B. 30">
+        <input type="number" id="privTaskAufwandInput" min="0" step="1" inputmode="numeric" value="${prefill.aufwand_min != null ? prefill.aufwand_min : ""}">
       </label>
       ${
         prefill.id
@@ -1426,7 +1442,7 @@ function projectEditModalBodyHtml(users, project) {
   const memberOptions = users
     .map(
       (u) =>
-        `<label class="check-card"><input type="checkbox" class="project-member-checkbox" value="${u.id}"${currentMemberIds.has(u.id) ? " checked" : ""}>${escapeHtml(u.username)}</label>`
+        `<label class="check-card"><input type="checkbox" class="project-member-checkbox" value="${u.id}"${currentMemberIds.has(u.id) ? " checked" : ""}>${nameTag(u.username)}</label>`
     )
     .join("");
 
@@ -1510,7 +1526,7 @@ async function openAddProjectModal() {
     bodyHtml: `
       <div class="form-stack">
         <label>Projektname
-          <input type="text" id="newProjectNameInput" maxlength="60" placeholder="z. B. Sommercamp 2026" required>
+          <input type="text" id="newProjectNameInput" maxlength="60" required>
         </label>
       </div>
     `,
@@ -1535,6 +1551,15 @@ async function openAddProjectModal() {
 const addProjectButton = document.getElementById("addProjectButton");
 if (addProjectButton) addProjectButton.addEventListener("click", openAddProjectModal);
 
+/* ---------- Bottom-Nav: erstmal nur für Admins sichtbar (normale User sehen
+   ausschließlich die Kosten-Seite, ohne jede Navigation) ---------- */
+fetchUsersAndMe().then(({ me }) => {
+  const bottomNavEl = document.getElementById("bottomNav");
+  if (bottomNavEl && me && isAdminRole(me.role)) {
+    bottomNavEl.classList.remove("hidden");
+  }
+});
+
 /* ---------- Tasks: Sichtbarkeit (nur Felix) + Init ---------- */
 fetchUsersAndMe().then(({ me }) => {
   if (!me || me.username !== "Felix") return;
@@ -1556,7 +1581,7 @@ fetchUsersAndMe().then(({ me }) => {
 
 /* ---------- Profil (Passwort ändern, Profilbild) ---------- */
 
-function applyAvatarToButton(avatarPath) {
+function applyAvatarToButton(avatarPath, color) {
   const img = document.getElementById("profileAvatarImg");
   const fallback = document.getElementById("profileAvatarFallback");
   if (!img || !fallback) return;
@@ -1568,6 +1593,9 @@ function applyAvatarToButton(avatarPath) {
     img.classList.add("hidden");
     fallback.classList.remove("hidden");
   }
+  // Global (statt nur am Profil-Button) gesetzt, damit auch andere Elemente
+  // (z. B. die schwebenden "+"-Buttons) in der eigenen Nutzerfarbe erscheinen.
+  if (color) document.documentElement.style.setProperty("--me-color", color);
 }
 
 function profileModalBodyHtml(me) {
@@ -1659,7 +1687,7 @@ const profileButton = document.getElementById("profileButton");
 if (profileButton) profileButton.addEventListener("click", openProfileModal);
 
 fetchUsersAndMe().then(({ me }) => {
-  if (me) applyAvatarToButton(me.avatar_path);
+  if (me) applyAvatarToButton(me.avatar_path, me.color);
 });
 
 /* ---------- Admin: Nutzer verwalten ---------- */
@@ -1670,10 +1698,14 @@ function adminUsersModalBodyHtml(users) {
       (u) => `
         <div class="list-card">
           <div class="list-card-content">
+            ${avatarCircleHtml(u.username, 32)}
             <div class="list-card-text">
               <p class="list-card-title">${escapeHtml(u.username)}</p>
               <p class="list-card-meta">${escapeHtml(u.role || "user")}</p>
             </div>
+          </div>
+          <div class="list-card-actions">
+            <input type="color" class="user-color-input" data-user-id="${u.id}" value="${u.color || "#ffd400"}" aria-label="Farbe von ${escapeHtml(u.username)}">
           </div>
         </div>
       `
@@ -1682,14 +1714,14 @@ function adminUsersModalBodyHtml(users) {
 
   return `
     <div class="form-stack">
-      <div class="checkbox-group">
+      <div class="checkbox-group" data-live-save>
         <div class="eyebrow">Bestehende Nutzer</div>
         <div class="stack">${rows || '<div class="empty-state"><p>Noch keine Nutzer.</p></div>'}</div>
       </div>
       <div class="checkbox-group" data-live-save>
         <div class="eyebrow">Neuen Nutzer anlegen</div>
         <label>Nutzername
-          <input type="text" id="newUserUsernameInput" maxlength="40" placeholder="z. B. Mara">
+          <input type="text" id="newUserUsernameInput" maxlength="40">
         </label>
         <button type="button" id="createUserBtn" class="secondary compact">Nutzer anlegen</button>
         <p class="error-text hidden new-user-error"></p>
@@ -1717,6 +1749,21 @@ async function openAdminUsersModal() {
     onSubmit: async () => {
       closeModal();
     },
+  });
+
+  document.querySelectorAll(".user-color-input").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const res = await fetch(`/api/users/${input.dataset.userId}/color`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ color: input.value }),
+      });
+      if (res.ok) {
+        cachedUsers = null;
+        cachedMe = null;
+        await fetchUsersAndMe();
+      }
+    });
   });
 
   document.getElementById("createUserBtn").addEventListener("click", async () => {
@@ -1842,7 +1889,7 @@ function renderPlanEvent(event, isAdmin) {
     card.querySelector(".delete-plan-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       openModal({
-        eyebrow: "Camp-Plan",
+        eyebrow: "Kalender",
         title: `„${event.bezeichnung}" löschen?`,
         bodyHtml: `<p class="muted warning-text">Der Termin wird für alle aus dem Plan entfernt. Das lässt sich nicht rückgängig machen.</p>`,
         submitLabel: "Löschen",
@@ -2012,10 +2059,10 @@ function planModalBodyHtml(prefill = {}) {
         <input type="time" id="planUhrzeitInput" value="${uhrzeitDefault}">
       </label>
       <label>Bezeichnung
-        <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" placeholder="z. B. Lagerfeuer-Abend" required>
+        <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" required>
       </label>
       <label>Location (Adresse)
-        <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}" placeholder="z. B. Wiese am See, Musterweg 5">
+        <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
       </label>
       <label>Beschreibung
         <textarea id="planBeschreibungInput" placeholder="Was ist geplant?">${escapeHtml(prefill.beschreibung || "")}</textarea>
@@ -2074,7 +2121,7 @@ async function submitPlanForm(url, method) {
 
 function openAddPlanModal() {
   openModal({
-    eyebrow: "Camp-Plan",
+    eyebrow: "Kalender",
     title: "Termin hinzufügen",
     bodyHtml: planModalBodyHtml(),
     onSubmit: () => submitPlanForm("/api/plan", "POST"),
@@ -2084,7 +2131,7 @@ function openAddPlanModal() {
 
 function openEditPlanModal(event) {
   openModal({
-    eyebrow: "Camp-Plan",
+    eyebrow: "Kalender",
     title: "Termin bearbeiten",
     submitLabel: "Speichern",
     bodyHtml: planModalBodyHtml(event),
@@ -2112,6 +2159,7 @@ async function fetchUsersAndMe() {
   const [usersRes, meRes] = await Promise.all([fetch("/api/users"), fetch("/api/me")]);
   cachedUsers = usersRes.ok ? await usersRes.json() : [];
   cachedMe = meRes.ok ? await meRes.json() : null;
+  updateUserLookupMaps(cachedUsers);
   return { users: cachedUsers, me: cachedMe };
 }
 
@@ -2163,7 +2211,7 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
   // Namen bleiben hier bewusst unhighlighted — die Randfarbe des Zahlers an
   // der ganzen Kachel reicht als visuelle Zuordnung.
   const payerNames = Array.from(group.glaeubiger);
-  const borderColor = NAME_COLORS[payerNames[0]];
+  const borderColor = USER_COLORS[payerNames[0]];
   if (borderColor) card.style.borderLeft = `4px solid ${borderColor}`;
   const payer = payerNames.map((n) => escapeHtml(n)).join(", ");
   const breakdown = group.entries
@@ -2419,7 +2467,7 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
         <div id="expenseBeneficiaries" class="checkbox-grid">${beneficiaryOptions}</div>
       </div>
       <label>Betrag gesamt (€)
-        <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" placeholder="z. B. 24.50" required>
+        <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" required>
       </label>
       <div class="checkbox-group">
         <div class="eyebrow">Individuelle Beträge (optional)</div>
@@ -2427,7 +2475,7 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
         <p id="expenseSplitHint" class="muted"></p>
       </div>
       <label>Betreff
-        <input type="text" id="expenseBetreffInput" maxlength="40" value="${escapeHtml(prefill.betreff || "")}" placeholder="z. B. Rewe Grillkäse" required>
+        <input type="text" id="expenseBetreffInput" maxlength="40" value="${escapeHtml(prefill.betreff || "")}" required>
       </label>
       <label>Datum
         <input type="date" id="expenseDatumInput" value="${prefill.datum || today}" required>
@@ -2679,7 +2727,7 @@ const moneyFlowDiagramEl = document.getElementById("moneyFlowDiagram");
 const FLOW_COLOR_VARS = ["--flow-1", "--flow-2", "--flow-3", "--flow-4", "--flow-5", "--flow-6", "--flow-7", "--flow-8"];
 
 // Sankey-artiges Flussdiagramm: links Schuldner, rechts Gläubiger, Bandbreite
-// = Betrag. Farbe folgt der Person (feste Namensfarbe, siehe NAME_COLORS —
+// = Betrag. Farbe folgt der Person (feste Namensfarbe, siehe USER_COLORS —
 // für alle anderen fällt es auf die Kategorial-Palette zurück) und bleibt auf
 // beiden Seiten gleich, damit man dieselbe Person sofort wiedererkennt.
 function buildMoneyFlowSvg(settlements) {
@@ -2708,8 +2756,8 @@ function buildMoneyFlowSvg(settlements) {
   Array.from(new Set(settlements.flatMap((s) => [s.from_id, s.to_id])))
     .sort((a, b) => names[a].localeCompare(names[b], "de"))
     .forEach((id) => {
-      if (NAME_COLORS[names[id]]) {
-        colorOf[id] = NAME_COLORS[names[id]];
+      if (USER_COLORS[names[id]]) {
+        colorOf[id] = USER_COLORS[names[id]];
       } else {
         colorOf[id] = `var(${FLOW_COLOR_VARS[autoColorIdx % FLOW_COLOR_VARS.length]})`;
         autoColorIdx += 1;
@@ -3371,7 +3419,7 @@ function renderReceivedItem(r) {
       <p class="list-card-title">${nameTag(r.from)} behauptet: ${formatEuro(r.amount)} überwiesen</p>
       <p class="list-card-meta">${formatDate(r.datum)} · Betrag zur Bestätigung eintippen</p>
       <div class="form-stack">
-        <input type="number" step="0.01" min="0.01" inputmode="decimal" class="received-amount-input" placeholder="z. B. ${r.amount.toFixed(2).replace(".", ",")}">
+        <input type="number" step="0.01" min="0.01" inputmode="decimal" class="received-amount-input" placeholder="${r.amount.toFixed(2).replace('.', ',')}">
         <p class="error-text hidden received-error"></p>
       </div>
     </div>
@@ -3566,6 +3614,9 @@ async function checkAppVersion() {
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   initNavigation();
+  // So früh wie möglich, damit USER_COLORS/USER_AVATARS (nameTag()) beim
+  // allerersten Render schon befüllt sind statt erst nach dem ersten Poll.
+  fetchUsersAndMe();
   loadTasks();
   setInterval(loadTasks, 3000);
   loadPlanList();

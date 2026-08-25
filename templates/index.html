@@ -32,7 +32,7 @@
       <section id="screen-plan" class="screen">
         <div class="plan-sticky-top">
           <div class="section-heading sticky-heading">
-            <div><div class="eyebrow">Alle Tage</div><h2>Camp-Plan</h2></div>
+            <div><div class="eyebrow">Alle Tage</div><h2>Kalender</h2></div>
             <button id="addPlanButton" class="primary compact hidden">＋ Eintrag</button>
           </div>
           <div id="planOpenPanel" class="plan-open-panel hidden">
@@ -45,7 +45,7 @@
         </div>
         <div id="planList" class="stack">
           <div class="empty-state">
-            <p>Hier entsteht der Camp-Plan.</p>
+            <p>Hier entsteht der Kalender.</p>
           </div>
         </div>
       </section>
@@ -55,7 +55,7 @@
         <div class="section-heading">
           <div><div class="eyebrow">Splitten ohne Kopfrechnen</div><h2>Kosten & Schulden</h2></div>
           <div class="action-row">
-            <button id="addExpenseButton" class="primary compact">＋ Ausgabe</button>
+            <button id="addExpenseButton" class="primary compact fab-button">＋ Ausgabe</button>
           </div>
         </div>
 
@@ -98,9 +98,6 @@
           <div id="openSettlementsList" class="stack">
             <div class="empty-state"><p>Lädt …</p></div>
           </div>
-
-          <button type="button" id="settledToggleBtn" class="link-button settled-toggle hidden">Bereits getilgt anzeigen</button>
-          <div id="settledList" class="stack hidden"></div>
         </div>
 
         <div id="costsViewReceived" class="costs-view hidden">
@@ -109,6 +106,9 @@
           <div id="receivedList" class="stack">
             <div class="empty-state"><p>Lädt …</p></div>
           </div>
+
+          <button type="button" id="settledToggleBtn" class="link-button settled-toggle hidden">Bereits getilgt anzeigen</button>
+          <div id="settledList" class="stack hidden"></div>
         </div>
 
         <div id="costsViewLog" class="costs-view hidden">
@@ -130,7 +130,7 @@
       <section id="screen-more" class="screen">
         <div class="section-heading">
           <div><div class="eyebrow">Organisation</div><h2>Aufgaben</h2></div>
-          <button id="addTaskButton" class="primary compact">＋ Aufgabe</button>
+          <button id="addTaskButton" class="primary compact fab-button">＋ Aufgabe</button>
         </div>
 
         <div class="filter-row" id="taskFilterRow">
@@ -189,8 +189,8 @@
     </section>
   </main>
 
-  <nav id="bottomNav" class="bottom-nav">
-    <button class="nav-item" data-screen="plan"><span>▣</span>Plan</button>
+  <nav id="bottomNav" class="bottom-nav hidden">
+    <button class="nav-item" data-screen="plan"><span>▣</span>Kalender</button>
     <button class="nav-item active" data-screen="costs"><span>€</span>Kosten<span id="costsNavBadge" class="nav-badge hidden">0</span></button>
     <button class="nav-item" data-screen="more"><span>☑</span>Aufgaben<span id="myTasksNavBadge" class="nav-badge hidden">0</span></button>
     <button class="nav-item hidden" data-screen="tasks"><span>✦</span>Tasks</button>
