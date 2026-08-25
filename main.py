@@ -116,9 +116,11 @@ class TaskCategoryCreate(BaseModel):
 class PlanEventCreate(BaseModel):
     datum: str | None = None
     uhrzeit: str | None = None
+    uhrzeit_ende: str | None = None
     bezeichnung: str
     location: str | None = None
     beschreibung: str | None = None
+    shared_project_id: int | None = None
 
 
 class ExpenseCreate(BaseModel):
@@ -974,12 +976,12 @@ def delete_project(project_id: int, request: Request, db: Session = Depends(get_
     return {"ok": True}
 
 
-def _validate_plan_payload(payload: PlanEventCreate):
+def _validate_plan_payload(payload: PlanEventCreate, db: Session):
     """Validiert Termin-Felder für Anlegen UND Bearbeiten. Gibt entweder ein
-    Tupel (datum, uhrzeit, bezeichnung, location, beschreibung) oder eine
-    fertige JSONResponse mit Fehlermeldung zurück. Datum+Uhrzeit sind Pflicht
-    — datumslose "Event-Ideen" gibt es nicht mehr, jeder Termin gehört fest
-    in den Kalender."""
+    Tupel (datum, uhrzeit, uhrzeit_ende, bezeichnung, location, beschreibung,
+    shared_project_id) oder eine fertige JSONResponse mit Fehlermeldung zurück.
+    Datum+Uhrzeit sind Pflicht — datumslose "Event-Ideen" gibt es nicht mehr,
+    jeder Termin gehört fest in den Kalender."""
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
@@ -1004,28 +1006,60 @@ def _validate_plan_payload(payload: PlanEventCreate):
     except ValueError:
         return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
 
+    event_time_ende = None
+    if payload.uhrzeit_ende:
+        try:
+            event_time_ende = dt.strptime(payload.uhrzeit_ende, "%H:%M").time()
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültige Endzeit"})
+        if event_time_ende <= event_time:
+            return JSONResponse(status_code=400, content={"error": "Endzeit muss nach der Startzeit liegen"})
+
+    shared_project_id = payload.shared_project_id
+    if shared_project_id is not None:
+        project = db.query(Project).filter(Project.id == shared_project_id).first()
+        if not project:
+            return JSONResponse(status_code=400, content={"error": "Projekt nicht gefunden"})
+
     beschreibung = (payload.beschreibung or "").strip() or None
-    return event_date, event_time, bezeichnung, location, beschreibung
+    return event_date, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id
+
+
+def _can_access_plan_event(db: Session, user: User, event: PlanEvent) -> bool:
+    """Ein Termin ist standardmäßig nur für die anlegende Person sichtbar —
+    erst eine Freigabe für ein Projekt (shared_project_id) zeigt ihn auch
+    dessen Mitgliedern. Admins sehen wie überall alles, analog zu
+    _can_access_private_task."""
+    if event.created_by == user.username or _is_admin_user(user):
+        return True
+    return bool(event.shared_project_id and event.shared_project_id in _user_project_ids(db, user.id))
+
+
+def _serialize_plan_event(e: PlanEvent) -> dict:
+    return {
+        "id": e.id,
+        "datum": e.datum.isoformat() if e.datum else None,
+        "uhrzeit": e.uhrzeit.strftime("%H:%M") if e.uhrzeit else None,
+        "uhrzeit_ende": e.uhrzeit_ende.strftime("%H:%M") if e.uhrzeit_ende else None,
+        "bezeichnung": e.bezeichnung,
+        "location": e.location,
+        "beschreibung": e.beschreibung,
+        "shared_project_id": e.shared_project_id,
+        "created_by": e.created_by,
+    }
 
 
 @app.get("/api/plan")
 def list_plan_events(request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request):
+    username = get_current_user(request)
+    if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    me = _user_by_username(db, username)
+    if not me:
+        return JSONResponse(status_code=404, content={"error": "not found"})
 
     events = db.query(PlanEvent).order_by(PlanEvent.datum.asc(), PlanEvent.uhrzeit.asc()).all()
-    return [
-        {
-            "id": e.id,
-            "datum": e.datum.isoformat() if e.datum else None,
-            "uhrzeit": e.uhrzeit.strftime("%H:%M") if e.uhrzeit else None,
-            "bezeichnung": e.bezeichnung,
-            "location": e.location,
-            "beschreibung": e.beschreibung,
-            "created_by": e.created_by,
-        }
-        for e in events
-    ]
+    return [_serialize_plan_event(e) for e in events if _can_access_plan_event(db, me, e)]
 
 
 @app.post("/api/plan")
@@ -1038,31 +1072,26 @@ def create_plan_event(
     if not _require_admin(db, username):
         return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine anlegen"})
 
-    validated = _validate_plan_payload(payload)
+    validated = _validate_plan_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    event_date, event_time, bezeichnung, location, beschreibung = validated
+    event_date, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id = validated
 
     new_event = PlanEvent(
         datum=event_date,
         uhrzeit=event_time,
+        uhrzeit_ende=event_time_ende,
         bezeichnung=bezeichnung,
         location=location,
         beschreibung=beschreibung,
+        shared_project_id=shared_project_id,
         created_by=username,
     )
     db.add(new_event)
     db.commit()
     db.refresh(new_event)
 
-    return {
-        "id": new_event.id,
-        "datum": new_event.datum.isoformat() if new_event.datum else None,
-        "uhrzeit": new_event.uhrzeit.strftime("%H:%M") if new_event.uhrzeit else None,
-        "bezeichnung": new_event.bezeichnung,
-        "location": new_event.location,
-        "beschreibung": new_event.beschreibung,
-    }
+    return _serialize_plan_event(new_event)
 
 
 @app.patch("/api/plan/{event_id}")
@@ -1079,26 +1108,21 @@ def update_plan_event(
     if not existing:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
-    validated = _validate_plan_payload(payload)
+    validated = _validate_plan_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    event_date, event_time, bezeichnung, location, beschreibung = validated
+    event_date, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id = validated
 
     existing.datum = event_date
     existing.uhrzeit = event_time
+    existing.uhrzeit_ende = event_time_ende
     existing.bezeichnung = bezeichnung
     existing.location = location
     existing.beschreibung = beschreibung
+    existing.shared_project_id = shared_project_id
     db.commit()
 
-    return {
-        "id": existing.id,
-        "datum": existing.datum.isoformat() if existing.datum else None,
-        "uhrzeit": existing.uhrzeit.strftime("%H:%M") if existing.uhrzeit else None,
-        "bezeichnung": existing.bezeichnung,
-        "location": existing.location,
-        "beschreibung": existing.beschreibung,
-    }
+    return _serialize_plan_event(existing)
 
 
 @app.delete("/api/plan/{event_id}")
@@ -1397,7 +1421,10 @@ def get_expense_log(request: Request, db: Session = Depends(get_db)):
 
     entries = (
         db.query(ActivityLog)
-        .filter(ActivityLog.action.in_(["expense_created", "expense_edited", "expense_deleted"]))
+        .filter(ActivityLog.action.in_([
+            "expense_created", "expense_edited", "expense_deleted",
+            "payment_reported", "payment_confirmed",
+        ]))
         .order_by(ActivityLog.created_at.desc())
         .all()
     )
@@ -1572,7 +1599,7 @@ def create_expense(
         amount_str = f"{amounts[uid]:.2f} €".replace(".", ",")
         log_action(
             db, payer_name, beneficiary_name, "expense_created",
-            f"{payer_name} hat {amount_str} für „{betreff}“ für dich bezahlt",
+            f"{payer_name} hat {amount_str} für „{betreff}“ für {beneficiary_name} bezahlt",
         )
     db.commit()
 

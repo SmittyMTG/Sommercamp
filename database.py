@@ -171,7 +171,10 @@ class PrivateTaskSubitem(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Camp-Plan-Termin: nur Admins legen Termine an, sichtbar für alle.
+# Camp-Plan-Termin: nur Admins legen Termine an. Standardmäßig nur für die
+# anlegende Person selbst sichtbar — erst durch Freigabe für ein Projekt
+# (shared_project_id) sehen auch dessen Mitglieder den Termin (siehe
+# _can_access_plan_event in main.py, analog zu _can_access_private_task).
 class PlanEvent(Base):
     __tablename__ = "plan_events"
     id = Column(Integer, primary_key=True, index=True)
@@ -181,9 +184,15 @@ class PlanEvent(Base):
     # Ohne Datum ergibt eine Uhrzeit keinen Sinn — daher ebenfalls optional,
     # serverseitig erzwungen: nur zusammen mit datum gesetzt (main.py).
     uhrzeit = Column(Time, nullable=True)
+    # Ende der Uhrzeitspanne, optional — ohne Angabe ist der Termin nur ein
+    # Zeitpunkt ohne Dauer (main.py erzwingt uhrzeit_ende > uhrzeit, falls gesetzt).
+    uhrzeit_ende = Column(Time, nullable=True)
     bezeichnung = Column(String(60), nullable=False)
     location = Column(String(120), nullable=True)
     beschreibung = Column(Text, nullable=True)
+    # Projekt, für das dieser Termin freigegeben wurde — NULL heißt "nur für
+    # created_by sichtbar" (siehe _can_access_plan_event in main.py).
+    shared_project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -265,6 +274,8 @@ _ensure_column("tasks", "aufwand_min", "INTEGER")
 _ensure_column("users", "avatar_path", "TEXT")
 _ensure_column("users", "color", "TEXT")
 _ensure_column("users", "ui_state", "TEXT")
+_ensure_column("plan_events", "uhrzeit_ende", "TIME")
+_ensure_column("plan_events", "shared_project_id", "INTEGER")
 
 
 # Gegenstück zu _ensure_column: entfernt eine Spalte, falls sie noch von einem

@@ -2039,10 +2039,15 @@ let calendarIsAdmin = false;
 function calEventColor(event) {
   return (event.created_by && USER_COLORS[event.created_by]) || "#ffd400";
 }
+function calEventTimeLabel(event) {
+  if (!event.uhrzeit) return "";
+  const start = event.uhrzeit.slice(0, 5);
+  return event.uhrzeit_ende ? `${start}–${event.uhrzeit_ende.slice(0, 5)}` : start;
+}
 function calEventChipHtml(event, cssClass) {
   const color = calEventColor(event);
   const pale = hexToRgba(color, 0.18);
-  const time = event.uhrzeit ? event.uhrzeit.slice(0, 5) : "";
+  const time = calEventTimeLabel(event);
   return `<div class="${cssClass}" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">${time ? `${time} ` : ""}${escapeHtml(event.bezeichnung)}</div>`;
 }
 
@@ -2213,6 +2218,25 @@ function calEndDrag() {
   calDragState = null;
 }
 
+// Position innerhalb der Stunden-Zelle (obere/untere Hälfte) bestimmt die
+// halbe Stunde — so bleibt die Auflösung bei 30 Minuten, obwohl das Grid
+// selbst nur ganze Stunden als Zeilen hat.
+function calFractionForPoint(cell, clientY) {
+  const rect = cell.getBoundingClientRect();
+  const ratio = rect.height > 0 ? (clientY - rect.top) / rect.height : 0;
+  const hour = parseInt(cell.dataset.hour, 10);
+  return hour + (ratio >= 0.5 ? 0.5 : 0);
+}
+function formatCalFraction(frac) {
+  // Geklemmt auf max. 23:30 — ein Ende über Mitternacht hinaus (frac >= 24,
+  // z. B. beim Ziehen bis in die untere Hälfte der letzten Stunden-Zeile
+  // 23 Uhr) gibt es im Tagesraster nicht.
+  const clamped = Math.min(frac, 23.5);
+  const h = Math.floor(clamped);
+  const m = clamped % 1 >= 0.5 ? "30" : "00";
+  return `${String(h).padStart(2, "0")}:${m}`;
+}
+
 function wireCalDayDragCreate(container) {
   if (!container) return;
 
@@ -2221,6 +2245,7 @@ function wireCalDayDragCreate(container) {
     const cell = e.target.closest(".cal-hour-cell");
     if (!cell || e.target.closest(".cal-time-event")) return;
 
+    const startFraction = calFractionForPoint(cell, e.clientY);
     calDragState = {
       startX: e.clientX,
       startY: e.clientY,
@@ -2229,6 +2254,8 @@ function wireCalDayDragCreate(container) {
       startDate: cell.dataset.date,
       startHour: parseInt(cell.dataset.hour, 10),
       currentHour: parseInt(cell.dataset.hour, 10),
+      startFraction,
+      currentFraction: startFraction,
     };
     calDragState.longPressTimer = setTimeout(() => {
       if (!calDragState) return;
@@ -2259,6 +2286,7 @@ function wireCalDayDragCreate(container) {
     const cell = hovered && hovered.closest(".cal-hour-cell");
     if (!cell || cell.dataset.date !== calDragState.startDate) return;
     const hour = parseInt(cell.dataset.hour, 10);
+    calDragState.currentFraction = calFractionForPoint(cell, e.clientY);
     if (hour === calDragState.currentHour) return;
     calDragState.currentHour = hour;
     calHighlightRange(calDragState.startDate, calDragState.startHour, hour);
@@ -2271,8 +2299,13 @@ function wireCalDayDragCreate(container) {
     calEndDrag();
     if (wasActive) {
       calSuppressNextClick = true;
-      const hour = String(state.currentHour).padStart(2, "0");
-      openAddPlanModal({ datum: state.startDate, uhrzeit: `${hour}:00` });
+      const rawLo = Math.min(state.startFraction, state.currentFraction);
+      const rawHi = Math.max(state.startFraction, state.currentFraction);
+      // rawHi ist der Beginn der zuletzt berührten Halbstunden-Zelle, der
+      // Termin muss also bis zu deren ENDE reichen (+0.5h) — außer beim
+      // kurzen Halten ohne nennenswertes Ziehen, dann 1h Standarddauer.
+      const endFraction = rawLo === rawHi ? rawLo + 1 : rawHi + 0.5;
+      openAddPlanModal({ datum: state.startDate, uhrzeit: formatCalFraction(rawLo), uhrzeit_ende: formatCalFraction(endFraction) });
     }
   }
   container.addEventListener("pointerup", finishDrag);
@@ -2359,18 +2392,27 @@ async function loadPlanList(force) {
   }
 }
 
-function planModalBodyHtml(prefill = {}) {
+// Zwei Felder pro Zeile (Bezeichnung+Datum, Von+Bis) statt jedes für sich —
+// braucht deutlich weniger Scroll-Höhe im Erfassungsfenster.
+function planModalBodyHtml(prefill = {}, projects = []) {
   return `
     <div class="form-stack">
-      <label>Datum
-        <input type="date" id="planDatumInput" value="${prefill.datum || isoDateLocal(new Date())}" required>
-      </label>
-      <label>Uhrzeit
-        <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || "12:00"}" required>
-      </label>
-      <label>Bezeichnung
-        <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" required>
-      </label>
+      <div class="form-row-2col">
+        <label>Bezeichnung
+          <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" required>
+        </label>
+        <label>Datum
+          <input type="date" id="planDatumInput" value="${prefill.datum || isoDateLocal(new Date())}" required>
+        </label>
+      </div>
+      <div class="form-row-2col">
+        <label>Von
+          <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || "12:00"}" required>
+        </label>
+        <label>Bis
+          <input type="time" id="planUhrzeitEndeInput" value="${prefill.uhrzeit_ende || ""}">
+        </label>
+      </div>
       <label>Location (Adresse)
         <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
         ${
@@ -2382,7 +2424,14 @@ function planModalBodyHtml(prefill = {}) {
       <label>Beschreibung
         <textarea id="planBeschreibungInput" placeholder="Was ist geplant?">${escapeHtml(prefill.beschreibung || "")}</textarea>
       </label>
+      <label>Für Projekt freigeben
+        <select id="planProjectSelect">
+          <option value="">Nur für dich sichtbar</option>
+          ${privateTaskProjectOptionsHtml(projects, prefill.shared_project_id || "")}
+        </select>
+      </label>
       <p class="error-text hidden plan-modal-error"></p>
+      ${prefill.id ? `<button type="button" id="planDeleteBtn" class="link-button danger">🗑 Termin löschen</button>` : ""}
     </div>
   `;
 }
@@ -2390,16 +2439,27 @@ function planModalBodyHtml(prefill = {}) {
 async function submitPlanForm(url, method) {
   const datum = document.getElementById("planDatumInput").value;
   const uhrzeit = document.getElementById("planUhrzeitInput").value;
+  const uhrzeitEnde = document.getElementById("planUhrzeitEndeInput").value;
   const bezeichnung = document.getElementById("planBezeichnungInput").value.trim();
   const location = document.getElementById("planLocationInput").value.trim();
   const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
+  const projectSelect = document.getElementById("planProjectSelect");
+  const sharedProjectId = projectSelect && projectSelect.value ? parseInt(projectSelect.value, 10) : null;
 
   if (!datum || !uhrzeit || !bezeichnung) return;
 
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ datum, uhrzeit, bezeichnung, location, beschreibung }),
+    body: JSON.stringify({
+      datum,
+      uhrzeit,
+      uhrzeit_ende: uhrzeitEnde || null,
+      bezeichnung,
+      location,
+      beschreibung,
+      shared_project_id: sharedProjectId,
+    }),
   });
 
   if (res.ok) {
@@ -2415,23 +2475,36 @@ async function submitPlanForm(url, method) {
   }
 }
 
-function openAddPlanModal(prefill = {}) {
+async function deletePlanEvent(eventId) {
+  if (!(await showConfirm("Dieser Termin wird endgültig gelöscht.", "Ja, löschen"))) return;
+  const res = await fetch(`/api/plan/${eventId}`, { method: "DELETE" });
+  if (res.ok) {
+    closeModal();
+    loadPlanList(true);
+  }
+}
+
+async function openAddPlanModal(prefill = {}) {
+  const projects = await fetchProjects();
   openModal({
     eyebrow: "Kalender",
     title: "Termin hinzufügen",
-    bodyHtml: planModalBodyHtml(prefill),
+    bodyHtml: planModalBodyHtml(prefill, projects),
     onSubmit: () => submitPlanForm("/api/plan", "POST"),
   });
 }
 
-function openEditPlanModal(event) {
+async function openEditPlanModal(event) {
+  const projects = await fetchProjects();
   openModal({
     eyebrow: "Kalender",
     title: "Termin bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: planModalBodyHtml(event),
+    bodyHtml: planModalBodyHtml(event, projects),
     onSubmit: () => submitPlanForm(`/api/plan/${event.id}`, "PATCH"),
   });
+  const deleteBtn = document.getElementById("planDeleteBtn");
+  if (deleteBtn) deleteBtn.addEventListener("click", () => deletePlanEvent(event.id));
 }
 
 const addPlanButton = document.getElementById("addPlanButton");
@@ -2723,8 +2796,8 @@ function updateExpensesHeroCard() {
   const total = computeFilteredExpenseTotal();
 
   myExpensesHeroEl.innerHTML = `
-    <div class="eyebrow">${title}</div>
-    <div class="countdown">${formatEuro(total)}</div>
+    <span class="balance-chip-label">${title}</span>
+    <span class="balance-chip-value">${formatEuro(total)}</span>
   `;
 }
 
@@ -2747,10 +2820,11 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
 
   // Chip statt Checkbox+Text: die ganze Kachel ist der Button, blass in der
   // Nutzerfarbe solange nicht ausgewählt, volle Farbe sobald ausgewählt —
-  // dadurch auch kompakter, es passen mehr Personen pro Zeile.
+  // dadurch auch kompakter, es passen mehr Personen pro Zeile. Ohne Prefill
+  // (neue Ausgabe) ist standardmäßig niemand ausgewählt.
   const beneficiaryOptions = users
     .map((u) => {
-      const checked = beneficiaryIds ? beneficiaryIds.has(u.id) : true;
+      const checked = beneficiaryIds ? beneficiaryIds.has(u.id) : false;
       const color = USER_COLORS[u.username] || "#ffd400";
       const pale = hexToRgba(color, 0.16);
       return `<label class="beneficiary-chip${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}><span>${escapeHtml(u.username)}</span></label>`;
@@ -2769,11 +2843,13 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
       </div>
       <div class="checkbox-group">
         <div class="eyebrow">Bezahlt von</div>
-        <button type="button" id="expensePayerTrigger" class="payer-dropdown-trigger">
-          ${nameTag(payerUser.username)}
-          <span class="chevron">▾</span>
-        </button>
-        <div id="expensePayerDropdown" class="payer-dropdown-list hidden">${payerOptions}</div>
+        <div class="payer-dropdown-wrap">
+          <button type="button" id="expensePayerTrigger" class="payer-dropdown-trigger">
+            ${nameTag(payerUser.username)}
+            <span class="chevron">▾</span>
+          </button>
+          <div id="expensePayerDropdown" class="payer-dropdown-list hidden">${payerOptions}</div>
+        </div>
         <input type="hidden" id="expensePayerValue" value="${payerUser.id}">
       </div>
       <div class="checkbox-group">
@@ -3424,6 +3500,23 @@ function renderSettlementItem(s, isMine) {
 
 let lastOpenSettlementsSignature = null;
 
+// Für die Liste (nicht das Schaubild!) eigene Reihenfolge pro Betrachter: erst
+// was man selbst zahlen muss, dann was man bekommt, dann der Rest — jeweils in
+// der ursprünglichen Reihenfolge der Gruppe. Das Schaubild bekommt bewusst das
+// unsortierte Original, damit es für alle User gleich aussieht.
+function sortSettlementsForViewer(settlements, meId) {
+  if (!meId) return settlements;
+  const mine = [];
+  const toMine = [];
+  const rest = [];
+  settlements.forEach((s) => {
+    if (s.from_id === meId) mine.push(s);
+    else if (s.to_id === meId) toMine.push(s);
+    else rest.push(s);
+  });
+  return [...mine, ...toMine, ...rest];
+}
+
 async function loadOpenSettlements() {
   if (!openSettlementsListEl) return;
   try {
@@ -3442,7 +3535,7 @@ async function loadOpenSettlements() {
     if (settlements.length === 0) {
       openSettlementsListEl.innerHTML = `<div class="empty"><p>Keine offenen Zahlungen — alles ausgeglichen.</p></div>`;
     } else {
-      settlements.forEach((s) =>
+      sortSettlementsForViewer(settlements, me ? me.id : null).forEach((s) =>
         openSettlementsListEl.appendChild(renderSettlementItem(s, !!me && s.from_id === me.id))
       );
     }
@@ -3717,7 +3810,7 @@ function buildExplainSlides(data) {
             : `<p class="muted">Alles ausgeglichen.</p>`
         }
       </div>
-      <p class="muted">Genau diese ${steps.length} Überweisung${steps.length === 1 ? "" : "en"} siehst du unter "Offene Zahlungen" — von ursprünglich ${netted_pairs.length} Paar-Zahlung${netted_pairs.length === 1 ? "" : "en"} über Ketten auf ${steps.length} reduziert.</p>
+      <p class="muted">Genau diese ${steps.length} Überweisung${steps.length === 1 ? "" : "en"} siehst du unter "Offen" — von ursprünglich ${netted_pairs.length} Paar-Zahlung${netted_pairs.length === 1 ? "" : "en"} über Ketten auf ${steps.length} reduziert.</p>
     </div>
   `);
 
@@ -3901,6 +3994,8 @@ const EXPENSE_LOG_ICONS = {
   expense_created: "💶",
   expense_edited: "✏️",
   expense_deleted: "🗑️",
+  payment_reported: "📤",
+  payment_confirmed: "✅",
 };
 
 function renderExpenseLogItem(entry) {

@@ -59,17 +59,16 @@
 
         <div class="filter-row two-row" id="costsViewRow">
           <button type="button" class="filter active" data-view="entry">Ausgaben</button>
-          <button type="button" class="filter" data-view="open">Offene Zahlungen</button>
+          <button type="button" class="filter" data-view="open">Offen</button>
           <button type="button" class="filter" data-view="received">Erhaltene Zahlungen<span id="receivedTabBadge" class="nav-badge hidden">0</span></button>
           <button type="button" class="filter" data-view="log">Log</button>
         </div>
 
         <div id="costsViewEntry" class="costs-view">
-          <div id="myExpensesHero" class="hero-card mini-hero compact-hero">
-            <div class="muted">Noch keine Ausgaben erfasst.</div>
+          <div class="view-heading-row">
+            <h3>Alle Ausgaben</h3>
+            <div id="myExpensesHero" class="balance-chip"></div>
           </div>
-
-          <h3>Alle Ausgaben</h3>
           <select id="expenseFilterSelect" class="sort-select">
             <option value="">Alle</option>
           </select>
@@ -82,7 +81,7 @@
 
         <div id="costsViewOpen" class="costs-view hidden">
           <div class="view-heading-row">
-            <h3>Offene Zahlungen</h3>
+            <h3>Offen</h3>
             <div id="balanceHero" class="balance-chip"></div>
           </div>
           <p class="muted">Minimale Anzahl an Überweisungen, um alle offenen Schulden auszugleichen.
@@ -117,6 +116,8 @@
             <option value="expense_created">Erstellt</option>
             <option value="expense_edited">Bearbeitet</option>
             <option value="expense_deleted">Gelöscht</option>
+            <option value="payment_reported">Überwiesen gemeldet</option>
+            <option value="payment_confirmed">Bestätigt</option>
           </select>
           <div id="expenseLogList" class="stack">
             <div class="empty-state"><p>Lädt …</p></div>
@@ -209,7 +210,7 @@
     <div class="modal-card">
       <div class="modal-header">
         <div>
-          <div class="eyebrow">Offene Zahlungen</div>
+          <div class="eyebrow">Offen</div>
           <h2>Wie kommt das zustande?</h2>
         </div>
         <button type="button" id="settlementExplainClose" class="icon-button" aria-label="Schließen">×</button>

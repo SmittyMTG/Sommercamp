@@ -107,6 +107,11 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .deadline-row input[type=date]{width:auto}
 .deadline-row button{flex-shrink:0}
 .sort-select{margin-bottom:16px}.costs-view{display:grid;gap:2px}
+/* h3/p behalten sonst ihre Browser-Standardmargins (~1em oben+unten) — macht
+   zusammen mit dem grid-gap oben einen viel zu großen Abstand zwischen
+   Überschrift und Beschreibungstext bei "Offen"/"Erhaltene Zahlungen"/"Log". */
+.costs-view h3,.costs-view .view-heading-row{margin:0 0 4px}
+.costs-view>p.muted{margin:0 0 10px}
 .view-heading-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .balance-chip{display:flex;flex-direction:column;align-items:flex-end;text-align:right;flex-shrink:0}
 .balance-chip-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
@@ -148,16 +153,23 @@ input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13
 .beneficiary-chip.checked,.beneficiary-chip:has(input:checked){background:var(--chip-color,var(--yellow));border-color:var(--chip-color,var(--yellow));color:#111}
 /* Kompakte Betragsfelder direkt unter "Für wen?" statt eigenem Abschnitt —
    nur ein schmales Zahlenfeld, kein wiederholter Name/Avatar (der steht
-   schon auf dem Chip darüber, siehe fixed-amount-chip in app.js). */
-.fixed-amount-chip-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+   schon auf dem Chip darüber, siehe fixed-amount-chip in app.js). min-height
+   reserviert die Höhe einer Chip-Zeile schon BEVOR jemand ausgewählt ist —
+   sonst wächst das Erfassungsfenster erst beim ersten Auswählen um diese
+   Höhe, was wie ein Sprung wirkt. */
+.fixed-amount-chip-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;min-height:34px}
 .fixed-amount-chip{display:inline-flex;align-items:center;background:var(--surface2);border:1px solid var(--line);border-radius:999px;padding:4px 10px}
 .fixed-amount-chip input{width:56px;flex-shrink:0;border:none;background:none;padding:2px 0;text-align:right}
 /* "Bezahlt von": eingeklappter Trigger zeigt nur die Auswahl (Avatar+Name-
    Pille wie überall sonst), Klick öffnet eine Liste aller User im gleichen
-   Look — kein natives <select>, das kann weder Farbe noch Bild anzeigen. */
+   Look — kein natives <select>, das kann weder Farbe noch Bild anzeigen.
+   Liste liegt absolut über dem restlichen Formular (statt es nach unten zu
+   schieben), damit sich die Höhe des Erfassungsfensters beim Auf-/Zuklappen
+   nicht ändert. */
+.payer-dropdown-wrap{position:relative}
 .payer-dropdown-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:8px 12px;cursor:pointer;font-size:14px}
 .payer-dropdown-trigger.open .chevron{transform:rotate(180deg)}
-.payer-dropdown-list{display:flex;flex-direction:column;gap:4px;margin-top:6px;background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:6px;max-height:220px;overflow-y:auto}
+.payer-dropdown-list{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:30;display:flex;flex-direction:column;gap:4px;background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:6px;max-height:220px;overflow-y:auto;box-shadow:var(--shadow)}
 .payer-dropdown-option{display:flex;align-items:center;background:none;border:none;padding:6px 8px;border-radius:9px;cursor:pointer;text-align:left}
 .payer-dropdown-option:active{background:var(--surface)}
 .payer-dropdown-option.selected{background:var(--surface)}
@@ -167,6 +179,7 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 
 /* Offene Zahlungen: animierter Rechenweg */
 .link-button{background:none;border:none;color:var(--yellow);font-weight:800;font-size:13px;padding:0;margin-left:4px;cursor:pointer;text-decoration:underline}
+.link-button.danger{color:var(--red);margin-left:0}
 .settled-toggle{display:block;margin:20px 0 10px}
 .explain-body{min-height:220px;padding:6px 2px}
 /* Feste Kartenhöhe nur für dieses Mehrschritt-Modal (nicht global auf
