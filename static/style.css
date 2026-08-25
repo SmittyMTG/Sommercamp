@@ -329,7 +329,9 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .cal-corner{background:var(--surface);border-bottom:1px solid var(--line)}
 .cal-col-header{background:var(--surface);border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:center;font-size:11px;font-weight:800;padding:7px 2px;color:var(--muted)}
 .cal-col-header.today{color:var(--yellow)}
-.cal-hour-label{background:var(--bg);border-bottom:1px solid var(--line);border-right:1px solid var(--line);font-size:9.5px;color:var(--muted);text-align:right;padding:3px 4px 0 0;font-weight:700}
+/* Dunkler als die Wochentags-Überschriften (--muted), damit die schmale
+   Stundenspalte sichtbar zurücktritt statt gleich stark wie "Mo"/"Di" zu wirken. */
+.cal-hour-label{background:var(--bg);border-bottom:1px solid var(--line);border-right:1px solid var(--line);font-size:9.5px;color:#6e6e78;text-align:right;padding:3px 4px 0 0;font-weight:700}
 .cal-hour-cell{background:var(--surface);border-bottom:1px solid var(--line);border-right:1px solid var(--line);min-height:40px;padding:2px;display:flex;flex-direction:column;gap:2px;cursor:pointer}
 .cal-hour-cell:active{background:var(--surface2)}
 .cal-hour-cell.today-col{background:rgba(255,212,0,.05)}

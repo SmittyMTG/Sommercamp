@@ -2260,19 +2260,27 @@ function renderTimeGridView(days) {
   const todayIso = isoDateLocal(new Date());
   const eventsByDate = eventsByDateMap();
 
-  let headerHtml = `<div class="cal-corner"></div>`;
-  days.forEach((d) => {
+  // Jede Zelle bekommt ihre grid-row/-column EXPLIZIT statt sich auf den
+  // Auto-Placement-Algorithmus zu verlassen: .cal-events-layer weiter unten
+  // belegt explizit fast das ganze Raster (grid-column/-row:2/-1) — würden
+  // Kopfzeile/Stundenspalte/-zellen stattdessen implizit einsortiert, würde
+  // der Browser sie um diese Fläche herum verdrängen (Auto-Placement räumt
+  // explizit platzierten Elementen zuerst ihren Platz ein), was genau die
+  // vertauschten Spalten verursacht hat.
+  let headerHtml = `<div class="cal-corner" style="grid-row:1;grid-column:1"></div>`;
+  days.forEach((d, dayIndex) => {
     const iso = isoDateLocal(d);
     const label = d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit" });
-    headerHtml += `<div class="cal-col-header${iso === todayIso ? " today" : ""}">${label}</div>`;
+    headerHtml += `<div class="cal-col-header${iso === todayIso ? " today" : ""}" style="grid-row:1;grid-column:${dayIndex + 2}">${label}</div>`;
   });
 
   let rowsHtml = "";
   for (let h = CAL_START_HOUR; h <= CAL_END_HOUR; h++) {
-    rowsHtml += `<div class="cal-hour-label">${String(h).padStart(2, "0")}</div>`;
-    days.forEach((d) => {
+    const rowIndex = h - CAL_START_HOUR + 2;
+    rowsHtml += `<div class="cal-hour-label" style="grid-row:${rowIndex};grid-column:1">${String(h).padStart(2, "0")}</div>`;
+    days.forEach((d, dayIndex) => {
       const iso = isoDateLocal(d);
-      rowsHtml += `<div class="cal-hour-cell${iso === todayIso ? " today-col" : ""}" data-date="${iso}" data-hour="${h}"></div>`;
+      rowsHtml += `<div class="cal-hour-cell${iso === todayIso ? " today-col" : ""}" data-date="${iso}" data-hour="${h}" style="grid-row:${rowIndex};grid-column:${dayIndex + 2}"></div>`;
     });
   }
 
