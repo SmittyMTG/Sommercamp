@@ -1860,15 +1860,19 @@ function adminUsersModalBodyHtml(users) {
   const rows = users
     .map(
       (u) => `
-        <div class="list-card">
+        <div class="list-card" data-user-row="${u.id}">
           <div class="list-card-content">
             ${avatarCircleHtml(u.username, 32)}
             <div class="list-card-text">
-              <p class="list-card-title">${escapeHtml(u.username)}</p>
+              <p class="list-card-title user-name-title" data-user-id="${u.id}">${escapeHtml(u.username)}</p>
               <p class="list-card-meta">${escapeHtml(u.role || "user")}</p>
+              <p class="error-text hidden rename-user-error"></p>
             </div>
           </div>
           <div class="list-card-actions">
+            <span class="user-rename-controls">
+              <button type="button" class="icon-button rename-user-btn" aria-label="Umbenennen">✏️</button>
+            </span>
             <input type="color" class="user-color-input" data-user-id="${u.id}" value="${u.color || "#ffd400"}" aria-label="Farbe von ${escapeHtml(u.username)}">
           </div>
         </div>
@@ -1901,6 +1905,77 @@ function adminUsersModalBodyHtml(users) {
   `;
 }
 
+// Umbenennen passiert inline in der Kachel statt in einem eigenen Dialog
+// (nur ein <dialog> gleichzeitig sinnvoll nutzbar) — Stift-Button wird durch
+// Speichern/Abbrechen ersetzt, der Namens-Text durch ein Eingabefeld. Das
+// Farbfeld daneben bleibt dabei unangetastet, muss also nicht neu aufgebaut
+// werden. Nach Abbrechen/Speichern wird die Funktion erneut aufgerufen, damit
+// der Stift-Button wieder funktioniert.
+function wireAdminUserRenameButton(userId) {
+  const row = document.querySelector(`.list-card[data-user-row="${userId}"]`);
+  if (!row) return;
+  const controls = row.querySelector(".user-rename-controls");
+  const renameBtn = controls.querySelector(".rename-user-btn");
+
+  renameBtn.addEventListener("click", () => {
+    const titleEl = row.querySelector(".user-name-title");
+    const errEl = row.querySelector(".rename-user-error");
+    const currentName = titleEl.textContent;
+
+    titleEl.outerHTML = `<input type="text" class="list-card-title user-name-input" maxlength="40" value="${escapeHtml(currentName)}">`;
+    const input = row.querySelector(".user-name-input");
+    input.focus();
+    input.select();
+
+    controls.innerHTML = `
+      <button type="button" class="icon-button rename-user-save" aria-label="Speichern">✓</button>
+      <button type="button" class="icon-button rename-user-cancel" aria-label="Abbrechen">×</button>
+    `;
+
+    const restoreViewMode = (name) => {
+      input.outerHTML = `<p class="list-card-title user-name-title" data-user-id="${userId}">${escapeHtml(name)}</p>`;
+      controls.innerHTML = `<button type="button" class="icon-button rename-user-btn" aria-label="Umbenennen">✏️</button>`;
+      errEl.classList.add("hidden");
+      errEl.textContent = "";
+      wireAdminUserRenameButton(userId);
+    };
+
+    controls.querySelector(".rename-user-cancel").addEventListener("click", () => restoreViewMode(currentName));
+
+    const save = async () => {
+      const newName = input.value.trim();
+      if (!newName || newName === currentName) {
+        restoreViewMode(currentName);
+        return;
+      }
+      const saveRes = await fetch(`/api/users/${userId}/username`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: newName }),
+      });
+      if (saveRes.ok) {
+        cachedUsers = null;
+        cachedMe = null;
+        await fetchUsersAndMe();
+        restoreViewMode(newName);
+      } else {
+        const data = await saveRes.json().catch(() => ({}));
+        errEl.textContent = data.error || "Konnte nicht umbenannt werden.";
+        errEl.classList.remove("hidden");
+      }
+    };
+    controls.querySelector(".rename-user-save").addEventListener("click", save);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        save();
+      } else if (e.key === "Escape") {
+        restoreViewMode(currentName);
+      }
+    });
+  });
+}
+
 async function openAdminUsersModal() {
   const res = await fetch("/api/users");
   const users = res.ok ? await res.json() : [];
@@ -1914,6 +1989,8 @@ async function openAdminUsersModal() {
       closeModal();
     },
   });
+
+  users.forEach((u) => wireAdminUserRenameButton(u.id));
 
   document.querySelectorAll(".user-color-input").forEach((input) => {
     input.addEventListener("change", async () => {

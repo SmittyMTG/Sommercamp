@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from database import (
     SessionLocal,
     User,
+    UserSession,
     PlanEvent,
     Task,
     TaskAssignee,
@@ -172,6 +173,10 @@ class UserCreate(BaseModel):
 
 class UserColorUpdate(BaseModel):
     color: str
+
+
+class UsernameUpdate(BaseModel):
+    username: str
 
 
 class PasswordChangeRequest(BaseModel):
@@ -1251,6 +1256,49 @@ def update_user_color(user_id: int, request: Request, payload: UserColorUpdate, 
     user.color = color
     db.commit()
     return {"id": user.id, "color": user.color}
+
+
+@app.patch("/api/users/{user_id}/username")
+def update_username(user_id: int, request: Request, payload: UsernameUpdate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Nutzer umbenennen"})
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    new_username = payload.username.strip()
+    if not new_username:
+        return JSONResponse(status_code=400, content={"error": "Nutzername darf nicht leer sein"})
+    if len(new_username) > 40:
+        return JSONResponse(status_code=400, content={"error": "Nutzername darf maximal 40 Zeichen haben"})
+    if new_username == user.username:
+        return {"id": user.id, "username": user.username}
+    if db.query(User).filter(User.username == new_username).first():
+        return JSONResponse(status_code=400, content={"error": "Diesen Nutzernamen gibt es schon"})
+
+    old_username = user.username
+    user.username = new_username
+
+    # username steht statt einer user_id an vielen weiteren Stellen (siehe
+    # database.py) — alle mitziehen, sonst würden aktive Logins ungültig
+    # (sessions.username) und Berechtigungsprüfungen wie "nur der:die
+    # Ersteller:in darf bearbeiten" (created_by == ...) nach dem Umbenennen
+    # plötzlich fehlschlagen. ActivityLog bleibt bewusst unverändert — das
+    # ist ein historisches Protokoll, dessen Nachrichtentexte den alten Namen
+    # ohnehin schon fest eingebettet haben.
+    db.query(UserSession).filter(UserSession.username == old_username).update({"username": new_username})
+    db.query(Task).filter(Task.created_by == old_username).update({"created_by": new_username})
+    db.query(Project).filter(Project.created_by == old_username).update({"created_by": new_username})
+    db.query(PrivateTask).filter(PrivateTask.created_by == old_username).update({"created_by": new_username})
+    db.query(PlanEvent).filter(PlanEvent.created_by == old_username).update({"created_by": new_username})
+    db.query(Ausgabe).filter(Ausgabe.created_by == old_username).update({"created_by": new_username})
+    db.commit()
+
+    return {"id": user.id, "username": user.username}
 
 
 def _load_ui_state(user: User) -> dict:
