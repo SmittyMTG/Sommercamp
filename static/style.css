@@ -138,7 +138,8 @@ input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13
    für Browser ohne :has()-Unterstützung. flex-wrap statt festem Grid, damit
    kurze Namen mehr Chips pro Zeile packen. */
 .chip-row{display:flex;flex-wrap:wrap;gap:8px}
-.beneficiary-chip{position:relative;display:inline-flex;align-items:center;padding:9px 15px;border-radius:999px;font-weight:800;cursor:pointer;background:var(--chip-pale,var(--surface2));border:1px solid var(--chip-pale,var(--line));color:var(--text);transition:background .15s,border-color .15s,color .15s}
+.beneficiary-chip{position:relative;display:inline-flex;align-items:center;gap:6px;padding:9px 15px;border-radius:999px;font-weight:800;cursor:pointer;background:var(--chip-pale,var(--surface2));border:1px solid var(--chip-pale,var(--line));color:var(--text);transition:background .15s,border-color .15s,color .15s}
+.beneficiary-chip.payer-chip{padding:6px 14px 6px 6px}
 .beneficiary-chip input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
 .beneficiary-chip.checked,.beneficiary-chip:has(input:checked){background:var(--chip-color,var(--yellow));border-color:var(--chip-color,var(--yellow));color:#111}
 .fixed-amount-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--text)}.fixed-amount-row input{width:90px;flex-shrink:0}

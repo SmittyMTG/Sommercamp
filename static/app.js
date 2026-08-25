@@ -2459,8 +2459,15 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
   const payerId = prefill.glaubigerId != null ? prefill.glaubigerId : me.id;
   const beneficiaryIds = prefill.beneficiaryIds || null;
 
+  // Chips statt <select>: ein natives <option> kann weder Farbe noch
+  // Profilbild zeigen — Radio statt Checkbox, da nur eine Person zahlt.
   const payerOptions = users
-    .map((u) => `<option value="${u.id}"${u.id === payerId ? " selected" : ""}>${escapeHtml(u.username)}</option>`)
+    .map((u) => {
+      const checked = u.id === payerId;
+      const color = USER_COLORS[u.username] || "#ffd400";
+      const pale = hexToRgba(color, 0.16);
+      return `<label class="beneficiary-chip payer-chip${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}"><input type="radio" name="expensePayer" class="payer-radio" value="${u.id}"${checked ? " checked" : ""}>${avatarCircleHtml(u.username, 18)}<span>${escapeHtml(u.username)}</span></label>`;
+    })
     .join("");
 
   // Chip statt Checkbox+Text: die ganze Kachel ist der Button, blass in der
@@ -2485,9 +2492,10 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
           <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" required>
         </label>
       </div>
-      <label>Bezahlt von
-        <select id="expensePayerSelect">${payerOptions}</select>
-      </label>
+      <div class="checkbox-group">
+        <div class="eyebrow">Bezahlt von</div>
+        <div id="expensePayerChips" class="chip-row">${payerOptions}</div>
+      </div>
       <div class="checkbox-group">
         <div class="eyebrow">Für wen?</div>
         <div id="expenseBeneficiaries" class="chip-row">${beneficiaryOptions}</div>
@@ -2590,8 +2598,19 @@ function syncBeneficiaryChipClasses() {
   });
 }
 
+function syncPayerChipClasses() {
+  document.querySelectorAll("#expensePayerChips .payer-chip").forEach((chip) => {
+    const radio = chip.querySelector(".payer-radio");
+    chip.classList.toggle("checked", !!radio && radio.checked);
+  });
+}
+
 function wireExpenseForm(users, me, entryAmounts) {
   renderExpenseFixedAmountInputs(users, entryAmounts);
+
+  document.querySelectorAll("#expensePayerChips .payer-radio").forEach((radio) => {
+    radio.addEventListener("change", syncPayerChipClasses);
+  });
 
   const checkboxes = () => document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox");
   checkboxes().forEach((cb) => {
@@ -2623,7 +2642,8 @@ function wireExpenseForm(users, me, entryAmounts) {
 }
 
 function readExpenseForm() {
-  const glaubiger_id = parseInt(document.getElementById("expensePayerSelect").value, 10);
+  const checkedPayer = document.querySelector('input[name="expensePayer"]:checked');
+  const glaubiger_id = checkedPayer ? parseInt(checkedPayer.value, 10) : NaN;
   const schuldner_ids = Array.from(
     document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox:checked")
   ).map((el) => parseInt(el.value, 10));
@@ -2637,16 +2657,8 @@ function readExpenseForm() {
     if (el.value && val > 0) fixed_amounts[el.dataset.uid] = val;
   });
 
-  if (!betreff || !cash || cash <= 0 || schuldner_ids.length === 0) return null;
+  if (!betreff || !cash || cash <= 0 || schuldner_ids.length === 0 || Number.isNaN(glaubiger_id)) return null;
   return { glaubiger_id, schuldner_ids, cash, betreff, datum, fixed_amounts };
-}
-
-// Idiotensicherung gegen versehentliches Doppelt-Erfassen: gleicher Zahler +
-// (fast) gleicher Gesamtbetrag wie eine bereits bestehende Ausgabe.
-function findPossibleDuplicateExpense(form) {
-  return groupExpenses(lastExpenses).find(
-    (g) => g.glaubigerId === form.glaubiger_id && Math.abs(g.total - form.cash) < 0.01
-  );
 }
 
 async function openAddExpenseModal() {
@@ -2661,15 +2673,6 @@ async function openAddExpenseModal() {
     onSubmit: async () => {
       const form = readExpenseForm();
       if (!form) return;
-
-      const duplicate = findPossibleDuplicateExpense(form);
-      if (duplicate) {
-        const payerName = Array.from(duplicate.glaeubiger)[0] || "?";
-        const proceed = confirm(
-          `⚠️ ${payerName} hat schon eine Ausgabe über ${formatEuro(duplicate.total)} erfasst ("${duplicate.betreff}", ${formatDate(duplicate.datum)}). Meintest du diese Zahlung? Trotzdem als neue, separate Ausgabe speichern?`
-        );
-        if (!proceed) return;
-      }
 
       const res = await fetch("/api/expenses", {
         method: "POST",
@@ -2882,15 +2885,15 @@ function buildMoneyFlowSvg(settlements) {
   const rightOffset = MARGIN_Y + (plotH - right.columnHeight) / 2;
 
   // Die Knotenhöhe folgt dem tatsächlichen Betrag (min. 3px, siehe layout()),
-  // das zweizeilige Label (Name + Betrag) plus Profilbild darunter braucht
-  // aber ~44px Platz. Bei sehr kleinen, benachbarten Beträgen reicht der
-  // Knotenabstand allein nicht aus und die Labels würden sich überlappen —
-  // daher hier, analog zum MIN_LABEL_GAP der Bänder-Labels weiter unten, ein
-  // Mindestabstand zwischen den Label-MITTELPUNKTEN erzwungen (die farbigen
-  // Balken selbst bleiben unverändert, nur die Textposition wird bei Bedarf
-  // verschoben).
-  const NODE_LABEL_MIN_GAP = 44;
+  // das zweizeilige Label (Name + Betrag) braucht aber ~24px Platz. Bei sehr
+  // kleinen, benachbarten Beträgen reicht der Knotenabstand allein nicht aus
+  // und die Labels würden sich überlappen — daher hier, analog zum
+  // MIN_LABEL_GAP der Bänder-Labels weiter unten, ein Mindestabstand
+  // zwischen den Label-MITTELPUNKTEN erzwungen (die farbigen Balken selbst
+  // bleiben unverändert, nur die Textposition wird bei Bedarf verschoben).
+  const NODE_LABEL_MIN_GAP = 24;
   const NODE_AVATAR_R = 7;
+  const NODE_AVATAR_GAP = 4;
   function nodeLabelCenters(nodes, positions) {
     const centers = nodes.map((n) => positions[n.id].y + positions[n.id].h / 2);
     for (let i = 1; i < centers.length; i++) {
@@ -2902,9 +2905,19 @@ function buildMoneyFlowSvg(settlements) {
   const leftLabelCenters = nodeLabelCenters(leftNodes, left.positions);
   const rightLabelCenters = nodeLabelCenters(rightNodes, right.positions);
 
-  // Profilbild (oder "?"-Platzhalter) unter Name+Betrag — eigene <clipPath>
-  // pro Vorkommen, da dieselbe Person sowohl links (schuldet) als auch rechts
-  // (bekommt) auftauchen kann.
+  // Grobe Breiten-Schätzung (kein echtes Text-Measuring im SVG-String
+  // verfügbar) — reicht, um das Profilbild direkt vor Name/Betrag statt mit
+  // festem Abstand zu platzieren, statt eine feste Lücke in Kauf zu nehmen.
+  function estimateLabelBlockWidth(name, amountText) {
+    const nameW = name.length * 6.8;
+    const amountW = amountText.length * 5.6;
+    return Math.max(nameW, amountW);
+  }
+
+  // Profilbild (oder "?"-Platzhalter), vertikal zentriert und direkt vor
+  // Name+Betrag (auf der vom Band abgewandten Außenseite) — eigene
+  // <clipPath> pro Vorkommen, da dieselbe Person sowohl links (schuldet) als
+  // auch rechts (bekommt) auftauchen kann.
   let clipIdCounter = 0;
   function nodeAvatarSvg(username, cx, cy) {
     clipIdCounter += 1;
@@ -2921,8 +2934,9 @@ function buildMoneyFlowSvg(settlements) {
     const pos = left.positions[n.id];
     const y = pos.y + leftOffset;
     const labelY = leftLabelCenters[i] + leftOffset;
-    const avatarCx = LABEL_W - 8;
-    const avatarCy = labelY + 9 + 6 + NODE_AVATAR_R;
+    const blockWidth = estimateLabelBlockWidth(n.name, formatEuro(n.total));
+    const avatarCx = LABEL_W - 8 - blockWidth - NODE_AVATAR_GAP - NODE_AVATAR_R;
+    const avatarCy = labelY;
     nodesSvg += `<rect x="${LABEL_W}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
     nodesSvg += `<text class="money-flow-node-label" x="${LABEL_W - 8}" y="${(labelY - 3).toFixed(1)}" text-anchor="end">${escapeHtml(n.name)}</text>`;
     nodesSvg += `<text class="money-flow-node-amount" x="${LABEL_W - 8}" y="${(labelY + 9).toFixed(1)}" text-anchor="end">${formatEuro(n.total)}</text>`;
@@ -2932,8 +2946,9 @@ function buildMoneyFlowSvg(settlements) {
     const pos = right.positions[n.id];
     const y = pos.y + rightOffset;
     const labelY = rightLabelCenters[i] + rightOffset;
-    const avatarCx = VW - LABEL_W + 8;
-    const avatarCy = labelY + 9 + 6 + NODE_AVATAR_R;
+    const blockWidth = estimateLabelBlockWidth(n.name, formatEuro(n.total));
+    const avatarCx = VW - LABEL_W + 8 + blockWidth + NODE_AVATAR_GAP + NODE_AVATAR_R;
+    const avatarCy = labelY;
     nodesSvg += `<rect x="${rightXStart.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
     nodesSvg += `<text class="money-flow-node-label" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY - 3).toFixed(1)}" text-anchor="start">${escapeHtml(n.name)}</text>`;
     nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
@@ -3015,11 +3030,7 @@ function buildMoneyFlowSvg(settlements) {
     leftLabelCenters.length ? leftLabelCenters[leftLabelCenters.length - 1] + leftOffset : 0,
     rightLabelCenters.length ? rightLabelCenters[rightLabelCenters.length - 1] + rightOffset : 0
   );
-  const fullH = Math.max(
-    plotH + 2 * MARGIN_Y,
-    maxLabelY + MARGIN_Y,
-    maxNodeLabelY + 15 + NODE_AVATAR_R * 2 + MARGIN_Y
-  );
+  const fullH = Math.max(plotH + 2 * MARGIN_Y, maxLabelY + MARGIN_Y, maxNodeLabelY + 9 + MARGIN_Y);
   return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}${labelsSvg}</svg>`;
 }
 
