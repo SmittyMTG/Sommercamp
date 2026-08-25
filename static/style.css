@@ -338,6 +338,15 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
    Filter/FABs. Kein Outline: bei mehreren Zellen in Folge sah das wie
    einzelne Klammern statt einer Fläche aus. */
 .cal-hour-cell.cal-drag-target{background:var(--me-color,var(--yellow));opacity:.35}
-.cal-time-event{font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+/* Termine als eigene Ebene ÜBER dem Stunden-Raster (grid-column/-row legen
+   sie exakt über den Zellenbereich, ohne Kopfzeile/Stundenspalte) statt als
+   Text in einer einzelnen Zelle — Höhe/Position kommen direkt aus Start-/
+   Endzeit (siehe app.js), dadurch ist die Dauer auf einen Blick sichtbar.
+   pointer-events:none auf der Hülle lässt Klicks NEBEN einem Termin weiter
+   zur Zelle darunter durch (Termin anlegen); nur die Termin-Blöcke selbst
+   reagieren wieder auf Klicks (Bearbeiten). */
+.cal-events-layer{grid-column:2/-1;grid-row:2/-1;position:relative;pointer-events:none}
+.cal-time-event{position:absolute;box-sizing:border-box;pointer-events:auto;font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;cursor:pointer}
+.cal-time-event-label{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 @media(min-width:650px){.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}

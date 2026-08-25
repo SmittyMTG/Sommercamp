@@ -2203,12 +2203,58 @@ function renderMonthView() {
   });
 }
 
-// Gemeinsame Stunden-Raster-Ansicht für Woche (7 Spalten) und Tag (1 Spalte)
-// — jede Zelle enthält ihre Termine direkt (statt einzeln positionierter
-// Blöcke mit Kollisions-Berechnung), mehrere Termine zur selben Stunde
-// stapeln dadurch einfach übereinander.
+// Gemeinsame Stunden-Raster-Ansicht für Woche (7 Spalten) und Tag (1 Spalte).
+// Die Stunden-Zellen bilden nur noch das Hintergrundraster (Klicken/Ziehen
+// zum Anlegen); Termine liegen als eigene, absolut positionierte Ebene
+// darüber (siehe .cal-events-layer in style.css) — Höhe/Position kommen
+// direkt aus Start-/Endzeit, dadurch ist die Dauer eines Termins auf einen
+// Blick sichtbar, statt dass er nur als Text in einer einzelnen Zelle steht.
 const CAL_START_HOUR = 6;
 const CAL_END_HOUR = 23;
+const CAL_HOUR_PX = 40; // muss zu .cal-hour-cell{min-height:40px} passen
+
+function calMinutesFromMidnight(timeStr) {
+  const [h, m] = timeStr.split(":").map(Number);
+  return h * 60 + m;
+}
+
+// Ohne Endzeit wird eine kompakte Standarddauer von 30 Minuten angenommen,
+// rein fürs Zeichnen — an den gespeicherten Daten ändert das nichts.
+function calEventMinuteSpan(event) {
+  const startMin = calMinutesFromMidnight(event.uhrzeit);
+  const endMin = event.uhrzeit_ende ? calMinutesFromMidnight(event.uhrzeit_ende) : startMin + 30;
+  return { startMin, endMin };
+}
+
+function calEventPixelSpan(event) {
+  const { startMin, endMin } = calEventMinuteSpan(event);
+  const gridStartMin = CAL_START_HOUR * 60;
+  const top = ((startMin - gridStartMin) / 60) * CAL_HOUR_PX;
+  const height = Math.max(((endMin - startMin) / 60) * CAL_HOUR_PX, 16);
+  return { top, height };
+}
+
+// Einfache Bahnen-Zuteilung für zeitlich überlappende Termine am selben Tag:
+// jeder Termin bekommt die erste Bahn, deren letzter Termin schon vorbei
+// ist, sonst eine neue — überlappende Termine landen dadurch nebeneinander
+// statt übereinander.
+function assignEventLanes(events) {
+  const withSpans = events
+    .map((e) => ({ event: e, ...calEventMinuteSpan(e) }))
+    .sort((a, b) => a.startMin - b.startMin);
+  const laneEndTimes = [];
+  const items = withSpans.map(({ event, startMin, endMin }) => {
+    let lane = laneEndTimes.findIndex((end) => end <= startMin);
+    if (lane === -1) {
+      lane = laneEndTimes.length;
+      laneEndTimes.push(endMin);
+    } else {
+      laneEndTimes[lane] = endMin;
+    }
+    return { event, lane };
+  });
+  return { items, laneCount: laneEndTimes.length || 1 };
+}
 
 function renderTimeGridView(days) {
   const todayIso = isoDateLocal(new Date());
@@ -2226,21 +2272,48 @@ function renderTimeGridView(days) {
     rowsHtml += `<div class="cal-hour-label">${String(h).padStart(2, "0")}</div>`;
     days.forEach((d) => {
       const iso = isoDateLocal(d);
-      const hourEvents = (eventsByDate.get(iso) || []).filter(
-        (e) => e.uhrzeit && parseInt(e.uhrzeit.slice(0, 2), 10) === h
-      );
-      rowsHtml += `
-        <div class="cal-hour-cell${iso === todayIso ? " today-col" : ""}" data-date="${iso}" data-hour="${h}">
-          ${hourEvents.map((e) => calEventChipHtml(e, "cal-time-event")).join("")}
-        </div>
-      `;
+      rowsHtml += `<div class="cal-hour-cell${iso === todayIso ? " today-col" : ""}" data-date="${iso}" data-hour="${h}"></div>`;
     });
   }
 
-  calendarContainerEl.innerHTML = `<div class="cal-time-grid" style="--cal-cols:${days.length}">${headerHtml}${rowsHtml}</div>`;
+  let eventsHtml = "";
+  days.forEach((d, dayIndex) => {
+    const iso = isoDateLocal(d);
+    const dayEvents = (eventsByDate.get(iso) || []).filter((e) => e.uhrzeit);
+    const { items, laneCount } = assignEventLanes(dayEvents);
+    const dayWidthPct = 100 / days.length;
+    const laneWidthPct = dayWidthPct / laneCount;
+    items.forEach(({ event, lane }) => {
+      const { top, height } = calEventPixelSpan(event);
+      const color = calEventColor(event);
+      const pale = hexToRgba(color, 0.18);
+      const left = dayIndex * dayWidthPct + lane * laneWidthPct;
+      const time = calEventTimeLabel(event);
+      eventsHtml += `
+        <div class="cal-time-event" data-id="${event.id}" style="--ev-color:${color};--ev-pale:${pale};top:${top}px;height:${height}px;left:${left}%;width:calc(${laneWidthPct}% - 2px)">
+          <span class="cal-time-event-label">${time ? `${time} ` : ""}${escapeHtml(event.bezeichnung)}</span>
+        </div>
+      `;
+    });
+  });
+
+  calendarContainerEl.innerHTML = `
+    <div class="cal-time-grid" style="--cal-cols:${days.length}">
+      ${headerHtml}${rowsHtml}
+      <div class="cal-events-layer">${eventsHtml}</div>
+    </div>
+  `;
+
+  calendarContainerEl.querySelectorAll(".cal-events-layer .cal-time-event").forEach((block) => {
+    block.addEventListener("click", () => {
+      if (!calendarIsAdmin) return;
+      const event = lastDatedEvents.find((ev) => String(ev.id) === block.dataset.id);
+      if (event) openEditPlanModal(event);
+    });
+  });
 
   calendarContainerEl.querySelectorAll(".cal-hour-cell").forEach((cell) => {
-    cell.addEventListener("click", (e) => {
+    cell.addEventListener("click", () => {
       // Nach einem abgeschlossenen Halten+Ziehen (siehe wireCalDayDragCreate)
       // feuert oft trotzdem noch ein Klick auf dieselbe Stelle — der hat hier
       // schon sein Modal geöffnet, ein zweites wäre falsch.
@@ -2249,12 +2322,6 @@ function renderTimeGridView(days) {
         return;
       }
       if (!calendarIsAdmin) return;
-      const chip = e.target.closest(".cal-time-event");
-      if (chip) {
-        const event = lastDatedEvents.find((ev) => String(ev.id) === chip.dataset.id);
-        if (event) openEditPlanModal(event);
-        return;
-      }
       const hour = String(cell.dataset.hour).padStart(2, "0");
       openAddPlanModal({ datum: cell.dataset.date, uhrzeit: `${hour}:00` });
     });
