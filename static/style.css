@@ -104,14 +104,15 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .list-card-content{flex:1;display:flex;align-items:center;gap:13px;min-width:0}
 .list-card-checkbox{width:24px;height:24px;flex-shrink:0;border-radius:999px;border:2px solid var(--line);background:none;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}.list-card-checkbox:active{transform:scale(.9)}.list-card-checkbox.checked{background:var(--yellow);border-color:var(--yellow)}.list-card-checkbox.checked::after{content:'✓';color:#111;font-weight:900;font-size:13px}
 .list-card-text{flex:1;min-width:0}.list-card-title{font-weight:800;color:var(--text);margin:0;overflow-wrap:anywhere}.list-card-meta{font-size:12px;color:var(--muted);margin:3px 0 0;overflow-wrap:anywhere}
-/* Ausgaben-Liste: jede Kachel bleibt exakt gleich hoch, egal wie viele
-   Personen beteiligt sind oder wie lang Betreff/Namen sind — jede Zeile
-   bleibt einzeilig (kein Umbruch mehr) und etwas kleiner als sonst, damit
-   möglichst viel ohne Abschneiden passt; was trotzdem nicht reinpasst, endet
-   mit "…" statt die Kachel höher zu machen als andere. */
+/* Ausgaben-Liste: jede Kachel bleibt exakt gleich hoch, egal wie lang
+   Betreff/Namen sind — jede Zeile bleibt einzeilig (kein Umbruch mehr); was
+   trotzdem nicht reinpasst, endet mit "…" statt die Kachel höher zu machen
+   als andere. Seit die Aufteilungszeile nur noch den eigenen Anteil +
+   Durchschnitt zeigt (statt aller Beteiligten), ist sie kurz genug, um die
+   Schrift wieder näher an die sonst übliche Listen-Kachel-Größe zu bringen. */
 .list-card-text.no-wrap .list-card-title,.list-card-text.no-wrap .list-card-meta{white-space:nowrap;overflow:hidden;overflow-wrap:normal;text-overflow:ellipsis}
-.list-card-text.no-wrap .list-card-title{font-size:14px}
-.list-card-text.no-wrap .list-card-meta{font-size:11px}
+.list-card-text.no-wrap .list-card-title{font-size:15px}
+.list-card-text.no-wrap .list-card-meta{font-size:12px}
 .list-card-actions{display:flex;gap:4px;align-items:center;flex-shrink:0}
 .delete-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s;opacity:.7}.delete-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}
 .urgent-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s,opacity .15s;opacity:.45}.urgent-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}.urgent-btn.active{opacity:1;color:var(--red);background:rgba(255,98,98,.15)}

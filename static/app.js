@@ -2623,17 +2623,33 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
   const borderColor = USER_COLORS[payerNames[0]];
   if (borderColor) card.style.borderLeft = `4px solid ${borderColor}`;
   const payer = payerNames.map((n) => escapeHtml(n)).join(", ");
-  const breakdown = group.entries
-    .map((e) => {
-      const label = e.selbst ? `${escapeHtml(e.schuldner)} (eigen)` : escapeHtml(e.schuldner);
-      return `${label}: ${formatEuro(e.cash)}`;
-    })
-    .join(" · ");
+
+  // Statt aller Beteiligten mit Anteil nur EINE Person + Durchschnitt: im
+  // "Für X"-Filter die gefilterte Person (das ist ja gerade der Fokus der
+  // Ansicht), sonst der eigene Anteil — ergibt bei "Für dich" ohnehin
+  // dasselbe, da die gefilterte Person dann man selbst ist. Ist man an der
+  // Ausgabe gar nicht beteiligt (z. B. "Alle" ohne Filter), bleibt nur der
+  // Durchschnitt übrig.
+  const focusEntry =
+    expenseFilterMode === "fuer" && expenseFilterUserId !== null
+      ? group.entries.find((e) => e.schuldner_id === expenseFilterUserId)
+      : group.entries.find((e) => e.schuldner === myUsername);
+  const breakdownParts = [];
+  if (focusEntry) {
+    const focusLabel = focusEntry.selbst ? `${escapeHtml(focusEntry.schuldner)} (eigen)` : escapeHtml(focusEntry.schuldner);
+    breakdownParts.push(`${focusLabel}: ${formatEuro(focusEntry.cash)}`);
+  }
+  // Durchschnitt nur bei mehr als einer Person sinnvoll — bei nur einer
+  // Person wäre er ohnehin identisch zu deren Anteil.
+  if (group.entries.length > 1) {
+    breakdownParts.push(`Ø ${formatEuro(group.total / group.entries.length)}`);
+  }
+  const breakdown = breakdownParts.join(" · ");
 
   card.innerHTML = `
     <div class="list-card-text no-wrap">
       <p class="list-card-title">${escapeHtml(group.betreff)}</p>
-      <p class="list-card-meta">${formatDate(group.datum)} · bezahlt von ${payer} · ${formatEuro(group.total)} gesamt</p>
+      <p class="list-card-meta">${formatDate(group.datum)} · ${payer} · ${formatEuro(group.total)}</p>
       <p class="list-card-meta">${breakdown}</p>
     </div>
     ${
