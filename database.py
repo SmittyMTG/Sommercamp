@@ -462,8 +462,10 @@ def _consolidate_expense_created_logs():
 
         changed = False
         for g in groups:
-            if len(g["rows"]) <= 1:
-                continue
+            # Auch Gruppen mit nur einer Zeile (Ausgabe mit nur einer
+            # beteiligten Person) müssen umgeschrieben werden — sonst bleibt
+            # bei denen das alte "... für NAME bezahlt"-Format stehen, weil
+            # es ja nichts zum Zusammenfassen gibt.
             keep = g["rows"][0]
             total_str = f"{g['total']:.2f} €".replace(".", ",")
             keep.message = f"{g['actor']} hat {total_str} für „{g['betreff']}“ bezahlt"
