@@ -70,7 +70,14 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    Spezifität als die .primary-Regel oben. */
 .primary.fab-button{position:fixed;right:16px;bottom:calc(78px + env(safe-area-inset-bottom));z-index:21;box-shadow:0 10px 25px rgba(0,0,0,.4);background:var(--me-color,var(--yellow))}
 .danger{color:var(--red)}.secondary.danger{border-color:var(--red)}.success{color:var(--green)}
-.list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}
+/* min-width:0 hier ist der eigentliche Fix für zu breite Kacheln bei langem
+   Inhalt (z. B. viele Beteiligte in der Ausgaben-Aufteilung): .list-card ist
+   selbst ein Grid-Item von .stack — ohne dieses min-width:0 bestimmt sich
+   seine automatische Mindestbreite über den unkürzbaren Inhalt tief im
+   Inneren (die nowrap-Zeilen), egal was min-width:0 weiter innen an
+   .list-card-text schon sagt. Muss also auf JEDER verschachtelten Ebene
+   gesetzt sein, nicht nur an der Stelle, die den Text abschneidet. */
+.list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;min-width:0;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}
 /* Tasks-Liste: spürbar kompaktere Kacheln (weniger Innenabstand, kleinerer
    Haken, engerer Zeilenabstand zwischen den Karten) — hier stapeln sich
    potenziell viele Einträge, die volle .list-card-Höhe nimmt zu viel Platz weg. */
