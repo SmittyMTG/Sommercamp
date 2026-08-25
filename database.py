@@ -5,6 +5,7 @@ from passlib.context import CryptContext
 from fastapi import Depends
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
+import re
 import uuid
 
 # Server läuft in UTC, Nutzer:innen sind in Deutschland — date.today() liefert
@@ -412,6 +413,70 @@ def _backfill_expense_log_messages():
 
 
 _backfill_expense_log_messages()
+
+
+def _consolidate_expense_created_logs():
+    """Frühere expense_created-Einträge hatten einen Eintrag PRO beteiligter
+    Person mit deren Anteil (z. B. "X hat 5,00 € für „Kino“ für Y bezahlt") —
+    seit dem Wechsel auf einen Gesamtbetrags-Eintrag pro Ausgabe (siehe
+    create_expense in main.py) sehen alte Einträge dadurch anders aus als
+    neue. Fasst Gruppen von Alt-Einträgen (gleicher Zahler + Betreff,
+    innerhalb weniger Sekunden entstanden — sie stammen aus derselben
+    Anfrage, ein Eintrag je beteiligter Person) zu einem einzigen Eintrag mit
+    der Summe zusammen. Der Regex matcht nur das alte "... für NAME bezahlt"-
+    Format, neue Gesamtbetrags-Einträge ("... bezahlt" ohne "für NAME" davor)
+    bleiben unangetastet — läuft also bei jedem Start ungefährlich erneut
+    aus (No-Op nach dem ersten Mal, sobald keine Alt-Einträge mehr übrig sind).
+    """
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ActivityLog)
+            .filter(ActivityLog.action == "expense_created")
+            .order_by(ActivityLog.id.asc())
+            .all()
+        )
+        pattern = re.compile(r"^(.+?) hat ([\d.,]+) € für „(.+)“ für .+ bezahlt$")
+
+        groups = []
+        current = None
+        for r in rows:
+            m = pattern.match(r.message)
+            if not m:
+                current = None
+                continue
+            actor, amount_str, betreff = m.group(1), m.group(2), m.group(3)
+            amount = float(amount_str.replace(".", "").replace(",", "."))
+            if (
+                current
+                and current["actor"] == actor
+                and current["betreff"] == betreff
+                and (r.created_at - current["last_time"]).total_seconds() <= 5
+            ):
+                current["rows"].append(r)
+                current["total"] += amount
+                current["last_time"] = r.created_at
+            else:
+                current = {"actor": actor, "betreff": betreff, "total": amount, "rows": [r], "last_time": r.created_at}
+                groups.append(current)
+
+        changed = False
+        for g in groups:
+            if len(g["rows"]) <= 1:
+                continue
+            keep = g["rows"][0]
+            total_str = f"{g['total']:.2f} €".replace(".", ",")
+            keep.message = f"{g['actor']} hat {total_str} für „{g['betreff']}“ bezahlt"
+            for extra in g["rows"][1:]:
+                db.delete(extra)
+            changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+
+_consolidate_expense_created_logs()
 
 # Dependency to get DB session
 def get_db():

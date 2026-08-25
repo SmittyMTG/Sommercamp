@@ -1592,15 +1592,17 @@ def create_expense(
         created.append(row)
     db.commit()
 
-    names = {u.id: u.username for u in db.query(User).filter(User.id.in_(beneficiary_ids + [glaubiger_id])).all()}
+    # Ein Log-Eintrag pro Ausgabe (Gesamtbetrag), nicht mehr einer pro
+    # beteiligter Person — im Log geht es nur ums Nachvollziehen von Aktionen
+    # (wer hat was angelegt/bearbeitet/gelöscht), die Aufteilung auf einzelne
+    # Personen steht bereits in der Ausgaben-Liste selbst.
+    names = {u.id: u.username for u in db.query(User).filter(User.id == glaubiger_id).all()}
     payer_name = names.get(glaubiger_id, "?")
-    for uid in beneficiary_ids:
-        beneficiary_name = names.get(uid, "?")
-        amount_str = f"{amounts[uid]:.2f} €".replace(".", ",")
-        log_action(
-            db, payer_name, beneficiary_name, "expense_created",
-            f"{payer_name} hat {amount_str} für „{betreff}“ für {beneficiary_name} bezahlt",
-        )
+    total_str = f"{payload.cash:.2f} €".replace(".", ",")
+    log_action(
+        db, payer_name, None, "expense_created",
+        f"{payer_name} hat {total_str} für „{betreff}“ bezahlt",
+    )
     db.commit()
 
     return {"created": len(created), "amounts": amounts, "betreff": betreff, "batch_id": batch_id}

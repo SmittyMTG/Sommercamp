@@ -2898,12 +2898,19 @@ function updateExpenseSplitHint() {
 
   const cash = parseFloat(document.getElementById("expenseCashInput").value) || 0;
   const fixedTotal = fixedInputs.reduce((sum, el) => sum + (parseFloat(el.value) || 0), 0);
-  // Ist noch niemand ausgewählt, gibt es rechnerisch 0 offene Personen — als
-  // "1" behandelt, damit hier von Anfang an derselbe Satz im selben Format
-  // steht (statt eines leeren Absatzes) und die Fensterhöhe beim ersten
-  // Auswählen nicht durch neu erscheinenden Text springt.
-  const openCount = fixedInputs.length === 0 ? 1 : fixedInputs.filter((el) => !el.value).length;
   const remaining = Math.round((cash - fixedTotal) * 100) / 100;
+
+  // Niemand ausgewählt: nur der Gesamtbetrag, ohne "auf X Person à Y" — eine
+  // Aufteilung ergibt erst Sinn, sobald mindestens eine Person feststeht. Der
+  // Satz steht trotzdem von Anfang an da (statt eines leeren Absatzes), damit
+  // die Fensterhöhe beim ersten Auswählen nicht durch neu erscheinenden Text
+  // springt.
+  if (fixedInputs.length === 0) {
+    hintEl.textContent = `Rest: ${formatEuro(remaining)}.`;
+    return;
+  }
+
+  const openCount = fixedInputs.filter((el) => !el.value).length;
 
   if (remaining < -0.005) {
     hintEl.textContent = `Fixierte Beträge übersteigen den Gesamtbetrag um ${formatEuro(-remaining)}.`;
