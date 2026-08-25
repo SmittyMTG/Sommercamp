@@ -72,6 +72,17 @@ function isAdminRole(role) {
   return typeof role === "string" && role.trim().toLowerCase() === "admin";
 }
 
+// Blasse Variante einer Hex-Nutzerfarbe (für unausgewählte Chips, siehe
+// beneficiaryOptions unten) — rgba() statt CSS color-mix(), damit es auch in
+// älteren Browsern funktioniert.
+function hexToRgba(hex, alpha) {
+  const clean = (hex || "").replace("#", "");
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // Kleines Profilbild (oder "?"-Platzhalter) vor dem Namen — Admin-verwaltbare
 // Farbe (USER_COLORS, aus /api/users) sorgt zusätzlich für Wiedererkennung auf
 // einen Blick, unabhängig vom Kontext (Aufgaben, Ausgaben, Zahlungen,
@@ -2446,15 +2457,28 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
     .map((u) => `<option value="${u.id}"${u.id === payerId ? " selected" : ""}>${escapeHtml(u.username)}</option>`)
     .join("");
 
+  // Chip statt Checkbox+Text: die ganze Kachel ist der Button, blass in der
+  // Nutzerfarbe solange nicht ausgewählt, volle Farbe sobald ausgewählt —
+  // dadurch auch kompakter, es passen mehr Personen pro Zeile.
   const beneficiaryOptions = users
     .map((u) => {
       const checked = beneficiaryIds ? beneficiaryIds.has(u.id) : true;
-      return `<label class="check-card"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}>${nameTag(u.username)}</label>`;
+      const color = USER_COLORS[u.username] || "#ffd400";
+      const pale = hexToRgba(color, 0.16);
+      return `<label class="beneficiary-chip${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}><span>${escapeHtml(u.username)}</span></label>`;
     })
     .join("");
 
   return `
     <div class="form-stack">
+      <div class="form-row-2col">
+        <label>Betreff
+          <input type="text" id="expenseBetreffInput" maxlength="40" value="${escapeHtml(prefill.betreff || "")}" required>
+        </label>
+        <label>Betrag gesamt (€)
+          <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" required>
+        </label>
+      </div>
       <label>Bezahlt von
         <select id="expensePayerSelect">${payerOptions}</select>
       </label>
@@ -2464,19 +2488,18 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
           <button type="button" id="expensePresetAll" class="secondary compact">Für Allgemeinheit</button>
           <button type="button" id="expensePresetMe" class="secondary compact">Nur für mich</button>
         </div>
-        <div id="expenseBeneficiaries" class="checkbox-grid">${beneficiaryOptions}</div>
+        <div id="expenseBeneficiaries" class="chip-row">${beneficiaryOptions}</div>
       </div>
-      <label>Betrag gesamt (€)
-        <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" required>
-      </label>
       <div class="checkbox-group">
-        <div class="eyebrow">Individuelle Beträge (optional)</div>
-        <div id="expenseFixedAmounts" class="stack"></div>
-        <p id="expenseSplitHint" class="muted"></p>
+        <button type="button" id="expenseFixedAmountsToggle" class="plan-open-toggle">
+          <span>Individuelle Beträge (optional)</span>
+          <span class="chevron">▾</span>
+        </button>
+        <div id="expenseFixedAmountsPanel" class="stack hidden">
+          <div id="expenseFixedAmounts" class="stack"></div>
+          <p id="expenseSplitHint" class="muted"></p>
+        </div>
       </div>
-      <label>Betreff
-        <input type="text" id="expenseBetreffInput" maxlength="40" value="${escapeHtml(prefill.betreff || "")}" required>
-      </label>
       <label>Datum
         <input type="date" id="expenseDatumInput" value="${prefill.datum || today}" required>
       </label>
@@ -2555,12 +2578,25 @@ function updateExpenseSplitHint() {
 }
 
 // Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten Felder im DOM).
+// .beneficiary-chip zeigt die volle/blasse Farbe primär über :has(:checked)
+// (siehe style.css) — die .checked-Klasse ist nur ein Fallback für Browser
+// ohne :has()-Unterstützung, deshalb hier nach jeder Änderung mitgezogen.
+function syncBeneficiaryChipClasses() {
+  document.querySelectorAll("#expenseBeneficiaries .beneficiary-chip").forEach((chip) => {
+    const cb = chip.querySelector(".beneficiary-checkbox");
+    chip.classList.toggle("checked", !!cb && cb.checked);
+  });
+}
+
 function wireExpenseForm(users, me, entryAmounts) {
   renderExpenseFixedAmountInputs(users, entryAmounts);
 
   const checkboxes = () => document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox");
   checkboxes().forEach((cb) => {
-    cb.addEventListener("change", () => renderExpenseFixedAmountInputs(users, entryAmounts));
+    cb.addEventListener("change", () => {
+      syncBeneficiaryChipClasses();
+      renderExpenseFixedAmountInputs(users, entryAmounts);
+    });
   });
 
   document.getElementById("expenseCashInput").addEventListener("input", updateExpenseSplitHint);
@@ -2570,14 +2606,34 @@ function wireExpenseForm(users, me, entryAmounts) {
   if (presetAll) {
     presetAll.addEventListener("click", () => {
       checkboxes().forEach((cb) => (cb.checked = true));
+      syncBeneficiaryChipClasses();
       renderExpenseFixedAmountInputs(users, entryAmounts);
     });
   }
   if (presetMe && me) {
     presetMe.addEventListener("click", () => {
       checkboxes().forEach((cb) => (cb.checked = parseInt(cb.value, 10) === me.id));
+      syncBeneficiaryChipClasses();
       renderExpenseFixedAmountInputs(users, entryAmounts);
     });
+  }
+
+  // Aufklappbare "Individuelle Beträge" — standardmäßig eingeklappt, damit
+  // das Formular kompakt bleibt; beim Bearbeiten einer Ausgabe mit bereits
+  // fest eingetragenen Beträgen automatisch offen, statt den bestehenden
+  // Zustand zu verstecken.
+  const fixedToggle = document.getElementById("expenseFixedAmountsToggle");
+  const fixedPanel = document.getElementById("expenseFixedAmountsPanel");
+  if (fixedToggle && fixedPanel) {
+    fixedToggle.addEventListener("click", () => {
+      fixedPanel.classList.toggle("hidden");
+      fixedToggle.classList.toggle("collapsed", fixedPanel.classList.contains("hidden"));
+    });
+    if (Object.keys(entryAmounts || {}).length > 0) {
+      fixedPanel.classList.remove("hidden");
+    } else {
+      fixedToggle.classList.add("collapsed");
+    }
   }
 }
 

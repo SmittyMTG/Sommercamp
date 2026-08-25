@@ -61,6 +61,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .plan-open-toggle .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s}
 .plan-open-panel.collapsed .stack{display:none}
 .plan-open-panel.collapsed .chevron{transform:rotate(-90deg)}
+#expenseFixedAmountsToggle.collapsed .chevron{transform:rotate(-90deg)}
 .plan-past-panel{
   background:var(--surface);
   border:1px solid var(--line);
@@ -103,6 +104,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .bottom-nav button{border:none;background:none;color:var(--muted);font-size:11px;padding:6px 2px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bottom-nav button span{display:block;font-size:19px;margin-bottom:3px}.bottom-nav button.active{color:var(--yellow);font-weight:900}
 .screen{display:none}.screen.active{display:block}
 .form-stack{display:grid;gap:12px}.form-stack label{display:grid;gap:6px;color:var(--muted);font-size:13px;font-weight:700}.checkbox-group{display:grid;gap:6px}
+.form-row-2col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .sort-select{margin-bottom:16px}.costs-view{display:grid;gap:2px}
 .view-heading-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .balance-chip{display:flex;flex-direction:column;align-items:flex-end;text-align:right;flex-shrink:0}
@@ -130,6 +132,15 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 #newSubitemInput{flex:1;min-width:0}
 input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13;color:var(--text);border-radius:13px;padding:13px;outline:none}textarea{min-height:90px;resize:vertical}input:focus,select:focus,textarea:focus{border-color:var(--yellow)}
 .error-text{color:var(--red)!important;margin:0}.checkbox-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.check-card{display:flex!important;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px;overflow-wrap:anywhere;min-width:0}.check-card input{width:auto;flex-shrink:0}
+/* Farbige Chips statt Checkbox+Text (z. B. "Für wen?" bei Ausgaben) — blass
+   in der Nutzerfarbe solange unausgewählt, voll gesättigt sobald ausgewählt.
+   :has() ist die primäre Umschaltung, .checked (von JS gesetzt) ein Fallback
+   für Browser ohne :has()-Unterstützung. flex-wrap statt festem Grid, damit
+   kurze Namen mehr Chips pro Zeile packen. */
+.chip-row{display:flex;flex-wrap:wrap;gap:8px}
+.beneficiary-chip{position:relative;display:inline-flex;align-items:center;padding:9px 15px;border-radius:999px;font-weight:800;cursor:pointer;background:var(--chip-pale,var(--surface2));border:1px solid var(--chip-pale,var(--line));color:var(--text);transition:background .15s,border-color .15s,color .15s}
+.beneficiary-chip input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.beneficiary-chip.checked,.beneficiary-chip:has(input:checked){background:var(--chip-color,var(--yellow));border-color:var(--chip-color,var(--yellow));color:#111}
 .fixed-amount-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--text)}.fixed-amount-row input{width:90px;flex-shrink:0}
 dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 24px));color:var(--text)}dialog::backdrop{background:rgba(0,0,0,.75);-webkit-backdrop-filter:blur(5px);backdrop-filter:blur(5px)}
 .modal-card{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:18px;max-height:88vh;overflow:auto}.modal-header,.modal-actions{display:flex;justify-content:space-between;gap:10px;align-items:center}.modal-header h2{margin:3px 0 0}.modal-actions{margin-top:16px}.modal-actions button{flex:1}
