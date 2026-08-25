@@ -160,7 +160,11 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .view-heading-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 /* Label steht links NEBEN dem Betrag (eine Zeile) statt darüber — sonst steht
    der Betrag nicht auf Höhe der Überschrift daneben ("Offen"/"Alle Ausgaben"). */
-.balance-chip{display:flex;flex-direction:row;align-items:center;gap:6px;text-align:right;flex-shrink:0}
+/* line-height:1 hält die Kachel bewusst niedriger als die H3-Zeilenhöhe —
+   sonst bestimmt der Chip (statt der Überschrift) die Höhe der ganzen Zeile
+   und der Untertitel darunter beginnt tiefer als bei Überschriften ohne
+   Chip (z. B. "Erhaltene Zahlungen"). */
+.balance-chip{display:flex;flex-direction:row;align-items:center;gap:6px;text-align:right;flex-shrink:0;line-height:1}
 .balance-chip-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
 .balance-chip-value{font-size:10px;font-weight:900}
 .balance-chip-value.success{color:var(--green)}.balance-chip-value.danger{color:var(--red)}.balance-chip-value.muted{color:var(--muted)}
