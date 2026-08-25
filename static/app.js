@@ -2576,7 +2576,12 @@ function renderPager(container, { total, page, pageSize, onChange, scrollAnchor 
   container.querySelectorAll("button[data-page]:not([disabled])").forEach((btn) => {
     btn.addEventListener("click", () => {
       onChange(parseInt(btn.dataset.page, 10));
-      container.scrollIntoView({ block: scrollAnchor || "end" });
+      // scrollIntoView richtet sich nur nach dem Pager-Element selbst — durch
+      // das große padding-bottom von .app-shell (Platz für die Bottom-Nav)
+      // landet man damit nur "fast" unten, nicht am tatsächlichen Scroll-Ende.
+      // appShellEl.scrollTop direkt auf scrollHeight setzen erreicht garantiert
+      // die echte Grenze (der Browser klemmt von selbst auf das Maximum).
+      if (appShellEl) appShellEl.scrollTop = scrollAnchor === "start" ? 0 : appShellEl.scrollHeight;
     });
   });
 }
@@ -2713,7 +2718,7 @@ if (expenseJumpTopBtn) {
   expenseJumpTopBtn.addEventListener("click", () => {
     expensePage = 1;
     renderExpenseList();
-    expenseListEl.scrollIntoView({ block: "start" });
+    if (appShellEl) appShellEl.scrollTop = 0;
   });
 }
 
@@ -4092,7 +4097,7 @@ if (expenseLogJumpTopBtn) {
   expenseLogJumpTopBtn.addEventListener("click", () => {
     expenseLogPage = 1;
     renderExpenseLog();
-    expenseLogListEl.scrollIntoView({ block: "start" });
+    if (appShellEl) appShellEl.scrollTop = 0;
   });
 }
 
