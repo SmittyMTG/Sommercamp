@@ -1418,6 +1418,15 @@ def _validate_expense_payload(payload: ExpenseCreate, db: Session):
     beneficiary_ids = sorted(set(payload.schuldner_ids))
     if not beneficiary_ids:
         return JSONResponse(status_code=400, content={"error": "Mindestens eine Person auswählen"})
+    # "Nur für mich"-Ausgaben (einzige beteiligte Person = Zahler selbst) sind
+    # keine echte Schuld und sollen nicht mehr angelegt werden können — anders
+    # als eigene Käufe INNERHALB einer Ausgabe mit mehreren Beteiligten, die
+    # weiterhin normal möglich bleiben.
+    if beneficiary_ids == [payload.glaubiger_id]:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Ausgaben nur für dich selbst gibt es nicht mehr — wähle mind. eine weitere Person"},
+        )
 
     valid_ids = {u.id for u in db.query(User).filter(User.id.in_(beneficiary_ids + [payload.glaubiger_id])).all()}
     if payload.glaubiger_id not in valid_ids:

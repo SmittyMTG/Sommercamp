@@ -39,7 +39,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .hero-card{padding:24px}.mini-hero{margin-bottom:18px}
 .eyebrow{text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-size:11px;font-weight:850}
 .countdown{font-size:34px;line-height:1.05;font-weight:1000;margin:10px 0 8px}.countdown small{font-size:.4em;font-weight:800;color:var(--muted);letter-spacing:.02em;margin-right:.35em}.muted{color:var(--muted);font-size:13px}
-.section-heading{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:12px;margin:24px 0 12px}.section-heading h2{margin:2px 0 0;font-size:21px}
+.section-heading{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:12px;margin:10px 0 12px}.section-heading h2{margin:2px 0 0;font-size:21px}
 .sticky-heading{position:sticky;top:0;background:linear-gradient(var(--bg) 76%,transparent);padding:12px 0;z-index:5}
 .stack{display:grid;gap:10px}.plan-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:15px}
 .plan-card{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:12px;align-items:start}.time{font-weight:1000;color:var(--yellow);font-size:17px}.title{font-weight:900;overflow-wrap:anywhere}.details{color:var(--muted);font-size:13px;line-height:1.45;margin-top:4px;overflow-wrap:anywhere}.details a{color:var(--yellow2);font-weight:700;text-decoration:none}.details a:active{text-decoration:underline}

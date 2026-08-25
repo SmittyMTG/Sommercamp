@@ -44,6 +44,12 @@ function goToScreen(name) {
   document.querySelectorAll(".bottom-nav button").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.screen === name);
   });
+  // Schwebende "+"-Buttons liegen außerhalb von .app-shell (siehe
+  // index.html) und werden deshalb hier statt über CSS-Verschachtelung
+  // pro Screen ein-/ausgeblendet.
+  document.querySelectorAll("[data-fab-for]").forEach((btn) => {
+    btn.classList.toggle("hidden", btn.dataset.fabFor !== name);
+  });
   // Nicht mehr window.scrollTo: body scrollt bewusst nicht mehr (siehe CSS),
   // .app-shell ist jetzt der eigentliche Scroll-Container.
   // Camp-Plan startet ganz oben (nicht mehr beim heutigen Tag), damit das
@@ -2484,10 +2490,6 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
       </label>
       <div class="checkbox-group">
         <div class="eyebrow">Für wen?</div>
-        <div class="action-row">
-          <button type="button" id="expensePresetAll" class="secondary compact">Für Allgemeinheit</button>
-          <button type="button" id="expensePresetMe" class="secondary compact">Nur für mich</button>
-        </div>
         <div id="expenseBeneficiaries" class="chip-row">${beneficiaryOptions}</div>
       </div>
       <div class="checkbox-group">
@@ -2600,23 +2602,6 @@ function wireExpenseForm(users, me, entryAmounts) {
   });
 
   document.getElementById("expenseCashInput").addEventListener("input", updateExpenseSplitHint);
-
-  const presetAll = document.getElementById("expensePresetAll");
-  const presetMe = document.getElementById("expensePresetMe");
-  if (presetAll) {
-    presetAll.addEventListener("click", () => {
-      checkboxes().forEach((cb) => (cb.checked = true));
-      syncBeneficiaryChipClasses();
-      renderExpenseFixedAmountInputs(users, entryAmounts);
-    });
-  }
-  if (presetMe && me) {
-    presetMe.addEventListener("click", () => {
-      checkboxes().forEach((cb) => (cb.checked = parseInt(cb.value, 10) === me.id));
-      syncBeneficiaryChipClasses();
-      renderExpenseFixedAmountInputs(users, entryAmounts);
-    });
-  }
 
   // Aufklappbare "Individuelle Beträge" — standardmäßig eingeklappt, damit
   // das Formular kompakt bleibt; beim Bearbeiten einer Ausgabe mit bereits
@@ -2897,13 +2882,15 @@ function buildMoneyFlowSvg(settlements) {
   const rightOffset = MARGIN_Y + (plotH - right.columnHeight) / 2;
 
   // Die Knotenhöhe folgt dem tatsächlichen Betrag (min. 3px, siehe layout()),
-  // das zweizeilige Label (Name + Betrag) braucht aber ~24px Platz. Bei sehr
-  // kleinen, benachbarten Beträgen reicht der Knotenabstand allein nicht aus
-  // und die Labels würden sich überlappen — daher hier, analog zum
-  // MIN_LABEL_GAP der Bänder-Labels weiter unten, ein Mindestabstand
-  // zwischen den Label-MITTELPUNKTEN erzwungen (die farbigen Balken selbst
-  // bleiben unverändert, nur die Textposition wird bei Bedarf verschoben).
-  const NODE_LABEL_MIN_GAP = 24;
+  // das zweizeilige Label (Name + Betrag) plus Profilbild darunter braucht
+  // aber ~44px Platz. Bei sehr kleinen, benachbarten Beträgen reicht der
+  // Knotenabstand allein nicht aus und die Labels würden sich überlappen —
+  // daher hier, analog zum MIN_LABEL_GAP der Bänder-Labels weiter unten, ein
+  // Mindestabstand zwischen den Label-MITTELPUNKTEN erzwungen (die farbigen
+  // Balken selbst bleiben unverändert, nur die Textposition wird bei Bedarf
+  // verschoben).
+  const NODE_LABEL_MIN_GAP = 44;
+  const NODE_AVATAR_R = 7;
   function nodeLabelCenters(nodes, positions) {
     const centers = nodes.map((n) => positions[n.id].y + positions[n.id].h / 2);
     for (let i = 1; i < centers.length; i++) {
@@ -2915,22 +2902,42 @@ function buildMoneyFlowSvg(settlements) {
   const leftLabelCenters = nodeLabelCenters(leftNodes, left.positions);
   const rightLabelCenters = nodeLabelCenters(rightNodes, right.positions);
 
+  // Profilbild (oder "?"-Platzhalter) unter Name+Betrag — eigene <clipPath>
+  // pro Vorkommen, da dieselbe Person sowohl links (schuldet) als auch rechts
+  // (bekommt) auftauchen kann.
+  let clipIdCounter = 0;
+  function nodeAvatarSvg(username, cx, cy) {
+    clipIdCounter += 1;
+    const clipId = `mf-avatar-clip-${clipIdCounter}`;
+    const avatarPath = USER_AVATARS[username];
+    if (avatarPath) {
+      return `<clipPath id="${clipId}"><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${NODE_AVATAR_R}"/></clipPath><image href="${avatarPath}" x="${(cx - NODE_AVATAR_R).toFixed(1)}" y="${(cy - NODE_AVATAR_R).toFixed(1)}" width="${NODE_AVATAR_R * 2}" height="${NODE_AVATAR_R * 2}" clip-path="url(#${clipId})" preserveAspectRatio="xMidYMid slice"/>`;
+    }
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${NODE_AVATAR_R}" fill="var(--surface2)"/><text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${NODE_AVATAR_R}" font-weight="800" fill="var(--muted)">?</text>`;
+  }
+
   let nodesSvg = "";
   leftNodes.forEach((n, i) => {
     const pos = left.positions[n.id];
     const y = pos.y + leftOffset;
     const labelY = leftLabelCenters[i] + leftOffset;
+    const avatarCx = LABEL_W - 8;
+    const avatarCy = labelY + 9 + 6 + NODE_AVATAR_R;
     nodesSvg += `<rect x="${LABEL_W}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
     nodesSvg += `<text class="money-flow-node-label" x="${LABEL_W - 8}" y="${(labelY - 3).toFixed(1)}" text-anchor="end">${escapeHtml(n.name)}</text>`;
     nodesSvg += `<text class="money-flow-node-amount" x="${LABEL_W - 8}" y="${(labelY + 9).toFixed(1)}" text-anchor="end">${formatEuro(n.total)}</text>`;
+    nodesSvg += nodeAvatarSvg(n.name, avatarCx, avatarCy);
   });
   rightNodes.forEach((n, i) => {
     const pos = right.positions[n.id];
     const y = pos.y + rightOffset;
     const labelY = rightLabelCenters[i] + rightOffset;
+    const avatarCx = VW - LABEL_W + 8;
+    const avatarCy = labelY + 9 + 6 + NODE_AVATAR_R;
     nodesSvg += `<rect x="${rightXStart.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
     nodesSvg += `<text class="money-flow-node-label" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY - 3).toFixed(1)}" text-anchor="start">${escapeHtml(n.name)}</text>`;
     nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
+    nodesSvg += nodeAvatarSvg(n.name, avatarCx, avatarCy);
   });
 
   // y0 (Startposition je Band am linken Knoten) und y1 (am rechten Knoten)
@@ -3008,7 +3015,11 @@ function buildMoneyFlowSvg(settlements) {
     leftLabelCenters.length ? leftLabelCenters[leftLabelCenters.length - 1] + leftOffset : 0,
     rightLabelCenters.length ? rightLabelCenters[rightLabelCenters.length - 1] + rightOffset : 0
   );
-  const fullH = Math.max(plotH + 2 * MARGIN_Y, maxLabelY + MARGIN_Y, maxNodeLabelY + 9 + MARGIN_Y);
+  const fullH = Math.max(
+    plotH + 2 * MARGIN_Y,
+    maxLabelY + MARGIN_Y,
+    maxNodeLabelY + 15 + NODE_AVATAR_R * 2 + MARGIN_Y
+  );
   return `<svg viewBox="0 0 ${VW.toFixed(1)} ${fullH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">${ribbonsSvg}${nodesSvg}${labelsSvg}</svg>`;
 }
 
