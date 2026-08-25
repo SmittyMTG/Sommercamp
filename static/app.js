@@ -2270,7 +2270,7 @@ function calEventPixelSpan(event) {
   const { startMin, endMin } = calEventMinuteSpan(event);
   const gridStartMin = CAL_START_HOUR * 60;
   const top = ((startMin - gridStartMin) / 60) * CAL_HOUR_PX;
-  const height = Math.max(((endMin - startMin) / 60) * CAL_HOUR_PX, 16);
+  const height = Math.max(((endMin - startMin) / 60) * CAL_HOUR_PX, 30);
   return { top, height };
 }
 

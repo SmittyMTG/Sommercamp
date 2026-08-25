@@ -353,6 +353,6 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
    in app.js) passt Start-/Endzeit an — sichtbares Feedback während des
    Ziehens, damit klar ist, dass gerade die Zeit verändert wird. */
 .cal-time-event.resizing{outline:2px solid var(--ev-color);z-index:5}
-.cal-time-event-label{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-time-event-label{display:block;overflow:hidden;white-space:normal;word-break:break-word;line-height:1.2}
 
 @media(min-width:650px){.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
