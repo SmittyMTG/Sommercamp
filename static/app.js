@@ -2121,6 +2121,17 @@ function calEventTimeLabel(event) {
   const start = event.uhrzeit.slice(0, 5);
   return event.uhrzeit_ende ? `${start}–${event.uhrzeit_ende.slice(0, 5)}` : start;
 }
+// Für Tag-/Wochenraster: bei mehrtägigen Terminen ist an Start-/End-/
+// Zwischentagen jeweils nur eine Seite der Zeitspanne (oder gar keine)
+// sinnvoll — anders als calEventTimeLabel() fürs Monatsraster, das immer
+// den ganzen Termin in einer Zeile zusammenfasst.
+function calTimeGridEventLabel(event) {
+  const role = event._dayRole || "single";
+  if (role === "start") return `${event.uhrzeit.slice(0, 5)}→`;
+  if (role === "end") return event.uhrzeit_ende ? `→${event.uhrzeit_ende.slice(0, 5)}` : "";
+  if (role === "middle") return "";
+  return calEventTimeLabel(event);
+}
 function calEventChipHtml(event, cssClass) {
   const color = calEventColor(event);
   const pale = hexToRgba(color, 0.18);
@@ -2128,11 +2139,23 @@ function calEventChipHtml(event, cssClass) {
   return `<div class="${cssClass}" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">${time ? `${time} ` : ""}${escapeHtml(event.bezeichnung)}</div>`;
 }
 
+// Mehrtägige Termine (datum_ende gesetzt) landen unter JEDEM Tag, den sie
+// überspannen, nicht nur unter ihrem Start-Tag — jeweils als flache Kopie mit
+// zusätzlichem _dayRole ("start"/"middle"/"end"/"single"), damit Monats- und
+// Zeitraster-Ansicht wissen, wie der Termin an genau diesem Tag aussehen soll
+// (z. B. am mittleren Tag ganztägig, ohne feste Uhrzeit).
 function eventsByDateMap() {
   const map = new Map();
   lastDatedEvents.forEach((e) => {
-    if (!map.has(e.datum)) map.set(e.datum, []);
-    map.get(e.datum).push(e);
+    const endIso = e.datum_ende || e.datum;
+    let cursor = e.datum;
+    while (true) {
+      const role = cursor === e.datum && cursor === endIso ? "single" : cursor === e.datum ? "start" : cursor === endIso ? "end" : "middle";
+      if (!map.has(cursor)) map.set(cursor, []);
+      map.get(cursor).push({ ...e, _dayRole: role });
+      if (cursor === endIso) break;
+      cursor = isoDateLocal(addDays(new Date(`${cursor}T00:00:00`), 1));
+    }
   });
   map.forEach((list) => list.sort((a, b) => a.uhrzeit.localeCompare(b.uhrzeit)));
   return map;
@@ -2219,8 +2242,26 @@ function calMinutesFromMidnight(timeStr) {
 }
 
 // Ohne Endzeit wird eine kompakte Standarddauer von 30 Minuten angenommen,
-// rein fürs Zeichnen — an den gespeicherten Daten ändert das nichts.
+// rein fürs Zeichnen — an den gespeicherten Daten ändert das nichts. Bei
+// mehrtägigen Terminen (_dayRole aus eventsByDateMap) zählt an diesem
+// konkreten Tag nur der jeweilige Ausschnitt: der Start-Tag reicht von der
+// Startzeit bis zum Rasterende (geht ja noch weiter), der End-Tag vom
+// Rasteranfang bis zur Endzeit, ein Tag dazwischen ganztägig übers ganze
+// Raster.
 function calEventMinuteSpan(event) {
+  const gridStartMin = CAL_START_HOUR * 60;
+  const gridEndMin = CAL_END_HOUR * 60 + 60;
+  const role = event._dayRole || "single";
+  if (role === "start") {
+    return { startMin: calMinutesFromMidnight(event.uhrzeit), endMin: gridEndMin };
+  }
+  if (role === "end") {
+    const endMin = event.uhrzeit_ende ? calMinutesFromMidnight(event.uhrzeit_ende) : gridEndMin;
+    return { startMin: gridStartMin, endMin };
+  }
+  if (role === "middle") {
+    return { startMin: gridStartMin, endMin: gridEndMin };
+  }
   const startMin = calMinutesFromMidnight(event.uhrzeit);
   const endMin = event.uhrzeit_ende ? calMinutesFromMidnight(event.uhrzeit_ende) : startMin + 30;
   return { startMin, endMin };
@@ -2296,9 +2337,10 @@ function renderTimeGridView(days) {
       const color = calEventColor(event);
       const pale = hexToRgba(color, 0.18);
       const left = dayIndex * dayWidthPct + lane * laneWidthPct;
-      const time = calEventTimeLabel(event);
+      const time = calTimeGridEventLabel(event);
+      const role = event._dayRole || "single";
       eventsHtml += `
-        <div class="cal-time-event" data-id="${event.id}" style="--ev-color:${color};--ev-pale:${pale};top:${top}px;height:${height}px;left:${left}%;width:calc(${laneWidthPct}% - 2px)">
+        <div class="cal-time-event" data-id="${event.id}" data-day-role="${role}" style="--ev-color:${color};--ev-pale:${pale};top:${top}px;height:${height}px;left:${left}%;width:calc(${laneWidthPct}% - 2px)">
           <span class="cal-time-event-label">${time ? `${time} ` : ""}${escapeHtml(event.bezeichnung)}</span>
         </div>
       `;
@@ -2513,6 +2555,14 @@ function wireCalEventResize(container) {
     else if (rect.height - offsetY <= CAL_RESIZE_EDGE_PX) mode = "end";
     if (!mode) return; // Mitte des Blocks: normaler Klick öffnet weiterhin Bearbeiten
 
+    // Bei mehrtägigen Terminen steht nur am Start-Tag der obere Rand für die
+    // echte Startzeit (sonst ist es nur der Rasteranfang, kein "Ziehen ab
+    // Mitternacht" möglich) bzw. nur am End-Tag der untere Rand für die echte
+    // Endzeit — an einem Tag dazwischen ist gar kein Rand verschiebbar.
+    const dayRole = block.dataset.dayRole || "single";
+    if (mode === "start" && dayRole !== "start" && dayRole !== "single") return;
+    if (mode === "end" && dayRole !== "end" && dayRole !== "single") return;
+
     const event = lastDatedEvents.find((ev) => String(ev.id) === block.dataset.id);
     if (!event) return;
     const startMin = calMinutesFromMidnight(event.uhrzeit);
@@ -2695,32 +2745,38 @@ async function loadPlanList(force) {
 // Zwei Felder pro Zeile (Bezeichnung+Datum, Von+Bis) statt jedes für sich —
 // braucht deutlich weniger Scroll-Höhe im Erfassungsfenster.
 function planModalBodyHtml(prefill = {}, projects = []) {
+  const today = isoDateLocal(new Date());
+  // Uhrzeit-Felder bekommen IMMER einen vollständigen Wert (nie leer) — ein
+  // leeres <input type="time"> zeigt beim Eintippen der Stunde "--" bei den
+  // Minuten, bis auch die eingetippt wurden. Mit vorbelegtem Wert steht dort
+  // von Anfang an "00", auch wenn nur die Stunde geändert wird.
   return `
     <div class="form-stack">
       <div class="form-row-2col">
         <label>Bezeichnung
           <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" required>
         </label>
-        <label>Datum
-          <input type="date" id="planDatumInput" value="${prefill.datum || isoDateLocal(new Date())}" required>
+        <label>Location (Adresse)
+          <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
+          ${
+            prefill.location
+              ? `<a href="${mapsUrl(prefill.location)}" target="_blank" rel="noopener" class="link-button">📍 Auf Karte anzeigen</a>`
+              : ""
+          }
         </label>
       </div>
       <div class="form-row-2col">
         <label>Von
-          <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || "12:00"}" required>
+          <input type="date" id="planDatumInput" value="${prefill.datum || today}" required>
         </label>
         <label>Bis
-          <input type="time" id="planUhrzeitEndeInput" value="${prefill.uhrzeit_ende || ""}">
+          <input type="date" id="planDatumEndeInput" value="${prefill.datum_ende || prefill.datum || today}" required>
         </label>
       </div>
-      <label>Location (Adresse)
-        <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
-        ${
-          prefill.location
-            ? `<a href="${mapsUrl(prefill.location)}" target="_blank" rel="noopener" class="link-button">📍 Auf Karte anzeigen</a>`
-            : ""
-        }
-      </label>
+      <div class="form-row-2col">
+        <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || "12:00"}" aria-label="Von Uhrzeit" required>
+        <input type="time" id="planUhrzeitEndeInput" value="${prefill.uhrzeit_ende || "13:00"}" aria-label="Bis Uhrzeit">
+      </div>
       <label>Beschreibung
         <textarea id="planBeschreibungInput" placeholder="Was ist geplant?">${escapeHtml(prefill.beschreibung || "")}</textarea>
       </label>
@@ -2738,6 +2794,7 @@ function planModalBodyHtml(prefill = {}, projects = []) {
 
 async function submitPlanForm(url, method) {
   const datum = document.getElementById("planDatumInput").value;
+  const datumEnde = document.getElementById("planDatumEndeInput").value;
   const uhrzeit = document.getElementById("planUhrzeitInput").value;
   const uhrzeitEnde = document.getElementById("planUhrzeitEndeInput").value;
   const bezeichnung = document.getElementById("planBezeichnungInput").value.trim();
@@ -2753,6 +2810,7 @@ async function submitPlanForm(url, method) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       datum,
+      datum_ende: datumEnde || null,
       uhrzeit,
       uhrzeit_ende: uhrzeitEnde || null,
       bezeichnung,

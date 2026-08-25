@@ -182,6 +182,9 @@ class PlanEvent(Base):
     # Optional: ohne Datum ist der Termin "noch offen" (siehe Panel im Camp-Plan)
     # und wird erst per Schnellaktion/Bearbeiten fest auf einen Tag gelegt.
     datum = Column(Date, nullable=True)
+    # Optionales Ende eines mehrtägigen Termins (z. B. ein Ausflug über 3 Tage)
+    # — NULL heißt eintägig (Ende = datum). Muss main.py zufolge >= datum sein.
+    datum_ende = Column(Date, nullable=True)
     # Ohne Datum ergibt eine Uhrzeit keinen Sinn — daher ebenfalls optional,
     # serverseitig erzwungen: nur zusammen mit datum gesetzt (main.py).
     uhrzeit = Column(Time, nullable=True)
@@ -277,6 +280,7 @@ _ensure_column("users", "color", "TEXT")
 _ensure_column("users", "ui_state", "TEXT")
 _ensure_column("plan_events", "uhrzeit_ende", "TIME")
 _ensure_column("plan_events", "shared_project_id", "INTEGER")
+_ensure_column("plan_events", "datum_ende", "DATE")
 
 
 # Gegenstück zu _ensure_column: entfernt eine Spalte, falls sie noch von einem

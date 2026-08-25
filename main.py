@@ -116,6 +116,7 @@ class TaskCategoryCreate(BaseModel):
 
 class PlanEventCreate(BaseModel):
     datum: str | None = None
+    datum_ende: str | None = None
     uhrzeit: str | None = None
     uhrzeit_ende: str | None = None
     bezeichnung: str
@@ -983,10 +984,12 @@ def delete_project(project_id: int, request: Request, db: Session = Depends(get_
 
 def _validate_plan_payload(payload: PlanEventCreate, db: Session):
     """Validiert Termin-Felder für Anlegen UND Bearbeiten. Gibt entweder ein
-    Tupel (datum, uhrzeit, uhrzeit_ende, bezeichnung, location, beschreibung,
-    shared_project_id) oder eine fertige JSONResponse mit Fehlermeldung zurück.
-    Datum+Uhrzeit sind Pflicht — datumslose "Event-Ideen" gibt es nicht mehr,
-    jeder Termin gehört fest in den Kalender."""
+    Tupel (datum, datum_ende, uhrzeit, uhrzeit_ende, bezeichnung, location,
+    beschreibung, shared_project_id) oder eine fertige JSONResponse mit
+    Fehlermeldung zurück. Datum+Uhrzeit sind Pflicht — datumslose
+    "Event-Ideen" gibt es nicht mehr, jeder Termin gehört fest in den Kalender.
+    datum_ende ist optional (mehrtägiger Termin, z. B. ein Ausflug); ohne
+    Angabe gilt der Termin als eintägig."""
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
@@ -1004,6 +1007,15 @@ def _validate_plan_payload(payload: PlanEventCreate, db: Session):
     except ValueError:
         return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
 
+    event_date_ende = event_date
+    if payload.datum_ende:
+        try:
+            event_date_ende = date.fromisoformat(payload.datum_ende)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültiges Bis-Datum"})
+        if event_date_ende < event_date:
+            return JSONResponse(status_code=400, content={"error": "Bis-Tag darf nicht vor dem Von-Tag liegen"})
+
     if not payload.uhrzeit:
         return JSONResponse(status_code=400, content={"error": "Uhrzeit darf nicht leer sein"})
     try:
@@ -1017,7 +1029,10 @@ def _validate_plan_payload(payload: PlanEventCreate, db: Session):
             event_time_ende = dt.strptime(payload.uhrzeit_ende, "%H:%M").time()
         except ValueError:
             return JSONResponse(status_code=400, content={"error": "Ungültige Endzeit"})
-        if event_time_ende <= event_time:
+        # Die Zeit-Reihenfolge ergibt nur am selben Tag einen Sinn — bei
+        # mehrtägigen Terminen darf die Endzeit (am späteren Bis-Tag) auch
+        # "vor" der Startzeit liegen, z. B. Start Fr 18:00, Ende So 10:00.
+        if event_date_ende == event_date and event_time_ende <= event_time:
             return JSONResponse(status_code=400, content={"error": "Endzeit muss nach der Startzeit liegen"})
 
     shared_project_id = payload.shared_project_id
@@ -1027,7 +1042,16 @@ def _validate_plan_payload(payload: PlanEventCreate, db: Session):
             return JSONResponse(status_code=400, content={"error": "Projekt nicht gefunden"})
 
     beschreibung = (payload.beschreibung or "").strip() or None
-    return event_date, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id
+    return (
+        event_date,
+        event_date_ende,
+        event_time,
+        event_time_ende,
+        bezeichnung,
+        location,
+        beschreibung,
+        shared_project_id,
+    )
 
 
 def _can_access_plan_event(db: Session, user: User, event: PlanEvent) -> bool:
@@ -1044,6 +1068,7 @@ def _serialize_plan_event(e: PlanEvent) -> dict:
     return {
         "id": e.id,
         "datum": e.datum.isoformat() if e.datum else None,
+        "datum_ende": e.datum_ende.isoformat() if e.datum_ende else None,
         "uhrzeit": e.uhrzeit.strftime("%H:%M") if e.uhrzeit else None,
         "uhrzeit_ende": e.uhrzeit_ende.strftime("%H:%M") if e.uhrzeit_ende else None,
         "bezeichnung": e.bezeichnung,
@@ -1080,10 +1105,13 @@ def create_plan_event(
     validated = _validate_plan_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    event_date, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id = validated
+    event_date, event_date_ende, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id = validated
 
     new_event = PlanEvent(
         datum=event_date,
+        # eintägig (Ende == Von-Tag) bewusst als NULL gespeichert, nicht als
+        # gleiches Datum — hält Alt-Termine und einfache Fälle unverändert.
+        datum_ende=event_date_ende if event_date_ende != event_date else None,
         uhrzeit=event_time,
         uhrzeit_ende=event_time_ende,
         bezeichnung=bezeichnung,
@@ -1116,9 +1144,10 @@ def update_plan_event(
     validated = _validate_plan_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    event_date, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id = validated
+    event_date, event_date_ende, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id = validated
 
     existing.datum = event_date
+    existing.datum_ende = event_date_ende if event_date_ende != event_date else None
     existing.uhrzeit = event_time
     existing.uhrzeit_ende = event_time_ende
     existing.bezeichnung = bezeichnung
