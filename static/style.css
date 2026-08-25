@@ -255,6 +255,9 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .cal-hour-cell{background:var(--surface);border-bottom:1px solid var(--line);border-right:1px solid var(--line);min-height:40px;padding:2px;display:flex;flex-direction:column;gap:2px;cursor:pointer}
 .cal-hour-cell:active{background:var(--surface2)}
 .cal-hour-cell.today-col{background:rgba(255,212,0,.05)}
+/* Zelle, über der man gerade beim Halten+Ziehen steht (Tagesansicht) —
+   eigene Nutzerfarbe statt festem Gelb, gleiche Sprache wie Filter/FABs. */
+.cal-hour-cell.cal-drag-target{background:var(--me-color,var(--yellow));opacity:.35;outline:2px solid var(--me-color,var(--yellow));outline-offset:-2px}
 .cal-time-event{font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 
 @media(min-width:650px){.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}

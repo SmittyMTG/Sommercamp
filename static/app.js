@@ -2114,6 +2114,13 @@ function renderTimeGridView(days) {
 
   calendarContainerEl.querySelectorAll(".cal-hour-cell").forEach((cell) => {
     cell.addEventListener("click", (e) => {
+      // Nach einem abgeschlossenen Halten+Ziehen (siehe wireCalDayDragCreate)
+      // feuert oft trotzdem noch ein Klick auf dieselbe Stelle — der hat hier
+      // schon sein Modal geöffnet, ein zweites wäre falsch.
+      if (calSuppressNextClick) {
+        calSuppressNextClick = false;
+        return;
+      }
       if (!calendarIsAdmin) return;
       const chip = e.target.closest(".cal-time-event");
       if (chip) {
@@ -2124,6 +2131,94 @@ function renderTimeGridView(days) {
       const hour = String(cell.dataset.hour).padStart(2, "0");
       openAddPlanModal({ datum: cell.dataset.date, uhrzeit: `${hour}:00` });
     });
+  });
+}
+
+// Tagesansicht: Zelle gedrückt halten und dann ziehen erlaubt, die Uhrzeit
+// beim Anlegen eines Termins noch anzupassen, statt nur die angetippte volle
+// Stunde zu treffen — release übernimmt die Stunde der zuletzt berührten
+// Zelle. Delegiert auf #calendarContainer (bleibt über Re-Renders hinweg
+// bestehen, anders als das darin neu aufgebaute Grid), daher nur einmal
+// verdrahtet statt bei jedem renderTimeGridView erneut.
+const CAL_LONG_PRESS_MS = 350;
+const CAL_MOVE_CANCEL_PX = 10;
+let calDragState = null;
+let calSuppressNextClick = false;
+
+function calClearDragHighlight() {
+  document.querySelectorAll(".cal-hour-cell.cal-drag-target").forEach((el) => el.classList.remove("cal-drag-target"));
+}
+
+function calEndDrag() {
+  if (calDragState) clearTimeout(calDragState.longPressTimer);
+  calClearDragHighlight();
+  calDragState = null;
+}
+
+function wireCalDayDragCreate(container) {
+  if (!container) return;
+
+  container.addEventListener("pointerdown", (e) => {
+    if (calendarView !== "day" || !calendarIsAdmin) return;
+    const cell = e.target.closest(".cal-hour-cell");
+    if (!cell || e.target.closest(".cal-time-event")) return;
+
+    calDragState = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId, active: false };
+    calDragState.longPressTimer = setTimeout(() => {
+      if (!calDragState) return;
+      calDragState.active = true;
+      try {
+        container.setPointerCapture(calDragState.pointerId);
+      } catch (err) {
+        // Manche Browser mögen setPointerCapture in bestimmten Situationen
+        // nicht — der Drag funktioniert (per elementFromPoint) trotzdem.
+      }
+      cell.classList.add("cal-drag-target");
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, CAL_LONG_PRESS_MS);
+  });
+
+  container.addEventListener("pointermove", (e) => {
+    if (!calDragState) return;
+    if (!calDragState.active) {
+      const movedX = Math.abs(e.clientX - calDragState.startX);
+      const movedY = Math.abs(e.clientY - calDragState.startY);
+      // Deutliche Bewegung vor Ablauf des Long-Press: das ist Scrollen
+      // gemeint, kein Halten+Ziehen — sauber abbrechen statt zu blockieren.
+      if (movedX > CAL_MOVE_CANCEL_PX || movedY > CAL_MOVE_CANCEL_PX) calEndDrag();
+      return;
+    }
+    e.preventDefault();
+    const hovered = document.elementFromPoint(e.clientX, e.clientY);
+    const cell = hovered && hovered.closest(".cal-hour-cell");
+    if (cell && !cell.classList.contains("cal-drag-target")) {
+      calClearDragHighlight();
+      cell.classList.add("cal-drag-target");
+    }
+  });
+
+  function finishDrag(e) {
+    if (!calDragState) return;
+    const wasActive = calDragState.active;
+    let targetCell = null;
+    if (wasActive) {
+      const hovered = document.elementFromPoint(e.clientX, e.clientY);
+      targetCell = hovered && hovered.closest(".cal-hour-cell");
+    }
+    calEndDrag();
+    if (wasActive && targetCell) {
+      calSuppressNextClick = true;
+      const hour = String(targetCell.dataset.hour).padStart(2, "0");
+      openAddPlanModal({ datum: targetCell.dataset.date, uhrzeit: `${hour}:00` });
+    }
+  }
+  container.addEventListener("pointerup", finishDrag);
+  container.addEventListener("pointercancel", () => calEndDrag());
+  container.addEventListener("pointerleave", () => {
+    // Nur abbrechen, solange der Long-Press noch nicht aktiv ist — läuft der
+    // Drag schon, bleibt er dank pointer capture auch bei kurzem Verlassen
+    // des Grids aktiv.
+    if (calDragState && !calDragState.active) calEndDrag();
   });
 }
 
@@ -2156,6 +2251,8 @@ if (calendarViewSwitchEl) {
     });
   });
 }
+
+wireCalDayDragCreate(calendarContainerEl);
 
 const calPrevBtn = document.getElementById("calPrevBtn");
 const calNextBtn = document.getElementById("calNextBtn");
