@@ -2656,12 +2656,12 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
   if (group.entries.length > 1) {
     breakdownParts.push(`Ø ${formatEuro(group.total / group.entries.length)}`);
   }
-  const breakdown = breakdownParts.join(" · ");
+  const breakdown = breakdownParts.join(" ");
 
   card.innerHTML = `
     <div class="list-card-text no-wrap">
       <p class="list-card-title">${escapeHtml(group.betreff)}</p>
-      <p class="list-card-meta">${formatDate(group.datum)} · ${payer} · ${formatEuro(group.total)}</p>
+      <p class="list-card-meta">${formatDate(group.datum)} ${payer} ${formatEuro(group.total)}</p>
       <p class="list-card-meta">${breakdown}</p>
     </div>
     ${
