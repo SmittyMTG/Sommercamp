@@ -113,11 +113,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .costs-view h3,.costs-view .view-heading-row{margin:0 0 4px}
 .costs-view>p.muted{margin:0 0 10px}
 .view-heading-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.balance-chip{display:flex;flex-direction:column;align-items:flex-end;text-align:right;flex-shrink:0}
-/* "Alle Ausgaben": Label soll links NEBEN dem Betrag stehen (gleiche Zeile),
-   nicht darüber wie beim schmalen "Dein Saldo"-Chip — sonst steht der Betrag
-   nicht auf Höhe der "Alle Ausgaben"-Überschrift daneben. */
-.balance-chip.chip-row{flex-direction:row;align-items:center;gap:6px}
+/* Label steht links NEBEN dem Betrag (eine Zeile) statt darüber — sonst steht
+   der Betrag nicht auf Höhe der Überschrift daneben ("Offen"/"Alle Ausgaben"). */
+.balance-chip{display:flex;flex-direction:row;align-items:center;gap:6px;text-align:right;flex-shrink:0}
 .balance-chip-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
 .balance-chip-value{font-size:16px;font-weight:900}
 .balance-chip-value.success{color:var(--green)}.balance-chip-value.danger{color:var(--red)}.balance-chip-value.muted{color:var(--muted);font-size:13px}
