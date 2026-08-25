@@ -3042,7 +3042,7 @@ function buildMoneyFlowSvg(settlements) {
       <g>
         <rect x="${pillLeft.toFixed(1)}" y="${pillTop.toFixed(1)}" width="${pillWidth.toFixed(1)}" height="${NODE_PILL_H}" rx="${NODE_PILL_H / 2}" fill="${color}"/>
         ${avatarSvg}
-        <text x="${textX.toFixed(1)}" y="${(pillCenterY + 2.8).toFixed(1)}" text-anchor="start" font-size="10" font-weight="800" fill="#111">${escapeHtml(username)}</text>
+        <text x="${textX.toFixed(1)}" y="${(pillCenterY + 3.5).toFixed(1)}" text-anchor="start" font-size="10" font-weight="800" fill="#111" textLength="${nameWidth.toFixed(1)}" lengthAdjust="spacingAndGlyphs">${escapeHtml(username)}</text>
         <text class="money-flow-node-amount" x="${edgeX.toFixed(1)}" y="${amountBaselineY.toFixed(1)}" text-anchor="${amountAnchor}">${formatEuro(total)}</text>
       </g>
     `;
