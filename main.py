@@ -974,11 +974,9 @@ def delete_project(project_id: int, request: Request, db: Session = Depends(get_
 def _validate_plan_payload(payload: PlanEventCreate):
     """Validiert Termin-Felder für Anlegen UND Bearbeiten. Gibt entweder ein
     Tupel (datum, uhrzeit, bezeichnung, location, beschreibung) oder eine
-    fertige JSONResponse mit Fehlermeldung zurück. datum ist optional: ohne
-    Datum bleibt der Termin "noch offen" (siehe Panel im Camp-Plan) und wird
-    erst per Schnellaktion oder Bearbeiten fest eingeplant. Eine Uhrzeit ohne
-    Datum ergibt keinen Sinn, daher ist sie nur zusammen mit einem Datum
-    erlaubt/Pflicht — ohne Datum wird sie immer auf None erzwungen."""
+    fertige JSONResponse mit Fehlermeldung zurück. Datum+Uhrzeit sind Pflicht
+    — datumslose "Event-Ideen" gibt es nicht mehr, jeder Termin gehört fest
+    in den Kalender."""
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
@@ -989,21 +987,19 @@ def _validate_plan_payload(payload: PlanEventCreate):
     if location and len(location) > 120:
         return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
 
-    event_date = None
-    if payload.datum:
-        try:
-            event_date = date.fromisoformat(payload.datum)
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
+    if not payload.datum:
+        return JSONResponse(status_code=400, content={"error": "Datum darf nicht leer sein"})
+    try:
+        event_date = date.fromisoformat(payload.datum)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
 
-    event_time = None
-    if event_date is not None:
-        if not payload.uhrzeit:
-            return JSONResponse(status_code=400, content={"error": "Uhrzeit darf nicht leer sein"})
-        try:
-            event_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
+    if not payload.uhrzeit:
+        return JSONResponse(status_code=400, content={"error": "Uhrzeit darf nicht leer sein"})
+    try:
+        event_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
 
     beschreibung = (payload.beschreibung or "").strip() or None
     return event_date, event_time, bezeichnung, location, beschreibung

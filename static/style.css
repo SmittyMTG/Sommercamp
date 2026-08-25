@@ -39,7 +39,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .hero-card{padding:24px}.mini-hero{margin-bottom:18px}
 .eyebrow{text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-size:11px;font-weight:850}
 .countdown{font-size:34px;line-height:1.05;font-weight:1000;margin:10px 0 8px}.countdown small{font-size:.4em;font-weight:800;color:var(--muted);letter-spacing:.02em;margin-right:.35em}.muted{color:var(--muted);font-size:13px}
-.section-heading{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:12px;margin:10px 0 12px}.section-heading h2{margin:2px 0 0;font-size:21px}
+.section-heading{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:12px;margin:2px 0 12px}.section-heading h2{margin:0;font-size:23px}
 .stack{display:grid;gap:10px}
 /* Kompakte Kachel für die Event-Ideen-Liste (Termine ohne Datum) — keine
    eigene Zeit-Spalte mehr, die gibt's bei "noch offenen" Terminen nie. */
@@ -50,16 +50,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .plan-card .details a:active{text-decoration:underline}
 .plan-card.clickable{cursor:pointer;transition:background .15s}.plan-card.clickable:active{background:var(--surface)}
 .empty{border:1px dashed var(--line);border-radius:18px;padding:25px;text-align:center;color:var(--muted)}
-.plan-open-panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:4px 4px 10px;margin-bottom:14px}
-/* max-height auf ~2,5 Kacheln geschätzt (Kartenhöhe + Lücke) — Rest ist über
-   die interne Scrollbar erreichbar, das angeschnittene 3. Element signalisiert
-   "hier geht's weiter". */
-.plan-open-panel .stack{padding:0 10px;gap:8px;max-height:190px;overflow-y:auto}
-.plan-open-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;color:var(--text);font-weight:850;font-size:14px;padding:10px}
-.plan-open-toggle .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s}
-.plan-open-panel.collapsed .stack{display:none}
-.plan-open-panel.collapsed .chevron{transform:rotate(-90deg)}
-#expenseFixedAmountsToggle.collapsed .chevron{transform:rotate(-90deg)}
+.chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s;display:inline-block}
 .primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--yellow);color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
 /* Schwebender "+"-Button unten rechts (leichter mit dem Daumen erreichbar) —
    eigene Nutzerfarbe statt festem Gelb, mit .primary.fab-button für höhere
@@ -99,12 +90,12 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .category-tag-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .category-tag.project-tag{color:var(--yellow2);margin-left:8px}
 .name-tag{display:inline-block;padding:1px 7px;border-radius:999px;font-weight:800;color:#111}
-.name-with-avatar{display:inline-flex;align-items:center;gap:5px;vertical-align:middle}
+.name-with-avatar{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
 .name-avatar{border-radius:999px;object-fit:cover;flex:none}
 .name-avatar-fallback{display:flex;align-items:center;justify-content:center;background:var(--surface2);color:var(--muted);font-weight:800;flex:none}
 /* Avatar + Name als EIN geschlossenes Element: die Namensfarbe umschließt
    jetzt beides statt nur als separate Pille neben dem Avatar zu schweben. */
-.name-with-avatar.name-pill{background:var(--tag-color);border-radius:999px;padding:1px 8px 1px 1px;color:#111;font-weight:800}
+.name-with-avatar.name-pill{background:var(--tag-color);border-radius:999px;padding:1px 7px 1px 3px;color:#111;font-weight:800}
 .name-with-avatar.name-pill .name-avatar,.name-with-avatar.name-pill .name-avatar-fallback{box-shadow:0 0 0 1px rgba(0,0,0,.15)}
 .settle-btn{white-space:nowrap}
 .subitems-progress{font-weight:700}
@@ -126,10 +117,23 @@ input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13
    kurze Namen mehr Chips pro Zeile packen. */
 .chip-row{display:flex;flex-wrap:wrap;gap:8px}
 .beneficiary-chip{position:relative;display:inline-flex;align-items:center;gap:6px;padding:9px 15px;border-radius:999px;font-weight:800;cursor:pointer;background:var(--chip-pale,var(--surface2));border:1px solid var(--chip-pale,var(--line));color:var(--text);transition:background .15s,border-color .15s,color .15s}
-.beneficiary-chip.payer-chip{padding:6px 14px 6px 6px}
 .beneficiary-chip input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
 .beneficiary-chip.checked,.beneficiary-chip:has(input:checked){background:var(--chip-color,var(--yellow));border-color:var(--chip-color,var(--yellow));color:#111}
-.fixed-amount-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px;color:var(--text)}.fixed-amount-row input{width:90px;flex-shrink:0}
+/* Kompakte Betragsfelder direkt unter "Für wen?" statt eigenem Abschnitt —
+   nur Avatar + schmales Zahlenfeld, der Name steht schon auf dem Chip
+   darüber (siehe fixed-amount-chip in app.js). */
+.fixed-amount-chip-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.fixed-amount-chip{display:inline-flex;align-items:center;gap:5px;background:var(--surface2);border:1px solid var(--line);border-radius:999px;padding:4px 8px 4px 4px}
+.fixed-amount-chip input{width:56px;flex-shrink:0;border:none;background:none;padding:2px 0;text-align:right}
+/* "Bezahlt von": eingeklappter Trigger zeigt nur die Auswahl (Avatar+Name-
+   Pille wie überall sonst), Klick öffnet eine Liste aller User im gleichen
+   Look — kein natives <select>, das kann weder Farbe noch Bild anzeigen. */
+.payer-dropdown-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:8px 12px;cursor:pointer;font-size:14px}
+.payer-dropdown-trigger.open .chevron{transform:rotate(180deg)}
+.payer-dropdown-list{display:flex;flex-direction:column;gap:4px;margin-top:6px;background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:6px;max-height:220px;overflow-y:auto}
+.payer-dropdown-option{display:flex;align-items:center;background:none;border:none;padding:6px 8px;border-radius:9px;cursor:pointer;text-align:left}
+.payer-dropdown-option:active{background:var(--surface)}
+.payer-dropdown-option.selected{background:var(--surface)}
 dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 24px));color:var(--text)}dialog::backdrop{background:rgba(0,0,0,.75);-webkit-backdrop-filter:blur(5px);backdrop-filter:blur(5px)}
 .modal-card{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:18px;max-height:88vh;overflow:auto}.modal-header,.modal-actions{display:flex;justify-content:space-between;gap:10px;align-items:center}.modal-header h2{margin:3px 0 0}.modal-actions{margin-top:16px}.modal-actions button{flex:1}
 .delete-dialog .modal-card{border-left:4px solid var(--red)}.delete-dialog .warning-text{color:var(--red);margin:12px 0;font-weight:700}
@@ -193,7 +197,6 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .money-flow-card{margin-bottom:16px}
 .money-flow-diagram{width:100%}
 .money-flow-diagram svg{display:block;width:100%;height:auto}
-.money-flow-node-label{font-size:11px;font-weight:700;fill:var(--text)}
 .money-flow-node-amount{font-size:10px;fill:var(--muted)}
 .money-flow-edge-label{font-size:10px;font-weight:800;paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
 

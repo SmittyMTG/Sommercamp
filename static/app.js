@@ -37,7 +37,7 @@ function updateUserLookupMaps(users) {
 }
 
 /* ---------- Screen switching ---------- */
-function goToScreen(name) {
+function goToScreen(name, opts = {}) {
   document.querySelectorAll(".screen").forEach((el) => {
     el.classList.toggle("active", el.id === `screen-${name}`);
   });
@@ -51,11 +51,44 @@ function goToScreen(name) {
     btn.classList.toggle("hidden", btn.dataset.fabFor !== name);
   });
   // Nicht mehr window.scrollTo: body scrollt bewusst nicht mehr (siehe CSS),
-  // .app-shell ist jetzt der eigentliche Scroll-Container.
-  // Camp-Plan startet ganz oben (nicht mehr beim heutigen Tag), damit das
-  // eingeklappte "Vergangene Termine"-Panel direkt sichtbar ist.
-  const shell = document.querySelector(".app-shell");
-  if (shell) shell.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  // .app-shell ist jetzt der eigentliche Scroll-Container. preserveScroll
+  // wird nur beim Wiederherstellen der letzten Position beim Login gesetzt
+  // (siehe restoreUiState) — ein normaler Tab-Wechsel scrollt wie gewohnt
+  // nach oben.
+  if (!opts.preserveScroll) {
+    const shell = document.querySelector(".app-shell");
+    if (shell) shell.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+  }
+  saveUiState({ screen: name });
+}
+
+/* ---------- Zustand pro User merken: zuletzt offener Screen + Scrollposition
+   (localStorage, pro Username) — beim nächsten Login landet man genau wieder
+   dort, statt immer bei Kosten. ---------- */
+function uiStateKey(username) {
+  return `sommercamp_ui_state_${username}`;
+}
+function saveUiState(patch) {
+  if (!cachedMe) return;
+  let state = {};
+  try {
+    state = JSON.parse(localStorage.getItem(uiStateKey(cachedMe.username)) || "{}");
+  } catch (err) {
+    state = {};
+  }
+  Object.assign(state, patch);
+  try {
+    localStorage.setItem(uiStateKey(cachedMe.username), JSON.stringify(state));
+  } catch (err) {
+    // Privater Modus / Speicher voll — einfach ohne Persistenz weitermachen.
+  }
+}
+function loadUiState(username) {
+  try {
+    return JSON.parse(localStorage.getItem(uiStateKey(username)) || "null");
+  } catch (err) {
+    return null;
+  }
 }
 
 function initNavigation() {
@@ -1581,6 +1614,34 @@ fetchUsersAndMe().then(({ me }) => {
   }
 });
 
+// Scrollposition debounced mitschreiben (nicht bei jedem Pixel), damit beim
+// nächsten Login/Reload exakt wieder dort weitergemacht werden kann.
+const appShellEl = document.querySelector(".app-shell");
+let scrollSaveTimeout = null;
+if (appShellEl) {
+  appShellEl.addEventListener("scroll", () => {
+    clearTimeout(scrollSaveTimeout);
+    scrollSaveTimeout = setTimeout(() => saveUiState({ scroll: appShellEl.scrollTop }), 400);
+  });
+}
+
+// Letzten Screen + Scrollposition wiederherstellen — nur, wenn der Screen
+// tatsächlich existiert (z. B. nicht mehr für Nicht-Admins sichtbar, falls
+// sich das mal ändert). Verzögert gesetzt, weil der Kalender & Co. ihr DOM
+// erst nach dem eigenen (asynchronen) Laden aufbauen — sonst greift
+// scrollTop teilweise noch ins Leere.
+fetchUsersAndMe().then(({ me }) => {
+  if (!me) return;
+  const state = loadUiState(me.username);
+  if (!state || !state.screen || !document.getElementById(`screen-${state.screen}`)) return;
+  goToScreen(state.screen, { preserveScroll: true });
+  if (typeof state.scroll === "number") {
+    setTimeout(() => {
+      if (appShellEl) appShellEl.scrollTop = state.scroll;
+    }, 150);
+  }
+});
+
 /* ---------- Tasks: Sichtbarkeit (nur Felix) + Init ---------- */
 fetchUsersAndMe().then(({ me }) => {
   if (!me || me.username !== "Felix") return;
@@ -1880,43 +1941,6 @@ function formatWeekdayDate(isoDate) {
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 }
 
-/* ---------- Kalender: "Event-Ideen" (Termine ohne Datum) ---------- */
-const planOpenPanelEl = document.getElementById("planOpenPanel");
-const planOpenListEl = document.getElementById("planOpenList");
-const planOpenToggleBtn = document.getElementById("planOpenToggle");
-
-if (planOpenToggleBtn) {
-  planOpenToggleBtn.addEventListener("click", () => {
-    planOpenPanelEl.classList.toggle("collapsed");
-  });
-}
-
-function renderOpenPlanEvent(event) {
-  const card = document.createElement("div");
-  card.className = "plan-card";
-
-  const detailsParts = [];
-  if (event.location) detailsParts.push(`📍 ${escapeHtml(event.location)}`);
-  if (event.beschreibung) detailsParts.push(escapeHtml(event.beschreibung));
-
-  // Kein Datum -> auch keine Uhrzeit (siehe _validate_plan_payload) — daher
-  // hier keine Zeit-Spalte wie bei den fest eingeplanten Terminen.
-  card.innerHTML = `
-    <div>
-      <div class="title">${escapeHtml(event.bezeichnung)}</div>
-      ${detailsParts.length ? `<div class="details">${detailsParts.join(" · ")}</div>` : ""}
-    </div>
-    <div></div>
-  `;
-
-  // Panel wird ohnehin nur Admins angezeigt (siehe loadPlanList) — ganze
-  // Kachel öffnet Bearbeiten, macht den separaten 📅-Button überflüssig.
-  card.classList.add("clickable");
-  card.addEventListener("click", () => openEditPlanModal(event));
-
-  return card;
-}
-
 /* ---------- Kalender: Monats-/Wochen-/Tagesansicht ---------- */
 const calendarContainerEl = document.getElementById("calendarContainer");
 const calendarLabelEl = document.getElementById("calendarLabel");
@@ -2131,23 +2155,7 @@ async function loadPlanList(force) {
     const { me } = await fetchUsersAndMe();
     calendarIsAdmin = !!me && isAdminRole(me.role);
 
-    // Termine ohne Datum ("Event-Ideen") gehören nur ins Panel oben, nicht in
-    // den Kalender — sonst würden sie doppelt bzw. gar nicht erscheinen.
-    const openEvents = events
-      .filter((e) => !e.datum)
-      .sort((a, b) => a.bezeichnung.localeCompare(b.bezeichnung));
-    lastDatedEvents = events.filter((e) => e.datum);
-
-    if (planOpenPanelEl && planOpenListEl) {
-      if (calendarIsAdmin && openEvents.length > 0) {
-        planOpenListEl.innerHTML = "";
-        openEvents.forEach((event) => planOpenListEl.appendChild(renderOpenPlanEvent(event)));
-        planOpenPanelEl.classList.remove("hidden");
-      } else {
-        planOpenPanelEl.classList.add("hidden");
-      }
-    }
-
+    lastDatedEvents = events;
     renderCalendar();
   } catch (err) {
     calendarContainerEl.innerHTML = `<div class="empty-state"><p>Kalender konnte nicht geladen werden.</p></div>`;
@@ -2155,17 +2163,13 @@ async function loadPlanList(force) {
 }
 
 function planModalBodyHtml(prefill = {}) {
-  // Uhrzeit ohne Datum ergibt keinen Sinn ("noch offen" hat bewusst keine Zeit)
-  // — daher nur vorbefüllen, wenn auch ein Datum feststeht. wirePlanForm()
-  // hält das beim Ändern des Datums danach synchron.
-  const uhrzeitDefault = prefill.uhrzeit || (prefill.datum ? "12:00" : "");
   return `
     <div class="form-stack">
-      <label>Datum <span class="muted">(leer lassen = noch offen)</span>
-        <input type="date" id="planDatumInput" value="${prefill.datum || ""}">
+      <label>Datum
+        <input type="date" id="planDatumInput" value="${prefill.datum || isoDateLocal(new Date())}" required>
       </label>
       <label>Uhrzeit
-        <input type="time" id="planUhrzeitInput" value="${uhrzeitDefault}">
+        <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || "12:00"}" required>
       </label>
       <label>Bezeichnung
         <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" required>
@@ -2186,24 +2190,6 @@ function planModalBodyHtml(prefill = {}) {
   `;
 }
 
-// Muss NACH openModal() aufgerufen werden (braucht die frisch eingefügten
-// Felder im DOM) — hält Uhrzeit mit Datum synchron: ohne Datum ergibt eine
-// Uhrzeit keinen Sinn ("noch offen"), daher wird sie beim Leeren des Datums
-// automatisch mit geleert und beim erstmaligen Setzen eines Datums mit 12:00
-// vorbefüllt.
-function wirePlanForm() {
-  const datumInput = document.getElementById("planDatumInput");
-  const uhrzeitInput = document.getElementById("planUhrzeitInput");
-  if (!datumInput || !uhrzeitInput) return;
-  datumInput.addEventListener("input", () => {
-    if (!datumInput.value) {
-      uhrzeitInput.value = "";
-    } else if (!uhrzeitInput.value) {
-      uhrzeitInput.value = "12:00";
-    }
-  });
-}
-
 async function submitPlanForm(url, method) {
   const datum = document.getElementById("planDatumInput").value;
   const uhrzeit = document.getElementById("planUhrzeitInput").value;
@@ -2211,13 +2197,12 @@ async function submitPlanForm(url, method) {
   const location = document.getElementById("planLocationInput").value.trim();
   const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
 
-  if (!bezeichnung) return;
-  if (datum && !uhrzeit) return;
+  if (!datum || !uhrzeit || !bezeichnung) return;
 
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ datum: datum || null, uhrzeit: uhrzeit || null, bezeichnung, location, beschreibung }),
+    body: JSON.stringify({ datum, uhrzeit, bezeichnung, location, beschreibung }),
   });
 
   if (res.ok) {
@@ -2240,7 +2225,6 @@ function openAddPlanModal(prefill = {}) {
     bodyHtml: planModalBodyHtml(prefill),
     onSubmit: () => submitPlanForm("/api/plan", "POST"),
   });
-  wirePlanForm();
 }
 
 function openEditPlanModal(event) {
@@ -2251,7 +2235,6 @@ function openEditPlanModal(event) {
     bodyHtml: planModalBodyHtml(event),
     onSubmit: () => submitPlanForm(`/api/plan/${event.id}`, "PATCH"),
   });
-  wirePlanForm();
 }
 
 const addPlanButton = document.getElementById("addPlanButton");
@@ -2552,15 +2535,16 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
   const payerId = prefill.glaubigerId != null ? prefill.glaubigerId : me.id;
   const beneficiaryIds = prefill.beneficiaryIds || null;
 
-  // Chips statt <select>: ein natives <option> kann weder Farbe noch
-  // Profilbild zeigen — Radio statt Checkbox, da nur eine Person zahlt.
+  // Echtes Dropdown statt <select> (kann weder Farbe noch Profilbild zeigen)
+  // und statt dauerhaft sichtbarer Chips: eingeklappt zeigt der Trigger nur
+  // die aktuelle Auswahl, aufgeklappt kommen alle User — jeweils als
+  // Avatar+Name-Pille (nameTag()), damit's überall gleich aussieht.
+  const payerUser = users.find((u) => u.id === payerId) || users[0];
   const payerOptions = users
-    .map((u) => {
-      const checked = u.id === payerId;
-      const color = USER_COLORS[u.username] || "#ffd400";
-      const pale = hexToRgba(color, 0.16);
-      return `<label class="beneficiary-chip payer-chip${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}"><input type="radio" name="expensePayer" class="payer-radio" value="${u.id}"${checked ? " checked" : ""}>${avatarCircleHtml(u.username, 18)}<span>${escapeHtml(u.username)}</span></label>`;
-    })
+    .map(
+      (u) =>
+        `<button type="button" class="payer-dropdown-option${u.id === payerId ? " selected" : ""}" data-id="${u.id}">${nameTag(u.username)}</button>`
+    )
     .join("");
 
   // Chip statt Checkbox+Text: die ganze Kachel ist der Button, blass in der
@@ -2587,21 +2571,18 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
       </div>
       <div class="checkbox-group">
         <div class="eyebrow">Bezahlt von</div>
-        <div id="expensePayerChips" class="chip-row">${payerOptions}</div>
+        <button type="button" id="expensePayerTrigger" class="payer-dropdown-trigger">
+          ${nameTag(payerUser.username)}
+          <span class="chevron">▾</span>
+        </button>
+        <div id="expensePayerDropdown" class="payer-dropdown-list hidden">${payerOptions}</div>
+        <input type="hidden" id="expensePayerValue" value="${payerUser.id}">
       </div>
       <div class="checkbox-group">
         <div class="eyebrow">Für wen?</div>
         <div id="expenseBeneficiaries" class="chip-row">${beneficiaryOptions}</div>
-      </div>
-      <div class="checkbox-group">
-        <button type="button" id="expenseFixedAmountsToggle" class="plan-open-toggle">
-          <span>Individuelle Beträge (optional)</span>
-          <span class="chevron">▾</span>
-        </button>
-        <div id="expenseFixedAmountsPanel" class="stack hidden">
-          <div id="expenseFixedAmounts" class="stack"></div>
-          <p id="expenseSplitHint" class="muted"></p>
-        </div>
+        <div id="expenseFixedAmounts" class="fixed-amount-chip-row"></div>
+        <p id="expenseSplitHint" class="muted"></p>
       </div>
       <label>Datum
         <input type="date" id="expenseDatumInput" value="${prefill.datum || today}" required>
@@ -2627,6 +2608,9 @@ function renderExpenseFixedAmountInputs(users, entryAmounts) {
     if (el.value) existingValues[parseInt(el.dataset.uid, 10)] = el.value;
   });
 
+  // Kompakt statt eigener Abschnitt: nur Avatar + schmales Betragsfeld pro
+  // ausgewählter Person, direkt unter "Für wen?" — der Name steht ja schon
+  // auf dem jeweiligen Chip darüber, muss hier nicht wiederholt werden.
   const byId = new Map(users.map((u) => [u.id, u]));
   container.innerHTML = checkedIds
     .map((uid) => {
@@ -2635,10 +2619,10 @@ function renderExpenseFixedAmountInputs(users, entryAmounts) {
       const prefillValue =
         existingValues[uid] ?? (entryAmounts[uid] != null ? entryAmounts[uid].toFixed(2) : "");
       return `
-        <div class="fixed-amount-row">
-          <span>${nameTag(u.username)}</span>
+        <label class="fixed-amount-chip" title="${escapeHtml(u.username)}">
+          ${avatarCircleHtml(u.username, 20)}
           <input type="number" step="0.01" min="0.01" inputmode="decimal" class="expense-fixed-input" data-uid="${uid}" placeholder="auto" value="${prefillValue}">
-        </div>
+        </label>
       `;
     })
     .join("");
@@ -2691,19 +2675,38 @@ function syncBeneficiaryChipClasses() {
   });
 }
 
-function syncPayerChipClasses() {
-  document.querySelectorAll("#expensePayerChips .payer-chip").forEach((chip) => {
-    const radio = chip.querySelector(".payer-radio");
-    chip.classList.toggle("checked", !!radio && radio.checked);
+// Eingeklappt (Standard) zeigt der Trigger nur die aktuelle Auswahl als
+// Avatar+Name-Pille; Klick öffnet die Liste aller User (ebenfalls als
+// Pillen), Klick auf eine Person übernimmt sie und klappt wieder zu.
+function wirePayerDropdown(users) {
+  const trigger = document.getElementById("expensePayerTrigger");
+  const dropdown = document.getElementById("expensePayerDropdown");
+  const valueInput = document.getElementById("expensePayerValue");
+  if (!trigger || !dropdown || !valueInput) return;
+
+  trigger.addEventListener("click", () => {
+    dropdown.classList.toggle("hidden");
+    trigger.classList.toggle("open", !dropdown.classList.contains("hidden"));
+  });
+
+  dropdown.querySelectorAll(".payer-dropdown-option").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const user = users.find((u) => String(u.id) === btn.dataset.id);
+      if (!user) return;
+      valueInput.value = user.id;
+      trigger.innerHTML = `${nameTag(user.username)}<span class="chevron">▾</span>`;
+      dropdown.querySelectorAll(".payer-dropdown-option").forEach((o) => {
+        o.classList.toggle("selected", o === btn);
+      });
+      dropdown.classList.add("hidden");
+      trigger.classList.remove("open");
+    });
   });
 }
 
 function wireExpenseForm(users, me, entryAmounts) {
   renderExpenseFixedAmountInputs(users, entryAmounts);
-
-  document.querySelectorAll("#expensePayerChips .payer-radio").forEach((radio) => {
-    radio.addEventListener("change", syncPayerChipClasses);
-  });
+  wirePayerDropdown(users);
 
   const checkboxes = () => document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox");
   checkboxes().forEach((cb) => {
@@ -2714,29 +2717,11 @@ function wireExpenseForm(users, me, entryAmounts) {
   });
 
   document.getElementById("expenseCashInput").addEventListener("input", updateExpenseSplitHint);
-
-  // Aufklappbare "Individuelle Beträge" — standardmäßig eingeklappt, damit
-  // das Formular kompakt bleibt; beim Bearbeiten einer Ausgabe mit bereits
-  // fest eingetragenen Beträgen automatisch offen, statt den bestehenden
-  // Zustand zu verstecken.
-  const fixedToggle = document.getElementById("expenseFixedAmountsToggle");
-  const fixedPanel = document.getElementById("expenseFixedAmountsPanel");
-  if (fixedToggle && fixedPanel) {
-    fixedToggle.addEventListener("click", () => {
-      fixedPanel.classList.toggle("hidden");
-      fixedToggle.classList.toggle("collapsed", fixedPanel.classList.contains("hidden"));
-    });
-    if (Object.keys(entryAmounts || {}).length > 0) {
-      fixedPanel.classList.remove("hidden");
-    } else {
-      fixedToggle.classList.add("collapsed");
-    }
-  }
 }
 
 function readExpenseForm() {
-  const checkedPayer = document.querySelector('input[name="expensePayer"]:checked');
-  const glaubiger_id = checkedPayer ? parseInt(checkedPayer.value, 10) : NaN;
+  const payerValueInput = document.getElementById("expensePayerValue");
+  const glaubiger_id = payerValueInput ? parseInt(payerValueInput.value, 10) : NaN;
   const schuldner_ids = Array.from(
     document.querySelectorAll("#expenseBeneficiaries .beneficiary-checkbox:checked")
   ).map((el) => parseInt(el.value, 10));
@@ -2985,8 +2970,7 @@ function buildMoneyFlowSvg(settlements) {
   // zwischen den Label-MITTELPUNKTEN erzwungen (die farbigen Balken selbst
   // bleiben unverändert, nur die Textposition wird bei Bedarf verschoben).
   const NODE_LABEL_MIN_GAP = 24;
-  const NODE_AVATAR_R = 7;
-  const NODE_AVATAR_GAP = 4;
+  const NODE_AVATAR_R = 6;
   function nodeLabelCenters(nodes, positions) {
     const centers = nodes.map((n) => positions[n.id].y + positions[n.id].h / 2);
     for (let i = 1; i < centers.length; i++) {
@@ -2999,27 +2983,48 @@ function buildMoneyFlowSvg(settlements) {
   const rightLabelCenters = nodeLabelCenters(rightNodes, right.positions);
 
   // Grobe Breiten-Schätzung (kein echtes Text-Measuring im SVG-String
-  // verfügbar) — reicht, um das Profilbild direkt vor Name/Betrag statt mit
-  // festem Abstand zu platzieren, statt eine feste Lücke in Kauf zu nehmen.
-  function estimateLabelBlockWidth(name, amountText) {
-    const nameW = name.length * 6.8;
-    const amountW = amountText.length * 5.6;
-    return Math.max(nameW, amountW);
+  // verfügbar) — reicht, um die Pille passgenau um Avatar+Name zu legen statt
+  // eine großzügige Pauschalbreite anzunehmen.
+  function estimateNameWidth(name) {
+    return name.length * 6.6;
   }
 
-  // Profilbild (oder "?"-Platzhalter), vertikal zentriert und direkt vor
-  // Name+Betrag (auf der vom Band abgewandten Außenseite) — eigene
-  // <clipPath> pro Vorkommen, da dieselbe Person sowohl links (schuldet) als
-  // auch rechts (bekommt) auftauchen kann.
+  const NODE_PILL_PAD_LEFT = 3;
+  const NODE_PILL_PAD_RIGHT = 7;
+  const NODE_PILL_GAP = 4;
+  const NODE_PILL_H = 16;
+
+  // Avatar + Name als EIN geschlossenes, farbiges Element — genau wie
+  // nameTag() im übrigen UI (siehe .name-pill in style.css): Avatar (oder
+  // "?"-Platzhalter) immer LINKS vom Namen, beides vertikal zentriert auf
+  // der Namenszeile. "side" bestimmt nur, ob die Pille von edgeX aus nach
+  // links (Schuldner-Spalte, Balken rechts) oder rechts (Gläubiger-Spalte,
+  // Balken links) wächst — die Avatar-vor-Name-Reihenfolge bleibt immer
+  // gleich. Eigene <clipPath> pro Vorkommen, da dieselbe Person sowohl
+  // links als auch rechts auftauchen kann.
   let clipIdCounter = 0;
-  function nodeAvatarSvg(username, cx, cy) {
+  function nodeAvatarPillSvg(username, side, edgeX, centerY) {
     clipIdCounter += 1;
     const clipId = `mf-avatar-clip-${clipIdCounter}`;
+    const color = USER_COLORS[username] || "#ffd400";
+    const avatarD = NODE_AVATAR_R * 2;
+    const nameWidth = estimateNameWidth(username);
+    const pillWidth = NODE_PILL_PAD_LEFT + avatarD + NODE_PILL_GAP + nameWidth + NODE_PILL_PAD_RIGHT;
+    const pillLeft = side === "left" ? edgeX - pillWidth : edgeX;
+    const pillTop = centerY - NODE_PILL_H / 2;
+    const avatarCx = pillLeft + NODE_PILL_PAD_LEFT + NODE_AVATAR_R;
+    const textX = avatarCx + NODE_AVATAR_R + NODE_PILL_GAP;
+
     const avatarPath = USER_AVATARS[username];
-    if (avatarPath) {
-      return `<clipPath id="${clipId}"><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${NODE_AVATAR_R}"/></clipPath><image href="${avatarPath}" x="${(cx - NODE_AVATAR_R).toFixed(1)}" y="${(cy - NODE_AVATAR_R).toFixed(1)}" width="${NODE_AVATAR_R * 2}" height="${NODE_AVATAR_R * 2}" clip-path="url(#${clipId})" preserveAspectRatio="xMidYMid slice"/>`;
-    }
-    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${NODE_AVATAR_R}" fill="var(--surface2)"/><text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${NODE_AVATAR_R}" font-weight="800" fill="var(--muted)">?</text>`;
+    const avatarSvg = avatarPath
+      ? `<clipPath id="${clipId}"><circle cx="${avatarCx.toFixed(1)}" cy="${centerY.toFixed(1)}" r="${NODE_AVATAR_R}"/></clipPath><image href="${avatarPath}" x="${(avatarCx - NODE_AVATAR_R).toFixed(1)}" y="${(centerY - NODE_AVATAR_R).toFixed(1)}" width="${avatarD}" height="${avatarD}" clip-path="url(#${clipId})" preserveAspectRatio="xMidYMid slice"/>`
+      : `<circle cx="${avatarCx.toFixed(1)}" cy="${centerY.toFixed(1)}" r="${NODE_AVATAR_R}" fill="var(--surface2)"/><text x="${avatarCx.toFixed(1)}" y="${centerY.toFixed(1)}" text-anchor="middle" dominant-baseline="central" font-size="${NODE_AVATAR_R}" font-weight="800" fill="var(--muted)">?</text>`;
+
+    return `
+      <rect x="${pillLeft.toFixed(1)}" y="${pillTop.toFixed(1)}" width="${pillWidth.toFixed(1)}" height="${NODE_PILL_H}" rx="${NODE_PILL_H / 2}" fill="${color}"/>
+      ${avatarSvg}
+      <text x="${textX.toFixed(1)}" y="${(centerY + 3.5).toFixed(1)}" text-anchor="start" font-size="11" font-weight="800" fill="#111">${escapeHtml(username)}</text>
+    `;
   }
 
   let nodesSvg = "";
@@ -3027,25 +3032,19 @@ function buildMoneyFlowSvg(settlements) {
     const pos = left.positions[n.id];
     const y = pos.y + leftOffset;
     const labelY = leftLabelCenters[i] + leftOffset;
-    const blockWidth = estimateLabelBlockWidth(n.name, formatEuro(n.total));
-    const avatarCx = LABEL_W - 8 - blockWidth - NODE_AVATAR_GAP - NODE_AVATAR_R;
-    const avatarCy = labelY;
+    const nameCenterY = labelY - 6;
     nodesSvg += `<rect x="${LABEL_W}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
-    nodesSvg += `<text class="money-flow-node-label" x="${LABEL_W - 8}" y="${(labelY - 3).toFixed(1)}" text-anchor="end">${escapeHtml(n.name)}</text>`;
+    nodesSvg += nodeAvatarPillSvg(n.name, "left", LABEL_W - 8, nameCenterY);
     nodesSvg += `<text class="money-flow-node-amount" x="${LABEL_W - 8}" y="${(labelY + 9).toFixed(1)}" text-anchor="end">${formatEuro(n.total)}</text>`;
-    nodesSvg += nodeAvatarSvg(n.name, avatarCx, avatarCy);
   });
   rightNodes.forEach((n, i) => {
     const pos = right.positions[n.id];
     const y = pos.y + rightOffset;
     const labelY = rightLabelCenters[i] + rightOffset;
-    const blockWidth = estimateLabelBlockWidth(n.name, formatEuro(n.total));
-    const avatarCx = VW - LABEL_W + 8 + blockWidth + NODE_AVATAR_GAP + NODE_AVATAR_R;
-    const avatarCy = labelY;
+    const nameCenterY = labelY - 6;
     nodesSvg += `<rect x="${rightXStart.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${pos.h.toFixed(1)}" rx="2" fill="${colorOf[n.id]}"/>`;
-    nodesSvg += `<text class="money-flow-node-label" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY - 3).toFixed(1)}" text-anchor="start">${escapeHtml(n.name)}</text>`;
+    nodesSvg += nodeAvatarPillSvg(n.name, "right", VW - LABEL_W + 8, nameCenterY);
     nodesSvg += `<text class="money-flow-node-amount" x="${(VW - LABEL_W + 8).toFixed(1)}" y="${(labelY + 9).toFixed(1)}" text-anchor="start">${formatEuro(n.total)}</text>`;
-    nodesSvg += nodeAvatarSvg(n.name, avatarCx, avatarCy);
   });
 
   // y0 (Startposition je Band am linken Knoten) und y1 (am rechten Knoten)
