@@ -349,6 +349,10 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
    reagieren wieder auf Klicks (Bearbeiten). */
 .cal-events-layer{grid-column:2/-1;grid-row:2/-1;position:relative;pointer-events:none}
 .cal-time-event{position:absolute;box-sizing:border-box;pointer-events:auto;font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;cursor:pointer}
+/* Gedrückt halten + ziehen am oberen/unteren Rand (siehe wireCalEventResize
+   in app.js) passt Start-/Endzeit an — sichtbares Feedback während des
+   Ziehens, damit klar ist, dass gerade die Zeit verändert wird. */
+.cal-time-event.resizing{outline:2px solid var(--ev-color);z-index:5}
 .cal-time-event-label{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 @media(min-width:650px){.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}

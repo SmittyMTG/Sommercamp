@@ -2314,6 +2314,13 @@ function renderTimeGridView(days) {
 
   calendarContainerEl.querySelectorAll(".cal-events-layer .cal-time-event").forEach((block) => {
     block.addEventListener("click", () => {
+      // Nach einem abgeschlossenen Rand-Ziehen (siehe wireCalEventResize)
+      // feuert oft trotzdem noch ein Klick auf dieselbe Stelle — der hat die
+      // neue Zeit schon gespeichert, ein zusätzliches Bearbeiten-Modal wäre falsch.
+      if (calSuppressNextClick) {
+        calSuppressNextClick = false;
+        return;
+      }
       if (!calendarIsAdmin) return;
       const event = lastDatedEvents.find((ev) => String(ev.id) === block.dataset.id);
       if (event) openEditPlanModal(event);
@@ -2470,6 +2477,146 @@ function wireCalDayDragCreate(container) {
   });
 }
 
+function calFormatMinutes(totalMin) {
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// Gedrückt halten am oberen/unteren Rand eines Termin-Blocks (Tag-/Wochen-
+// ansicht) und ziehen passt Start- bzw. Endzeit an — gleiches Halten+Ziehen-
+// Prinzip wie wireCalDayDragCreate (Long-Press erst, dann per Bewegung
+// abbrechbar, damit normales Scrollen nicht versehentlich einen Termin
+// verschiebt). Reine PATCH-Anfrage am Ende, kein eigenes Modal nötig.
+const CAL_RESIZE_EDGE_PX = 10;
+let calResizeState = null;
+
+function calEndResize() {
+  if (calResizeState) {
+    clearTimeout(calResizeState.longPressTimer);
+    calResizeState.block.classList.remove("resizing");
+  }
+  calResizeState = null;
+}
+
+function wireCalEventResize(container) {
+  if (!container) return;
+
+  container.addEventListener("pointerdown", (e) => {
+    if ((calendarView !== "day" && calendarView !== "week") || !calendarIsAdmin) return;
+    const block = e.target.closest(".cal-time-event");
+    if (!block) return;
+    const rect = block.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    let mode = null;
+    if (offsetY <= CAL_RESIZE_EDGE_PX) mode = "start";
+    else if (rect.height - offsetY <= CAL_RESIZE_EDGE_PX) mode = "end";
+    if (!mode) return; // Mitte des Blocks: normaler Klick öffnet weiterhin Bearbeiten
+
+    const event = lastDatedEvents.find((ev) => String(ev.id) === block.dataset.id);
+    if (!event) return;
+    const startMin = calMinutesFromMidnight(event.uhrzeit);
+    const endMin = event.uhrzeit_ende ? calMinutesFromMidnight(event.uhrzeit_ende) : startMin + 30;
+
+    calResizeState = {
+      mode,
+      block,
+      event,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+      origStartMin: startMin,
+      origEndMin: endMin,
+      currentStartMin: startMin,
+      currentEndMin: endMin,
+    };
+    calResizeState.longPressTimer = setTimeout(() => {
+      if (!calResizeState) return;
+      calResizeState.active = true;
+      try {
+        container.setPointerCapture(calResizeState.pointerId);
+      } catch (err) {
+        // s. wireCalDayDragCreate — funktioniert per elementFromPoint auch ohne.
+      }
+      block.classList.add("resizing");
+      if (navigator.vibrate) navigator.vibrate(15);
+    }, CAL_LONG_PRESS_MS);
+  });
+
+  container.addEventListener("pointermove", (e) => {
+    if (!calResizeState) return;
+    if (!calResizeState.active) {
+      const movedX = Math.abs(e.clientX - calResizeState.startX);
+      const movedY = Math.abs(e.clientY - calResizeState.startY);
+      if (movedX > CAL_MOVE_CANCEL_PX || movedY > CAL_MOVE_CANCEL_PX) calEndResize();
+      return;
+    }
+    e.preventDefault();
+    const deltaMin = Math.round(((e.clientY - calResizeState.startY) / CAL_HOUR_PX) * 60 / 30) * 30;
+    const gridMin = CAL_START_HOUR * 60;
+    // 23:30 statt 24:00 als Obergrenze — "24:00" ist keine gültige Uhrzeit
+    // fürs Backend (dt.strptime erwartet 0–23 als Stunde).
+    const gridMax = CAL_END_HOUR * 60 + 30;
+
+    if (calResizeState.mode === "start") {
+      calResizeState.currentStartMin = Math.min(
+        Math.max(calResizeState.origStartMin + deltaMin, gridMin),
+        calResizeState.currentEndMin - 30
+      );
+    } else {
+      calResizeState.currentEndMin = Math.max(
+        Math.min(calResizeState.origEndMin + deltaMin, gridMax),
+        calResizeState.currentStartMin + 30
+      );
+    }
+
+    const top = ((calResizeState.currentStartMin - gridMin) / 60) * CAL_HOUR_PX;
+    const height = Math.max(((calResizeState.currentEndMin - calResizeState.currentStartMin) / 60) * CAL_HOUR_PX, 16);
+    calResizeState.block.style.top = `${top}px`;
+    calResizeState.block.style.height = `${height}px`;
+    const labelEl = calResizeState.block.querySelector(".cal-time-event-label");
+    if (labelEl) {
+      const timeStr = `${calFormatMinutes(calResizeState.currentStartMin)}–${calFormatMinutes(calResizeState.currentEndMin)}`;
+      labelEl.textContent = `${timeStr} ${calResizeState.event.bezeichnung}`;
+    }
+  });
+
+  function finishResize() {
+    if (!calResizeState) return;
+    const state = calResizeState;
+    calEndResize();
+    if (!state.active) return;
+    calSuppressNextClick = true;
+    if (state.currentStartMin === state.origStartMin && state.currentEndMin === state.origEndMin) return;
+
+    fetch(`/api/plan/${state.event.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        datum: state.event.datum,
+        uhrzeit: calFormatMinutes(state.currentStartMin),
+        uhrzeit_ende: calFormatMinutes(state.currentEndMin),
+        bezeichnung: state.event.bezeichnung,
+        location: state.event.location,
+        beschreibung: state.event.beschreibung,
+        shared_project_id: state.event.shared_project_id,
+      }),
+    }).then((res) => {
+      // Bei Erfolg bringt loadPlanList(true) die frischen, korrekt validierten
+      // Daten; bei einem Fehler (z. B. Kollision mit Rundung) rendert
+      // renderCalendar() den Block anhand der alten, unveränderten Daten neu.
+      if (res.ok) loadPlanList(true);
+      else renderCalendar();
+    });
+  }
+  container.addEventListener("pointerup", finishResize);
+  container.addEventListener("pointercancel", () => calEndResize());
+  container.addEventListener("pointerleave", () => {
+    if (calResizeState && !calResizeState.active) calEndResize();
+  });
+}
+
 function updateCalendarViewSwitchUI() {
   if (!calendarViewSwitchEl) return;
   calendarViewSwitchEl.querySelectorAll(".filter").forEach((btn) => {
@@ -2501,6 +2648,7 @@ if (calendarViewSwitchEl) {
 }
 
 wireCalDayDragCreate(calendarContainerEl);
+wireCalEventResize(calendarContainerEl);
 
 const calPrevBtn = document.getElementById("calPrevBtn");
 const calNextBtn = document.getElementById("calNextBtn");
