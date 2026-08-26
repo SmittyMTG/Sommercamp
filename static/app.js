@@ -1767,10 +1767,18 @@ function renderTimeGridView(days) {
     });
   });
 
+  // grid-row:2/-1 wäre naheliegend, aber ".cal-time-grid" deklariert kein
+  // grid-template-rows (nur -columns) — ohne EXPLIZITES Zeilenraster bezieht
+  // sich "-1" auf das Ende des expliziten (hier: leeren) Rasters, nicht auf
+  // die zuletzt durch die Stundenzeilen erzeugte implizite Zeile. Die Ebene
+  // ist dadurch nur so hoch wie Zeile 1 (Kopfzeile) statt bis ganz nach unten
+  // zu reichen — Termine landeten dadurch sichtbar zu weit oben. Deshalb hier
+  // die tatsächliche letzte Zeilenlinie explizit ausrechnen statt "-1".
+  const lastRowLine = CAL_END_HOUR - CAL_START_HOUR + 1 + 2;
   calendarContainerEl.innerHTML = `
     <div class="cal-time-grid" style="--cal-cols:${days.length}">
       ${headerHtml}${rowsHtml}
-      <div class="cal-events-layer">${eventsHtml}</div>
+      <div class="cal-events-layer" style="grid-row:2/${lastRowLine}">${eventsHtml}</div>
     </div>
   `;
 

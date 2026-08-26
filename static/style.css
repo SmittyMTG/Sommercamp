@@ -346,7 +346,10 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
    pointer-events:none auf der Hülle lässt Klicks NEBEN einem Termin weiter
    zur Zelle darunter durch (Termin anlegen); nur die Termin-Blöcke selbst
    reagieren wieder auf Klicks (Bearbeiten). */
-.cal-events-layer{grid-column:2/-1;grid-row:2/-1;position:relative;pointer-events:none}
+/* grid-row kommt bewusst nur als Inline-Style aus app.js (siehe dort) —
+   ".cal-time-grid" hat kein grid-template-rows, "-1" würde sich hier auf das
+   Ende des (leeren) expliziten statt des impliziten Rasters beziehen. */
+.cal-events-layer{grid-column:2/-1;position:relative;pointer-events:none}
 .cal-time-event{position:absolute;box-sizing:border-box;pointer-events:auto;font-size:10px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;cursor:pointer}
 /* Gedrückt halten + ziehen am oberen/unteren Rand (siehe wireCalEventResize
    in app.js) passt Start-/Endzeit an — sichtbares Feedback während des
