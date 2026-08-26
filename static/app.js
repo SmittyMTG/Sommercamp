@@ -238,12 +238,31 @@ if (confirmDialogEl) {
 // Schnappschuss aller Feldwerte im Modal, um beim Schließen zu erkennen, ob
 // sich seit dem Öffnen etwas geändert hat (siehe hasUnsavedModalChanges).
 function snapshotModalFormState() {
-  // [data-live-save] Felder (z. B. Teilaufgaben-Checkboxen) speichern sofort
-  // eigenständig beim Ändern — sollen daher nicht als "ungespeicherte Eingabe"
-  // des Hauptformulars zählen und keinen unnötigen Verwerfen-Dialog auslösen.
   return Array.from(modalBody.querySelectorAll("input, textarea, select"))
-    .filter((el) => !el.closest("[data-live-save]"))
-    .map((el) => (el.type === "checkbox" || el.type === "radio" ? (el.checked ? "1" : "0") : el.value))
+    .filter((el) => {
+      // [data-live-save] Felder (z. B. Teilaufgaben-Checkboxen) speichern sofort
+      // eigenständig beim Ändern — sollen daher nicht als "ungespeicherte
+      // Eingabe" des Hauptformulars zählen und keinen unnötigen Verwerfen-
+      // Dialog auslösen. Deaktivierte Felder (reine Ansehen-Ansicht, siehe
+      // z. B. openEditExpenseModal) kann die Person ohnehin nicht ändern —
+      // raus aus dem Vergleich, sonst könnte irgendein unabhängiger DOM-
+      // Nebeneffekt fälschlich "geändert" auslösen, obwohl gar nichts
+      // editierbar war.
+      if (el.closest("[data-live-save]")) return false;
+      if (el.disabled) return false;
+      return true;
+    })
+    .map((el) => {
+      if (el.type === "checkbox" || el.type === "radio") return el.checked ? "1" : "0";
+      // Numerisch statt als Rohstring vergleichen — verhindert einen
+      // Falsch-Positiv-Verwerfen-Dialog nur wegen Formatierungs-Drift
+      // (z. B. Browser-Autofill normalisiert "80" zu "80.00").
+      if (el.type === "number") {
+        const n = parseFloat(el.value);
+        return Number.isNaN(n) ? "" : n;
+      }
+      return el.value;
+    })
     .join("|");
 }
 
@@ -259,6 +278,9 @@ function openModal({ eyebrow, title, bodyHtml, onSubmit, submitLabel, danger }) 
 
   modal.classList.toggle("delete-dialog", !!danger);
   modalSubmit.classList.toggle("danger", !!danger);
+  // Standardmäßig sichtbar — openEditExpenseModal blendet ihn für die reine
+  // Ansehen-Ansicht (fremde Ausgabe) danach gezielt wieder aus.
+  modalSubmit.classList.remove("hidden");
 
   modal.showModal();
   const firstInput = modalBody.querySelector("input, textarea, select");
@@ -2508,6 +2530,26 @@ async function loadPlanList(force) {
 // braucht deutlich weniger Scroll-Höhe im Erfassungsfenster.
 function planModalBodyHtml(prefill = {}, projects = []) {
   const today = isoDateLocal(new Date());
+  const startDateStr = prefill.datum || today;
+  const startTimeStr = prefill.uhrzeit || "12:00";
+  // Ohne explizite Endzeit (z. B. Klick auf eine Stunden-Zelle ohne Ziehen)
+  // eine Stunde nach der Startzeit statt eines fest "13:00" — sonst könnte
+  // die vorausgefüllte Endzeit schon bei der Erstellung vor der Startzeit
+  // liegen (z. B. Start 20:00 → früher immer "13:00"). Rutscht die Stunde
+  // dabei über Mitternacht, wandert das Bis-Datum automatisch einen Tag
+  // weiter.
+  let defaultEndTime = "13:00";
+  let endCrossesMidnight = false;
+  if (!prefill.uhrzeit_ende) {
+    const [h, m] = startTimeStr.split(":").map(Number);
+    let endTotalMin = h * 60 + (m || 0) + 60;
+    if (endTotalMin >= 24 * 60) {
+      endTotalMin -= 24 * 60;
+      endCrossesMidnight = true;
+    }
+    defaultEndTime = calFormatMinutes(endTotalMin);
+  }
+  const endDateDefault = endCrossesMidnight ? isoDateLocal(addDays(new Date(`${startDateStr}T00:00:00`), 1)) : startDateStr;
   // Uhrzeit-Felder bekommen IMMER einen vollständigen Wert (nie leer) — ein
   // leeres <input type="time"> zeigt beim Eintippen der Stunde "--" bei den
   // Minuten, bis auch die eingetippt wurden. Mit vorbelegtem Wert steht dort
@@ -2529,15 +2571,15 @@ function planModalBodyHtml(prefill = {}, projects = []) {
       </div>
       <div class="form-row-2col">
         <label>Von
-          <input type="date" id="planDatumInput" value="${prefill.datum || today}" required>
+          <input type="date" id="planDatumInput" value="${startDateStr}" required>
         </label>
         <label>Bis
-          <input type="date" id="planDatumEndeInput" value="${prefill.datum_ende || prefill.datum || today}" required>
+          <input type="date" id="planDatumEndeInput" value="${prefill.datum_ende || endDateDefault}" required>
         </label>
       </div>
       <div class="form-row-2col">
-        <input type="time" id="planUhrzeitInput" value="${prefill.uhrzeit || "12:00"}" aria-label="Von Uhrzeit" required>
-        <input type="time" id="planUhrzeitEndeInput" value="${prefill.uhrzeit_ende || "13:00"}" aria-label="Bis Uhrzeit">
+        <input type="time" id="planUhrzeitInput" value="${startTimeStr}" aria-label="Von Uhrzeit" required>
+        <input type="time" id="planUhrzeitEndeInput" value="${prefill.uhrzeit_ende || defaultEndTime}" aria-label="Bis Uhrzeit">
       </div>
       <label>Beschreibung
         <textarea id="planBeschreibungInput" placeholder="Was ist geplant?">${escapeHtml(prefill.beschreibung || "")}</textarea>
@@ -2611,6 +2653,34 @@ async function deletePlanEvent(eventId) {
   }
 }
 
+// Ändert man die Startzeit nachträglich im offenen Formular (nicht nur beim
+// ersten Befüllen, siehe planModalBodyHtml), zieht die Endzeit automatisch
+// mit — wieder eine Stunde später, mit Übertrag aufs Bis-Datum bei
+// Mitternacht. Verhindert, dass die Endzeit nach einer manuellen Änderung
+// der Startzeit vor ihr liegt.
+function wirePlanEndTimeAutoAdjust() {
+  const startTimeInput = document.getElementById("planUhrzeitInput");
+  const startDateInput = document.getElementById("planDatumInput");
+  const endTimeInput = document.getElementById("planUhrzeitEndeInput");
+  const endDateInput = document.getElementById("planDatumEndeInput");
+  if (!startTimeInput || !endTimeInput) return;
+
+  startTimeInput.addEventListener("change", () => {
+    const [h, m] = startTimeInput.value.split(":").map(Number);
+    if (Number.isNaN(h)) return;
+    let endTotalMin = h * 60 + (m || 0) + 60;
+    let dayOffset = 0;
+    if (endTotalMin >= 24 * 60) {
+      endTotalMin -= 24 * 60;
+      dayOffset = 1;
+    }
+    endTimeInput.value = calFormatMinutes(endTotalMin);
+    if (startDateInput && endDateInput && startDateInput.value) {
+      endDateInput.value = isoDateLocal(addDays(new Date(`${startDateInput.value}T00:00:00`), dayOffset));
+    }
+  });
+}
+
 async function openAddPlanModal(prefill = {}) {
   const projects = await fetchProjects();
   openModal({
@@ -2619,6 +2689,7 @@ async function openAddPlanModal(prefill = {}) {
     bodyHtml: planModalBodyHtml(prefill, projects),
     onSubmit: () => submitPlanForm("/api/plan", "POST"),
   });
+  wirePlanEndTimeAutoAdjust();
 }
 
 async function openEditPlanModal(event) {
@@ -2630,6 +2701,7 @@ async function openEditPlanModal(event) {
     bodyHtml: planModalBodyHtml(event, projects),
     onSubmit: () => submitPlanForm(`/api/plan/${event.id}`, "PATCH"),
   });
+  wirePlanEndTimeAutoAdjust();
   const deleteBtn = document.getElementById("planDeleteBtn");
   if (deleteBtn) deleteBtn.addEventListener("click", () => deletePlanEvent(event.id));
 }
@@ -2746,9 +2818,10 @@ function groupExpenses(expenses) {
 
 function renderExpenseGroup(group, isAdmin, myUsername) {
   const card = document.createElement("div");
-  card.className = "list-card";
-  const canManage = !!group.batchId && (isAdmin || (!!myUsername && group.createdBy === myUsername));
-  if (canManage) card.classList.add("clickable");
+  card.className = "list-card clickable";
+  // Ansehen darf jede:r, bearbeiten/löschen nur Admins oder wer die Ausgabe
+  // selbst angelegt hat (siehe openEditExpenseModal für den Read-only-Modus).
+  const canEdit = !!group.batchId && (isAdmin || (!!myUsername && group.createdBy === myUsername));
   // Namen bleiben hier bewusst unhighlighted — die Randfarbe des Zahlers an
   // der ganzen Kachel reicht als visuelle Zuordnung.
   const payerNames = Array.from(group.glaeubiger);
@@ -2778,11 +2851,6 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
   if (focusEntry) {
     breakdownParts.push(`${escapeHtml(focusEntry.schuldner)}: ${formatEuro(focusEntry.cash)}`);
   }
-  // Durchschnitt nur bei mehr als einer Person sinnvoll — bei nur einer
-  // Person wäre er ohnehin identisch zu deren Anteil.
-  if (group.entries.length > 1) {
-    breakdownParts.push(`Ø ${formatEuro(group.total / group.entries.length)}`);
-  }
   const breakdown = breakdownParts.join(" ");
 
   card.innerHTML = `
@@ -2792,7 +2860,7 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
       <p class="list-card-meta">${breakdown}</p>
     </div>
     ${
-      canManage
+      canEdit
         ? `<div class="list-card-actions">
              <button type="button" class="delete-btn" aria-label="Löschen">${TRASH_ICON_SVG}</button>
            </div>`
@@ -2800,12 +2868,12 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
     }
   `;
 
-  if (canManage) {
-    // Ganze Kachel öffnet Bearbeiten (macht den separaten Stift-Button überflüssig) —
-    // nur für Admins oder den:die ursprüngliche:n Ersteller:in sichtbar. Löschen
-    // stoppt die Propagation, damit ein Klick darauf nicht zusätzlich den
-    // Bearbeiten-Dialog öffnet.
-    card.addEventListener("click", () => openEditExpenseModal(group));
+  // Ganze Kachel öffnet die Detailansicht — jede:r darf ansehen, nur Admins
+  // oder der:die ursprüngliche Ersteller:in bekommen darin bearbeitbare
+  // Felder (siehe openEditExpenseModal). Löschen stoppt die Propagation,
+  // damit ein Klick darauf nicht zusätzlich den Dialog öffnet.
+  card.addEventListener("click", () => openEditExpenseModal(group, canEdit));
+  if (canEdit) {
     card.querySelector(".delete-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       openModal({
@@ -3031,11 +3099,16 @@ function updateExpensesHeroCard() {
   `;
 }
 
-function expenseModalBodyHtml(users, me, prefill = {}) {
+function expenseModalBodyHtml(users, me, prefill = {}, readOnly = false) {
   const today = new Date().toISOString().slice(0, 10);
   const payerId = prefill.glaubigerId != null ? prefill.glaubigerId : me.id;
   const beneficiaryIds = prefill.beneficiaryIds || null;
   const entryAmounts = prefill.entryAmounts || {};
+  // Ansehen fremder Ausgaben: alle Felder deaktivieren statt ein eigenes,
+  // separates Nur-Lesen-Markup zu bauen — sieht identisch aus, lässt sich
+  // aber nicht abschicken (siehe openEditExpenseModal, blendet zusätzlich
+  // den Speichern-Button aus).
+  const ro = readOnly ? " disabled" : "";
 
   // Echtes Dropdown statt <select> (kann weder Farbe noch Profilbild zeigen)
   // und statt dauerhaft sichtbarer Chips: eingeklappt zeigt der Trigger nur
@@ -3066,10 +3139,10 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
       return `
         <div class="beneficiary-slot${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}">
           <label class="beneficiary-chip${checked ? " checked" : ""}">
-            <input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}>
+            <input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}${ro}>
             <span>${escapeHtml(u.username)}</span>
           </label>
-          <input type="number" step="0.01" min="0.01" inputmode="decimal" class="expense-fixed-input" data-uid="${u.id}" placeholder="auto" value="${prefillAmount}">
+          <input type="number" step="0.01" min="0.01" inputmode="decimal" class="expense-fixed-input" data-uid="${u.id}" placeholder="auto" value="${prefillAmount}"${ro}>
         </div>
       `;
     })
@@ -3079,16 +3152,16 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
     <div class="form-stack">
       <div class="form-row-2col">
         <label>Betreff
-          <input type="text" id="expenseBetreffInput" maxlength="40" value="${escapeHtml(prefill.betreff || "")}" required>
+          <input type="text" id="expenseBetreffInput" maxlength="40" value="${escapeHtml(prefill.betreff || "")}" required${ro}>
         </label>
         <label>Betrag gesamt (€)
-          <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" required>
+          <input type="number" id="expenseCashInput" step="0.01" min="0.01" inputmode="decimal" value="${prefill.total != null ? prefill.total.toFixed(2) : ""}" required${ro}>
         </label>
       </div>
       <div class="checkbox-group">
         <div class="eyebrow">Bezahlt von</div>
         <div class="payer-dropdown-wrap">
-          <button type="button" id="expensePayerTrigger" class="payer-dropdown-trigger">
+          <button type="button" id="expensePayerTrigger" class="payer-dropdown-trigger"${ro}>
             ${nameTag(payerUser.username)}
             <span class="chevron">▾</span>
           </button>
@@ -3102,7 +3175,7 @@ function expenseModalBodyHtml(users, me, prefill = {}) {
         <p id="expenseSplitHint" class="muted"></p>
       </div>
       <label>Datum
-        <input type="date" id="expenseDatumInput" value="${prefill.datum || today}" required>
+        <input type="date" id="expenseDatumInput" value="${prefill.datum || today}" required${ro}>
       </label>
     </div>
   `;
@@ -3270,7 +3343,7 @@ async function openAddExpenseModal() {
   wireExpenseForm(users);
 }
 
-async function openEditExpenseModal(group) {
+async function openEditExpenseModal(group, canEdit = true) {
   const { users, me } = await fetchUsersAndMe();
   if (!me || users.length === 0) return;
 
@@ -3286,17 +3359,26 @@ async function openEditExpenseModal(group) {
 
   openModal({
     eyebrow: "Kosten",
-    title: "Ausgabe bearbeiten",
+    title: canEdit ? "Ausgabe bearbeiten" : "Ausgabe ansehen",
     submitLabel: "Speichern",
-    bodyHtml: expenseModalBodyHtml(users, me, {
-      glaubigerId: group.glaubigerId,
-      beneficiaryIds: group.beneficiaryIds,
-      total: group.total,
-      betreff: group.betreff,
-      datum: group.datum,
-      entryAmounts,
-    }),
+    bodyHtml: expenseModalBodyHtml(
+      users,
+      me,
+      {
+        glaubigerId: group.glaubigerId,
+        beneficiaryIds: group.beneficiaryIds,
+        total: group.total,
+        betreff: group.betreff,
+        datum: group.datum,
+        entryAmounts,
+      },
+      !canEdit
+    ),
     onSubmit: async () => {
+      if (!canEdit) {
+        closeModal();
+        return;
+      }
       const form = readExpenseForm();
       if (!form) return;
 
@@ -3313,6 +3395,12 @@ async function openEditExpenseModal(group) {
     },
   });
 
+  // Nur zum Ansehen (fremde Ausgabe): keine Speichern-Aktion anbieten — die
+  // Felder selbst sind schon über expenseModalBodyHtml(..., readOnly) deaktiviert.
+  // wireExpenseForm bleibt trotzdem sinnvoll (befüllt z. B. den Rest-Hinweis
+  // einmalig) — die angehängten Interaktions-Listener greifen an deaktivierten
+  // Feldern ohnehin nicht.
+  modalSubmit.classList.toggle("hidden", !canEdit);
   wireExpenseForm(users);
 }
 
