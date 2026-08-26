@@ -81,44 +81,6 @@ class TaskCategory(Base):
     bezeichnung = Column(String(16), nullable=False, unique=True)
 
 
-# Aufgaben: geteilte Todo-Liste — jeder darf anlegen, bearbeiten, abhaken und
-# löschen. Mehrere Personen können gemeinsam zugewiesen werden (daher die
-# separate Zuordnungstabelle statt einer direkten Spalte). Keine Zuweisung
-# heißt: gilt für alle.
-class Task(Base):
-    __tablename__ = "tasks"
-    id = Column(Integer, primary_key=True, index=True)
-    titel = Column(String(80), nullable=False)
-    beschreibung = Column(Text, nullable=True)
-    done = Column(Boolean, nullable=False, default=False)
-    deadline = Column(DateTime, nullable=True)
-    category_id = Column(Integer, ForeignKey("task_categories.id"), nullable=True)
-    created_by = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    # Geschätzter Aufwand in Minuten (ganzzahlig, optional) — fließt gewichtet
-    # in die Aufgaben-Statistik ein.
-    aufwand_min = Column(Integer, nullable=True)
-
-
-class TaskAssignee(Base):
-    __tablename__ = "task_assignees"
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-
-# Teilaufgaben: einfache Checkliste innerhalb einer Aufgabe. Zählt NICHT als
-# eigene Aufgabe in der Statistik — nur die übergeordnete Task zählt, die
-# Subitems sind rein interner Fortschritt.
-class TaskSubitem(Base):
-    __tablename__ = "task_subitems"
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
-    titel = Column(String(120), nullable=False)
-    done = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 # Projekt-Tag für die private "Tasks"-Seite (main.py: /api/private-tasks): eine
 # Aufgabe ohne project_id gilt als "privat" (nur für created_by sichtbar), mit
 # project_id als geteilt mit allen Usern, die eine ProjectAccess-Zeile dafür
@@ -138,9 +100,8 @@ class ProjectAccess(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
 
-# Private Tasks-Seite (main.py: /api/private-tasks): funktional fast identisch
-# zu Task oben, aber ohne Mehrfach-Zuweisung — Sichtbarkeit läuft stattdessen
-# über created_by ("privat") bzw. Projekt-Mitgliedschaft (project_id).
+# Private Tasks-Seite (main.py: /api/private-tasks): Sichtbarkeit läuft über
+# created_by ("privat") bzw. Projekt-Mitgliedschaft (project_id).
 class PrivateTask(Base):
     __tablename__ = "private_tasks"
     id = Column(Integer, primary_key=True, index=True)
@@ -154,8 +115,7 @@ class PrivateTask(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Verantwortliche einer privaten Task — mehrere Personen möglich, gleiches
-# Muster wie TaskAssignee oben.
+# Verantwortliche einer privaten Task — mehrere Personen möglich.
 class PrivateTaskAssignee(Base):
     __tablename__ = "private_task_assignees"
     id = Column(Integer, primary_key=True, index=True)
@@ -273,28 +233,12 @@ _ensure_column("ausgaben", "status", "TEXT", "DEFAULT 'offen'")
 _ensure_column("ausgaben", "batch_id", "TEXT")
 _ensure_column("ausgaben", "fixed", "BOOLEAN", "DEFAULT 1")
 _ensure_column("ausgaben", "created_by", "TEXT")
-_ensure_column("tasks", "category_id", "INTEGER")
-_ensure_column("tasks", "aufwand_min", "INTEGER")
 _ensure_column("users", "avatar_path", "TEXT")
 _ensure_column("users", "color", "TEXT")
 _ensure_column("users", "ui_state", "TEXT")
 _ensure_column("plan_events", "uhrzeit_ende", "TIME")
 _ensure_column("plan_events", "shared_project_id", "INTEGER")
 _ensure_column("plan_events", "datum_ende", "DATE")
-
-
-# Gegenstück zu _ensure_column: entfernt eine Spalte, falls sie noch von einem
-# älteren Stand existiert (z. B. "recurring" nach Entfernen des Wiederkehrend-
-# Features) — DROP COLUMN wird von SQLite seit 3.35 nativ unterstützt.
-def _ensure_column_dropped(table: str, column: str):
-    with engine.connect() as conn:
-        existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
-        if column in existing:
-            conn.exec_driver_sql(f"ALTER TABLE {table} DROP COLUMN {column}")
-            conn.commit()
-
-
-_ensure_column_dropped("tasks", "recurring")
 
 
 # Analoge Selbst-Migration für Indizes: index=True auf einer Column wirkt nur bei

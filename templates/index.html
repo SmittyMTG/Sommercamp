@@ -128,31 +128,6 @@
         </div>
       </section>
 
-      <!-- ============ MORE ============ -->
-      <section id="screen-more" class="screen">
-        <div class="section-heading">
-          <div><h2>Aufgaben</h2></div>
-        </div>
-
-        <div class="filter-row" id="taskFilterRow">
-          <button type="button" class="filter active" data-filter="alle">Alle</button>
-          <button type="button" class="filter" data-filter="meine">Meine</button>
-          <button type="button" class="filter" data-filter="offen">Offen</button>
-          <button type="button" class="filter" data-filter="ueberfaellig">Überfällig</button>
-        </div>
-        <select id="taskSortSelect" class="sort-select">
-          <option value="deadline">Sortieren nach: Deadline</option>
-          <option value="neu">Sortieren nach: Neu zuerst</option>
-          <option value="titel">Sortieren nach: Titel (A–Z)</option>
-          <option value="verantwortlich">Sortieren nach: Verantwortlich (du zuerst)</option>
-          <option value="kategorie">Sortieren nach: Kategorie</option>
-        </select>
-        <div id="taskList" class="stack">
-          <div class="empty-state"><p>Keine Aufgaben.</p></div>
-        </div>
-
-      </section>
-
       <!-- ============ TASKS (privat, nur Felix) ============ -->
       <section id="screen-tasks" class="screen">
         <div class="section-heading">
@@ -181,14 +156,12 @@
        Bildschirmrand. Sichtbarkeit pro Screen wird von goToScreen() in
        app.js über data-fab-for gesteuert. -->
   <button id="addExpenseButton" class="primary compact fab-button" data-fab-for="costs">＋ Ausgabe</button>
-  <button id="addTaskButton" class="primary compact fab-button hidden" data-fab-for="more">＋ Aufgabe</button>
   <button id="addPlanButton" class="primary compact fab-button hidden" data-fab-for="plan">＋ Eintrag</button>
   <button id="addPrivateTaskButton" class="primary compact fab-button hidden" data-fab-for="tasks">＋ Task</button>
 
   <nav id="bottomNav" class="bottom-nav hidden">
     <button class="nav-item" data-screen="plan"><span>▣</span>Kalender</button>
     <button class="nav-item active" data-screen="costs"><span>€</span>Kosten<span id="costsNavBadge" class="nav-badge hidden">0</span></button>
-    <button class="nav-item" data-screen="more"><span>☑</span>Aufgaben<span id="myTasksNavBadge" class="nav-badge hidden">0</span></button>
     <button class="nav-item hidden" data-screen="tasks"><span>✦</span>Tasks</button>
   </nav>
 
