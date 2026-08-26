@@ -111,6 +111,9 @@ class PrivateTask(Base):
     deadline = Column(DateTime, nullable=True)
     category_id = Column(Integer, ForeignKey("task_categories.id"), nullable=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    # Gegenteil von "privat": für ALLE sichtbar, unabhängig von Projekt-
+    # Mitgliedschaft (siehe _can_access_private_task in main.py).
+    is_public = Column(Boolean, nullable=False, default=False)
     created_by = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -157,6 +160,9 @@ class PlanEvent(Base):
     # Projekt, für das dieser Termin freigegeben wurde — NULL heißt "nur für
     # created_by sichtbar" (siehe _can_access_plan_event in main.py).
     shared_project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    # Gegenteil von "privat": für ALLE sichtbar, unabhängig von Projekt-
+    # Mitgliedschaft (siehe _can_access_plan_event in main.py).
+    is_public = Column(Boolean, nullable=False, default=False)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -239,6 +245,8 @@ _ensure_column("users", "ui_state", "TEXT")
 _ensure_column("plan_events", "uhrzeit_ende", "TIME")
 _ensure_column("plan_events", "shared_project_id", "INTEGER")
 _ensure_column("plan_events", "datum_ende", "DATE")
+_ensure_column("plan_events", "is_public", "BOOLEAN", "DEFAULT 0")
+_ensure_column("private_tasks", "is_public", "BOOLEAN", "DEFAULT 0")
 
 
 # Analoge Selbst-Migration für Indizes: index=True auf einer Column wirkt nur bei

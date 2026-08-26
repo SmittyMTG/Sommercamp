@@ -431,8 +431,10 @@ function renderPrivateTaskItem(task) {
     metaParts.push(task.assignees.map((a) => nameTag(a.username)).join(", "));
   }
   // "Privat" (kein Projekt) wird bewusst nicht angezeigt — nur ein echtes
-  // Projekt ist erwähnenswert, und landet dann hier am Ende der Meta-Zeile.
-  if (task.project) metaParts.push(`🗂 ${escapeHtml(task.project.name)}`);
+  // Projekt oder "öffentlich" ist erwähnenswert, und landet dann hier am
+  // Ende der Meta-Zeile.
+  if (task.is_public) metaParts.push(`🌐 Öffentlich`);
+  else if (task.project) metaParts.push(`🗂 ${escapeHtml(task.project.name)}`);
 
   const categoryTag = task.category
     ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
@@ -675,7 +677,7 @@ function privateTaskProjectOptionsHtml(projects, selectedId) {
 
 function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, users = []) {
   const currentCategoryId = prefill.category ? prefill.category.id : null;
-  const currentProjectId = prefill.project ? prefill.project.id : "";
+  const currentProjectId = prefill.is_public ? "" : prefill.project ? prefill.project.id : "";
   const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 10) : "";
 
   // Gleiche Chip-Optik wie "Für wen?" bei der Ausgaben-Erfassung — beim
@@ -703,9 +705,10 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, u
       <label>Beschreibung (optional)
         <textarea id="privTaskBeschreibungInput" placeholder="Details …">${escapeHtml(prefill.beschreibung || "")}</textarea>
       </label>
-      <label>Projekt
+      <label>Sichtbarkeit
         <select id="privTaskProjectSelect">
-          <option value=""${currentProjectId === "" ? " selected" : ""}>Privat</option>
+          <option value=""${!prefill.is_public && currentProjectId === "" ? " selected" : ""}>Privat</option>
+          <option value="__public__"${prefill.is_public ? " selected" : ""}>Für alle sichtbar (öffentlich)</option>
           ${privateTaskProjectOptionsHtml(projects, currentProjectId)}
           ${isAdmin ? `<option value="__new__">+ Neues Projekt anlegen…</option>` : ""}
         </select>
@@ -918,8 +921,11 @@ async function resolvePrivateTaskCategoryId() {
 
 async function resolvePrivateTaskProjectId() {
   const projectSelect = document.getElementById("privTaskProjectSelect");
+  if (projectSelect.value === "__public__") {
+    return { ok: true, project_id: null, is_public: true };
+  }
   if (projectSelect.value !== "__new__") {
-    return { ok: true, project_id: projectSelect.value ? parseInt(projectSelect.value, 10) : null };
+    return { ok: true, project_id: projectSelect.value ? parseInt(projectSelect.value, 10) : null, is_public: false };
   }
 
   const nameInput = document.getElementById("newPrivTaskProjectName");
@@ -948,7 +954,7 @@ async function resolvePrivateTaskProjectId() {
 
   const created = await res.json();
   await fetchProjects(true);
-  return { ok: true, project_id: created.id };
+  return { ok: true, project_id: created.id, is_public: false };
 }
 
 async function readPrivateTaskForm() {
@@ -972,6 +978,7 @@ async function readPrivateTaskForm() {
     assignee_ids,
     category_id: categoryResult.category_id,
     project_id: projectResult.project_id,
+    is_public: projectResult.is_public,
     deadline,
   };
 }
@@ -2068,6 +2075,7 @@ function wireCalEventResize(container) {
         location: state.event.location,
         beschreibung: state.event.beschreibung,
         shared_project_id: state.event.shared_project_id,
+        is_public: state.event.is_public,
       }),
     }).then((res) => {
       // Bei Erfolg bringt loadPlanList(true) die frischen, korrekt validierten
@@ -2226,10 +2234,11 @@ function planModalBodyHtml(prefill = {}, projects = []) {
       <label>Beschreibung
         <textarea id="planBeschreibungInput" placeholder="Was ist geplant?">${escapeHtml(prefill.beschreibung || "")}</textarea>
       </label>
-      <label>Für Projekt freigeben
+      <label>Sichtbarkeit
         <select id="planProjectSelect">
-          <option value="">Nur für dich sichtbar</option>
-          ${privateTaskProjectOptionsHtml(projects, prefill.shared_project_id || "")}
+          <option value=""${!prefill.is_public && !prefill.shared_project_id ? " selected" : ""}>Nur für dich sichtbar</option>
+          <option value="__public__"${prefill.is_public ? " selected" : ""}>Für alle sichtbar (öffentlich)</option>
+          ${privateTaskProjectOptionsHtml(projects, prefill.is_public ? "" : prefill.shared_project_id || "")}
         </select>
       </label>
       <p class="error-text hidden plan-modal-error"></p>
@@ -2247,7 +2256,8 @@ async function submitPlanForm(url, method) {
   const location = document.getElementById("planLocationInput").value.trim();
   const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
   const projectSelect = document.getElementById("planProjectSelect");
-  const sharedProjectId = projectSelect && projectSelect.value ? parseInt(projectSelect.value, 10) : null;
+  const isPublic = projectSelect && projectSelect.value === "__public__";
+  const sharedProjectId = projectSelect && projectSelect.value && !isPublic ? parseInt(projectSelect.value, 10) : null;
 
   if (!datum || !uhrzeit || !bezeichnung) return;
 
@@ -2263,6 +2273,7 @@ async function submitPlanForm(url, method) {
       location,
       beschreibung,
       shared_project_id: sharedProjectId,
+      is_public: isPublic,
     }),
   });
 

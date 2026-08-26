@@ -107,6 +107,7 @@ class PlanEventCreate(BaseModel):
     location: str | None = None
     beschreibung: str | None = None
     shared_project_id: int | None = None
+    is_public: bool = False
 
 
 class ExpenseCreate(BaseModel):
@@ -137,6 +138,7 @@ class PrivateTaskCreate(BaseModel):
     category_id: int | None = None
     project_id: int | None = None
     assignee_ids: list[int] = []
+    is_public: bool = False
 
 
 class PrivateTaskSubitemCreate(BaseModel):
@@ -265,7 +267,7 @@ def _user_project_ids(db: Session, user_id: int) -> set[int]:
 
 
 def _can_access_private_task(db: Session, user: User, task: PrivateTask) -> bool:
-    if task.created_by == user.username or _is_admin_user(user):
+    if task.created_by == user.username or task.is_public or _is_admin_user(user):
         return True
     return bool(task.project_id and task.project_id in _user_project_ids(db, user.id))
 
@@ -307,7 +309,7 @@ def _validate_private_task_payload(payload: PrivateTaskCreate, db: Session):
         if not set(assignee_ids).issubset(valid_ids):
             return JSONResponse(status_code=400, content={"error": "Unbekannte Person ausgewählt"})
 
-    return titel, beschreibung, deadline, category_id, project_id, assignee_ids
+    return titel, beschreibung, deadline, category_id, project_id, assignee_ids, payload.is_public
 
 
 def _serialize_private_task(
@@ -327,6 +329,7 @@ def _serialize_private_task(
         "done": task.done,
         "deadline": task.deadline.isoformat() if task.deadline else None,
         "created_by": task.created_by,
+        "is_public": task.is_public,
         "assignees": [
             {"id": uid, "username": usernames.get(uid, "?")} for uid in assignee_ids
         ],
@@ -378,7 +381,7 @@ def create_private_task(request: Request, payload: PrivateTaskCreate, db: Sessio
     validated = _validate_private_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, category_id, project_id, assignee_ids = validated
+    titel, beschreibung, deadline, category_id, project_id, assignee_ids, is_public = validated
 
     if not _can_use_private_project(db, me, project_id):
         return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
@@ -390,6 +393,7 @@ def create_private_task(request: Request, payload: PrivateTaskCreate, db: Sessio
         created_by=username,
         category_id=category_id,
         project_id=project_id,
+        is_public=is_public,
     )
     db.add(task)
     db.commit()
@@ -422,7 +426,7 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
     validated = _validate_private_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, category_id, project_id, assignee_ids = validated
+    titel, beschreibung, deadline, category_id, project_id, assignee_ids, is_public = validated
 
     if project_id != task.project_id and not _can_use_private_project(db, me, project_id):
         return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
@@ -432,6 +436,7 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
     task.deadline = deadline
     task.category_id = category_id
     task.project_id = project_id
+    task.is_public = is_public
     db.query(PrivateTaskAssignee).filter(PrivateTaskAssignee.task_id == task.id).delete(synchronize_session=False)
     for uid in assignee_ids:
         db.add(PrivateTaskAssignee(task_id=task.id, user_id=uid))
@@ -691,7 +696,7 @@ def delete_project(project_id: int, request: Request, db: Session = Depends(get_
 def _validate_plan_payload(payload: PlanEventCreate, db: Session):
     """Validiert Termin-Felder für Anlegen UND Bearbeiten. Gibt entweder ein
     Tupel (datum, datum_ende, uhrzeit, uhrzeit_ende, bezeichnung, location,
-    beschreibung, shared_project_id) oder eine fertige JSONResponse mit
+    beschreibung, shared_project_id, is_public) oder eine fertige JSONResponse mit
     Fehlermeldung zurück. Datum+Uhrzeit sind Pflicht — datumslose
     "Event-Ideen" gibt es nicht mehr, jeder Termin gehört fest in den Kalender.
     datum_ende ist optional (mehrtägiger Termin, z. B. ein Ausflug); ohne
@@ -757,15 +762,16 @@ def _validate_plan_payload(payload: PlanEventCreate, db: Session):
         location,
         beschreibung,
         shared_project_id,
+        payload.is_public,
     )
 
 
 def _can_access_plan_event(db: Session, user: User, event: PlanEvent) -> bool:
     """Ein Termin ist standardmäßig nur für die anlegende Person sichtbar —
-    erst eine Freigabe für ein Projekt (shared_project_id) zeigt ihn auch
-    dessen Mitgliedern. Admins sehen wie überall alles, analog zu
-    _can_access_private_task."""
-    if event.created_by == user.username or _is_admin_user(user):
+    erst eine Freigabe für ein Projekt (shared_project_id) oder als öffentlich
+    markiert (is_public) zeigt ihn auch anderen. Admins sehen wie überall
+    alles, analog zu _can_access_private_task."""
+    if event.created_by == user.username or event.is_public or _is_admin_user(user):
         return True
     return bool(event.shared_project_id and event.shared_project_id in _user_project_ids(db, user.id))
 
@@ -781,6 +787,7 @@ def _serialize_plan_event(e: PlanEvent) -> dict:
         "location": e.location,
         "beschreibung": e.beschreibung,
         "shared_project_id": e.shared_project_id,
+        "is_public": e.is_public,
         "created_by": e.created_by,
     }
 
@@ -811,7 +818,7 @@ def create_plan_event(
     validated = _validate_plan_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    event_date, event_date_ende, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id = validated
+    event_date, event_date_ende, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id, is_public = validated
 
     new_event = PlanEvent(
         datum=event_date,
@@ -824,6 +831,7 @@ def create_plan_event(
         location=location,
         beschreibung=beschreibung,
         shared_project_id=shared_project_id,
+        is_public=is_public,
         created_by=username,
     )
     db.add(new_event)
@@ -850,7 +858,7 @@ def update_plan_event(
     validated = _validate_plan_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    event_date, event_date_ende, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id = validated
+    event_date, event_date_ende, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id, is_public = validated
 
     existing.datum = event_date
     existing.datum_ende = event_date_ende if event_date_ende != event_date else None
@@ -860,6 +868,7 @@ def update_plan_event(
     existing.location = location
     existing.beschreibung = beschreibung
     existing.shared_project_id = shared_project_id
+    existing.is_public = is_public
     db.commit()
 
     return _serialize_plan_event(existing)
