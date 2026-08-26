@@ -678,9 +678,9 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, u
   const currentProjectId = prefill.project ? prefill.project.id : "";
   const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 10) : "";
 
-  // Gleiche Chip-Optik wie "Für wen?" bei der Ausgaben-Erfassung — hier aber
-  // standardmäßig alle abgewählt (blass), nicht alle ausgewählt: eine Task
-  // hat i. d. R. niemanden oder gezielt eine/wenige Personen verantwortlich.
+  // Gleiche Chip-Optik wie "Für wen?" bei der Ausgaben-Erfassung — beim
+  // Anlegen ist standardmäßig nur man selbst ausgewählt (siehe prefill in
+  // openAddPrivateTaskModal), beim Bearbeiten die tatsächlichen assignees.
   const currentAssigneeIds = new Set((prefill.assignees || []).map((a) => a.id));
   const assigneeOptions = users
     .map((u) => {
@@ -1046,7 +1046,7 @@ async function openAddPrivateTaskModal() {
     eyebrow: "Task",
     title: "Task hinzufügen",
     submitLabel: "Speichern",
-    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, {}, users),
+    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, { assignees: me ? [{ id: me.id }] : [] }, users),
     onSubmit: async () => {
       const form = await readPrivateTaskForm();
       if (!form) return;
