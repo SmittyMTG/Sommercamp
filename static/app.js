@@ -2139,6 +2139,35 @@ if (calTodayBtn) {
   });
 }
 
+// Nach links/rechts wischen als Alternative zu den ‹/›-Buttons — nur bei
+// Touch (pointerType "touch"), damit Maus-Drags zum Anlegen/Verschieben von
+// Terminen (siehe wireCalDayDragCreate/wireCalEventResize) unangetastet
+// bleiben. Läuft parallel zu deren Halten+Ziehen-Erkennung; ist so ein Drag
+// schon aktiv (Long-Press ausgelöst), zählt der Move-Up bewusst nicht als
+// Wisch.
+const CAL_SWIPE_MIN_PX = 50;
+let calSwipeState = null;
+
+if (calendarContainerEl) {
+  calendarContainerEl.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    calSwipeState = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId };
+  });
+  calendarContainerEl.addEventListener("pointerup", (e) => {
+    if (!calSwipeState || e.pointerId !== calSwipeState.pointerId) return;
+    const { startX, startY } = calSwipeState;
+    calSwipeState = null;
+    if ((calDragState && calDragState.active) || (calResizeState && calResizeState.active)) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (Math.abs(dx) < CAL_SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy)) return;
+    shiftCalendarAnchor(dx < 0 ? 1 : -1);
+  });
+  calendarContainerEl.addEventListener("pointercancel", (e) => {
+    if (calSwipeState && e.pointerId === calSwipeState.pointerId) calSwipeState = null;
+  });
+}
+
 let lastPlanSignature = null;
 
 async function loadPlanList(force) {
