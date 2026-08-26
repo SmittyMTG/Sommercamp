@@ -374,7 +374,7 @@ function isPrivateTaskOverdue(task) {
 
 function filterPrivateTasks(items, scopeMode, statusFilter, projectId) {
   let out = items;
-  if (scopeMode === "meine" && cachedMe) out = out.filter((t) => t.created_by === cachedMe.username);
+  if (scopeMode === "meine" && cachedMe) out = out.filter((t) => t.assignees.some((a) => a.id === cachedMe.id));
   else if (scopeMode === "privat") out = out.filter((t) => !t.project);
   if (statusFilter === "offen") out = out.filter((t) => !t.done);
   else if (statusFilter === "ueberfaellig") out = out.filter((t) => isPrivateTaskOverdue(t));
