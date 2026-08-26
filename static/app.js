@@ -2242,7 +2242,11 @@ function planModalBodyHtml(prefill = {}, projects = []) {
         </select>
       </label>
       <p class="error-text hidden plan-modal-error"></p>
-      ${prefill.id && calendarIsAdmin ? `<button type="button" id="planDeleteBtn" class="link-button danger">🗑 Termin löschen</button>` : ""}
+      ${
+        prefill.id && (calendarIsAdmin || (cachedMe && prefill.created_by === cachedMe.username))
+          ? `<button type="button" id="planDeleteBtn" class="link-button danger">🗑 Termin löschen</button>`
+          : ""
+      }
     </div>
   `;
 }

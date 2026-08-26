@@ -889,11 +889,14 @@ def delete_plan_event(event_id: int, request: Request, db: Session = Depends(get
     username = get_current_user(request)
     if not username:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    if not _require_admin(db, username):
-        return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine löschen"})
 
     event = db.query(PlanEvent).filter(PlanEvent.id == event_id).first()
     if event:
+        # Löschen dürfen Admins (wie überall) sowie die Person, die den
+        # Termin selbst angelegt hat — fremde Termine (auch öffentliche oder
+        # projekt-geteilte) darf man weiterhin nur bearbeiten, nicht löschen.
+        if event.created_by != username and not _require_admin(db, username):
+            return JSONResponse(status_code=403, content={"error": "Nur eigene Termine oder als Admin löschbar"})
         db.delete(event)
         db.commit()
     return {"ok": True}
