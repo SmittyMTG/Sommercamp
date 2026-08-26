@@ -341,8 +341,9 @@ function taskCategoryOptionsHtml(categories, selectedId) {
     .join("");
 }
 
-/* ---------- "Tasks" (privat/projekt-getaggt, aktuell nur für Felix sichtbar
-   über die Nav — Zugriff wird zusätzlich serverseitig geprüft, siehe main.py) ---------- */
+/* ---------- "Tasks" (privat/projekt-getaggt/öffentlich, für alle sichtbar
+   über die Nav — welche Tasks tatsächlich ankommen, filtert serverseitig
+   _can_access_private_task in main.py, siehe unten) ---------- */
 const privateTaskListEl = document.getElementById("privateTaskList");
 const privateTaskFilterRow = document.getElementById("privateTaskFilterRow");
 const privateTaskFilterBtn = document.getElementById("privateTaskFilterBtn");
@@ -1154,9 +1155,12 @@ fetchUsersAndMe().then(async ({ me }) => {
   }
 });
 
-/* ---------- Tasks: Sichtbarkeit (nur Felix) + Init ---------- */
+/* ---------- Tasks: für alle eingeloggten Personen sichtbar + Init.
+   Private Tasks ohne Projekt-Freigabe/is_public bleiben trotzdem geschützt
+   — das übernimmt bereits serverseitig _can_access_private_task in main.py,
+   analog zu _can_access_plan_event beim Kalender. ---------- */
 fetchUsersAndMe().then(async ({ me }) => {
-  if (!me || me.username !== "Felix") return;
+  if (!me) return;
 
   const tasksNavButton = document.querySelector('.bottom-nav [data-screen="tasks"]');
   if (tasksNavButton) tasksNavButton.classList.remove("hidden");
