@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, Body
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, and_
@@ -31,6 +31,7 @@ from database import (
     get_db,
 )
 from auth import login, logout, get_current_user, verify_password
+import push
 import uvicorn
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -210,6 +211,81 @@ def get_app_version():
     abgefragt, damit die App einen neuen Deploy selbstständig erkennt und sich
     neu lädt, statt dass man manuell aktualisieren muss."""
     return {"version": app_version()}
+
+
+# --- Web Push (VAPID) — Registrierung/Verwaltung siehe push.py ---
+
+# /sw.js bewusst NICHT unter /static/ ausgeliefert: ein Service Worker darf
+# nur Seiten in seinem eigenen Pfad (oder tiefer) kontrollieren, unter
+# /static/sw.js wäre der Scope auf /static/ beschränkt statt auf die ganze
+# Seite. Service-Worker-Allowed setzt das zwar auch explizit, aber die
+# Auslieferung von der Root aus ist die robustere, browserübergreifend
+# unproblematische Variante.
+@app.get("/sw.js")
+def service_worker():
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str
+    keys: dict
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+
+class PushSendRequest(BaseModel):
+    title: str
+    body: str
+
+
+@app.get("/api/push/vapid-public-key")
+def get_vapid_public_key(request: Request):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    return {"key": push.get_vapid_public_key_b64()}
+
+
+@app.post("/api/push/subscribe")
+def push_subscribe(request: Request, payload: PushSubscribeRequest, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if "p256dh" not in payload.keys or "auth" not in payload.keys:
+        return JSONResponse(status_code=400, content={"error": "Ungültige Subscription"})
+    push.save_subscription(db, username, payload.dict())
+    return {"ok": True}
+
+
+@app.post("/api/push/unsubscribe")
+def push_unsubscribe(request: Request, payload: PushUnsubscribeRequest, db: Session = Depends(get_db)):
+    if not get_current_user(request):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    push.remove_subscription(db, payload.endpoint)
+    return {"ok": True}
+
+
+@app.post("/api/push/send")
+def push_send(request: Request, payload: PushSendRequest, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not _require_admin(db, username):
+        return JSONResponse(status_code=403, content={"error": "Nur Admins können Benachrichtigungen verschicken"})
+
+    title = payload.title.strip()
+    body = payload.body.strip()
+    if not title:
+        return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
+    if not body:
+        return JSONResponse(status_code=400, content={"error": "Text darf nicht leer sein"})
+
+    return push.send_to_all(db, title, body)
 
 
 @app.get("/api/task-categories")

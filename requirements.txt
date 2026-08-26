@@ -5,3 +5,4 @@ python-multipart==0.0.6
 passlib==1.7.4
 sqlalchemy==2.0.51
 httpx==0.28.1
+pywebpush==2.4.0

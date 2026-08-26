@@ -1200,9 +1200,123 @@ function applyAvatarToButton(avatarPath, color) {
   if (color) document.documentElement.style.setProperty("--me-color", color);
 }
 
+/* ---------- Web Push: Benachrichtigungen aktivieren (siehe push.py,
+   static/sw.js). Auf iPhone/iPad funktioniert Web Push nur innerhalb einer
+   zum Home-Bildschirm hinzugefügten PWA, nicht im normalen Safari-Tab —
+   das wird erkannt und stattdessen ein Hinweis angezeigt. ---------- */
+function isIosDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+function isStandalonePwa() {
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+function pushSupported() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+  if (isIosDevice() && !isStandalonePwa()) return false;
+  return true;
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+
+async function getPushSubscription() {
+  if (!("serviceWorker" in navigator)) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) return null;
+  return reg.pushManager.getSubscription();
+}
+
+async function enablePushNotifications() {
+  const reg = await navigator.serviceWorker.register("/sw.js");
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Berechtigung wurde nicht erteilt.");
+
+  const keyRes = await fetch("/api/push/vapid-public-key");
+  if (!keyRes.ok) throw new Error("VAPID-Key konnte nicht geladen werden.");
+  const { key } = await keyRes.json();
+
+  const subscription = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(key),
+  });
+
+  const res = await fetch("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(subscription.toJSON()),
+  });
+  if (!res.ok) throw new Error("Registrierung beim Server fehlgeschlagen.");
+}
+
+async function disablePushNotifications() {
+  const subscription = await getPushSubscription();
+  if (!subscription) return;
+  await fetch("/api/push/unsubscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ endpoint: subscription.endpoint }),
+  });
+  await subscription.unsubscribe();
+}
+
+async function updatePushButtonUI(btn, hintEl) {
+  if (!pushSupported()) {
+    btn.classList.add("hidden");
+    hintEl.classList.remove("hidden");
+    hintEl.textContent =
+      isIosDevice() && !isStandalonePwa()
+        ? "Auf dem iPhone/iPad erst über den Teilen-Button „Zum Home-Bildschirm“ hinzufügen, dann sind Benachrichtigungen hier verfügbar."
+        : "Push-Benachrichtigungen werden von diesem Browser nicht unterstützt.";
+    return;
+  }
+  hintEl.classList.add("hidden");
+  btn.classList.remove("hidden");
+  const subscription = await getPushSubscription();
+  const active = !!subscription && Notification.permission === "granted";
+  btn.textContent = active ? "🔕 Benachrichtigungen deaktivieren" : "🔔 Benachrichtigungen aktivieren";
+  btn.classList.toggle("danger", active);
+}
+
+function wirePushButton() {
+  const btn = document.getElementById("pushToggleBtn");
+  const hintEl = document.getElementById("pushHint");
+  const errEl = document.querySelector(".push-error");
+  if (!btn || !hintEl) return;
+
+  updatePushButtonUI(btn, hintEl);
+
+  btn.addEventListener("click", async () => {
+    errEl.classList.add("hidden");
+    btn.disabled = true;
+    try {
+      const subscription = await getPushSubscription();
+      if (subscription) {
+        await disablePushNotifications();
+      } else {
+        await enablePushNotifications();
+      }
+      await updatePushButtonUI(btn, hintEl);
+    } catch (err) {
+      errEl.textContent = err.message || "Das hat nicht geklappt.";
+      errEl.classList.remove("hidden");
+    }
+    btn.disabled = false;
+  });
+}
+
 function profileModalBodyHtml(me) {
   return `
     <div class="form-stack">
+      <div class="checkbox-group">
+        <div class="eyebrow">Benachrichtigungen</div>
+        <button type="button" id="pushToggleBtn" class="secondary compact">🔔 Benachrichtigungen aktivieren</button>
+        <p class="muted hidden" id="pushHint"></p>
+        <p class="error-text hidden push-error"></p>
+      </div>
       <div class="checkbox-group" data-live-save>
         <div class="eyebrow">Profilbild</div>
         <img id="profileAvatarPreviewImg" class="avatar-preview${me.avatar_path ? "" : " hidden"}" src="${me.avatar_path || ""}" alt="">
@@ -1283,6 +1397,8 @@ async function openProfileModal() {
       closeModal();
     },
   });
+
+  wirePushButton();
 }
 
 const profileButton = document.getElementById("profileButton");
@@ -1492,6 +1608,57 @@ if (adminUsersButton) {
   adminUsersButton.addEventListener("click", openAdminUsersModal);
   fetchUsersAndMe().then(({ me }) => {
     if (me && isAdminRole(me.role)) adminUsersButton.classList.remove("hidden");
+  });
+}
+
+/* ---------- Admin: Push-Benachrichtigung an alle senden (siehe push.py) ---------- */
+function openAdminPushModal() {
+  openModal({
+    eyebrow: "Benachrichtigung",
+    title: "An alle senden",
+    submitLabel: "Senden",
+    bodyHtml: `
+      <div class="form-stack">
+        <label>Titel
+          <input type="text" id="adminPushTitleInput" maxlength="60" required>
+        </label>
+        <label>Text
+          <textarea id="adminPushBodyInput" maxlength="200" required></textarea>
+        </label>
+        <p class="error-text hidden admin-push-error"></p>
+      </div>
+    `,
+    onSubmit: async () => {
+      const errEl = document.querySelector(".admin-push-error");
+      errEl.classList.add("hidden");
+      const title = document.getElementById("adminPushTitleInput").value.trim();
+      const body = document.getElementById("adminPushBodyInput").value.trim();
+      if (!title || !body) {
+        errEl.textContent = "Bitte Titel und Text ausfüllen.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      const res = await fetch("/api/push/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, body }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errEl.textContent = data.error || "Konnte nicht gesendet werden.";
+        errEl.classList.remove("hidden");
+        return;
+      }
+      closeModal();
+    },
+  });
+}
+
+const adminPushButton = document.getElementById("adminPushButton");
+if (adminPushButton) {
+  adminPushButton.addEventListener("click", openAdminPushModal);
+  fetchUsersAndMe().then(({ me }) => {
+    if (me && isAdminRole(me.role)) adminPushButton.classList.remove("hidden");
   });
 }
 

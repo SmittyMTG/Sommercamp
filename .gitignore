@@ -66,6 +66,10 @@ db.sqlite3-journal
 *.db-journal
 *.sqlite3-journal
 
+# VAPID keypair for Web Push — private key must never be committed
+vapid_private.pem
+vapid_public.pem
+
 # Flask stuff:
 instance/
 .webassets-cache
