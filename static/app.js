@@ -1630,7 +1630,9 @@ function renderMonthView() {
     cell.addEventListener("click", (e) => {
       const chip = e.target.closest(".cal-event-pill");
       if (chip) {
-        if (!calendarIsAdmin) return;
+        // Server filtert lastDatedEvents bereits auf das, was diese Person
+        // sehen darf (eigene/öffentliche/projekt-geteilte Termine) — alles
+        // darin ist damit auch zum Bearbeiten freigegeben, siehe main.py.
         const event = lastDatedEvents.find((ev) => String(ev.id) === chip.dataset.id);
         if (event) openEditPlanModal(event);
         return;
@@ -1787,7 +1789,6 @@ function renderTimeGridView(days) {
         calSuppressNextClick = false;
         return;
       }
-      if (!calendarIsAdmin) return;
       const event = lastDatedEvents.find((ev) => String(ev.id) === block.dataset.id);
       if (event) openEditPlanModal(event);
     });
@@ -1802,7 +1803,6 @@ function renderTimeGridView(days) {
         calSuppressNextClick = false;
         return;
       }
-      if (!calendarIsAdmin) return;
       const hour = String(cell.dataset.hour).padStart(2, "0");
       openAddPlanModal({ datum: cell.dataset.date, uhrzeit: `${hour}:00` });
     });
@@ -1866,7 +1866,7 @@ function wireCalDayDragCreate(container) {
   if (!container) return;
 
   container.addEventListener("pointerdown", (e) => {
-    if (calendarView !== "day" || !calendarIsAdmin) return;
+    if (calendarView !== "day") return;
     const cell = e.target.closest(".cal-hour-cell");
     if (!cell || e.target.closest(".cal-time-event")) return;
 
@@ -1969,7 +1969,7 @@ function wireCalEventResize(container) {
   if (!container) return;
 
   container.addEventListener("pointerdown", (e) => {
-    if ((calendarView !== "day" && calendarView !== "week") || !calendarIsAdmin) return;
+    if (calendarView !== "day" && calendarView !== "week") return;
     const block = e.target.closest(".cal-time-event");
     if (!block) return;
     const rect = block.getBoundingClientRect();
@@ -2242,7 +2242,7 @@ function planModalBodyHtml(prefill = {}, projects = []) {
         </select>
       </label>
       <p class="error-text hidden plan-modal-error"></p>
-      ${prefill.id ? `<button type="button" id="planDeleteBtn" class="link-button danger">🗑 Termin löschen</button>` : ""}
+      ${prefill.id && calendarIsAdmin ? `<button type="button" id="planDeleteBtn" class="link-button danger">🗑 Termin löschen</button>` : ""}
     </div>
   `;
 }

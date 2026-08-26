@@ -810,15 +810,17 @@ def create_plan_event(
     request: Request, payload: PlanEventCreate, db: Session = Depends(get_db)
 ):
     username = get_current_user(request)
-    if not username:
+    me = _user_by_username(db, username) if username else None
+    if not me:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    if not _require_admin(db, username):
-        return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine anlegen"})
 
     validated = _validate_plan_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
     event_date, event_date_ende, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id, is_public = validated
+
+    if not _can_use_private_project(db, me, shared_project_id):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
 
     new_event = PlanEvent(
         datum=event_date,
@@ -846,19 +848,27 @@ def update_plan_event(
     event_id: int, request: Request, payload: PlanEventCreate, db: Session = Depends(get_db)
 ):
     username = get_current_user(request)
-    if not username:
+    me = _user_by_username(db, username) if username else None
+    if not me:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
-    if not _require_admin(db, username):
-        return JSONResponse(status_code=403, content={"error": "Nur Admins können Termine bearbeiten"})
 
     existing = db.query(PlanEvent).filter(PlanEvent.id == event_id).first()
     if not existing:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
+    # Bearbeiten darf, wer den Termin auch sehen kann — ein privater Termin
+    # einer anderen Person bleibt dadurch automatisch geschützt (der Zugriff
+    # scheitert schon vorher an _can_access_plan_event).
+    if not _can_access_plan_event(db, me, existing):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diesen Termin"})
+
     validated = _validate_plan_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
     event_date, event_date_ende, event_time, event_time_ende, bezeichnung, location, beschreibung, shared_project_id, is_public = validated
+
+    if shared_project_id != existing.shared_project_id and not _can_use_private_project(db, me, shared_project_id):
+        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
 
     existing.datum = event_date
     existing.datum_ende = event_date_ende if event_date_ende != event_date else None
