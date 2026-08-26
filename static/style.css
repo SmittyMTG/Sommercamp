@@ -86,7 +86,15 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    Der Verlauf blendet das Bild nach links (Richtung Text) aus, damit es
    nicht mit der Lesbarkeit konkurriert. */
 .list-card.avatar-bg{position:relative;overflow:hidden}
-.list-card.avatar-bg::before{content:"";position:absolute;inset:0;background-image:var(--avatar-url);background-size:cover;background-position:center 30%;opacity:.22;mask-image:linear-gradient(to left,#000,transparent 80%);-webkit-mask-image:linear-gradient(to left,#000,transparent 80%);z-index:0}
+/* Verlauf als zweite, deckende Hintergrund-Ebene ÜBER dem Foto statt per
+   mask-image/-webkit-mask-image: die CSS-Masking-API war auf manchen Mobil-
+   Browsern/GPUs (gemeldet: Firefox auf Android) unzuverlässig, das Foto blieb
+   dort unsichtbar — reine background-image-Verläufe sind seit Jahren überall
+   gleich zuverlässig unterstützt. var(--surface) deckt das Foto links komplett
+   ab, wird transparent nach rechts; die 22% Opacity auf dem ganzen Element
+   dimmt danach beides gemeinsam (der deckende Verlauf verschwindet dadurch
+   optisch in der ohnehin gleichfarbigen Kartenfläche). */
+.list-card.avatar-bg::before{content:"";position:absolute;inset:0;background-image:linear-gradient(to left,transparent,var(--surface) 80%),var(--avatar-url);background-size:cover,cover;background-position:center,center 30%;opacity:.22;z-index:0}
 .list-card.avatar-bg>*{position:relative;z-index:1}
 /* Tasks-Liste: spürbar kompaktere Kacheln (weniger Innenabstand, kleinerer
    Haken, engerer Zeilenabstand zwischen den Karten) — hier stapeln sich
