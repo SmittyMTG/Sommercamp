@@ -376,10 +376,10 @@ function isPrivateTaskOverdue(task) {
 function filterPrivateTasks(items, scopeMode, statusFilter, projectId) {
   let out = items;
   if (scopeMode === "meine" && cachedMe) out = out.filter((t) => t.assignees.some((a) => a.id === cachedMe.id));
-  else if (scopeMode === "privat") out = out.filter((t) => !t.project);
+  else if (scopeMode === "privat") out = out.filter((t) => !t.project && !t.is_public);
   if (statusFilter === "offen") out = out.filter((t) => !t.done);
   else if (statusFilter === "ueberfaellig") out = out.filter((t) => isPrivateTaskOverdue(t));
-  if (projectId === "privat") out = out.filter((t) => !t.project);
+  if (projectId === "privat") out = out.filter((t) => !t.project && !t.is_public);
   else if (projectId) out = out.filter((t) => t.project && String(t.project.id) === String(projectId));
   return out;
 }
