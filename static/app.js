@@ -357,6 +357,14 @@ let privateTaskProjectFilterId = "";
 let privateTaskSortMode = "deadline";
 let cachedProjects = null;
 
+function formatDeadline(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+  });
+}
+
 function isPrivateTaskOverdue(task) {
   if (task.done || !task.deadline) return false;
   const today = new Date();
