@@ -170,7 +170,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .source-tag{display:inline-block;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;color:#111;margin-top:5px}
 .category-tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--muted);margin-top:5px}
 .category-tag-dot{width:7px;height:7px;border-radius:50%;flex:none}
-.category-tag.project-tag{color:var(--yellow2);margin-left:8px}
 .name-tag{display:inline-block;padding:1px 7px;border-radius:999px;font-weight:800;color:#111}
 .name-with-avatar{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
 .name-avatar{border-radius:999px;object-fit:cover;flex:none}
