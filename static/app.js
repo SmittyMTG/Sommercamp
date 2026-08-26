@@ -1583,6 +1583,9 @@ function eventsByDateMap() {
 }
 
 function calendarLabelText() {
+  // Endlos-Liste ohne Monats-Konzept (siehe renderPlanListView) — es gibt
+  // keine sinnvolle "aktuelle Seite", die man hier anzeigen könnte.
+  if (calendarView === "list") return "Termine";
   if (calendarView === "day") return formatWeekdayDate(isoDateLocal(calendarAnchor));
   if (calendarView === "week") {
     const start = startOfWeekMonday(calendarAnchor);
@@ -1646,6 +1649,126 @@ function renderMonthView() {
       updateCalendarViewSwitchUI();
       renderCalendar();
     });
+  });
+}
+
+// "Termine": kompakte, endlos nach unten scrollbare Liste statt Raster,
+// angelehnt an die allererste Camp-Plan-Ansicht (vor den Monats-/Wochen-/
+// Tagesrastern) — jeder Tag ab heute untereinander, mit Platzhalter-Zeile
+// auch für Tage ohne Termin. Anders als in den Rastern steht die Uhrzeit
+// hier im Text, weil es keine Position/Höhe gibt, die sie sonst schon zeigt.
+// Alle Termine sind bereits über lastDatedEvents geladen — "mehr laden"
+// beim Scrollen erzeugt also nur mehr Tages-Zeilen im DOM, keinen Re-Fetch.
+function planListEventHtml(event) {
+  const color = calEventColor(event);
+  const pale = hexToRgba(color, 0.18);
+  const time = event.uhrzeit
+    ? `${event.uhrzeit.slice(0, 5)}${event.uhrzeit_ende ? `–${event.uhrzeit_ende.slice(0, 5)}` : ""}`
+    : "";
+  return `
+    <div class="plan-list-chip" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">
+      ${time ? `<span class="plan-list-chip-time">${time}</span>` : ""}
+      <span class="plan-list-chip-title">${escapeHtml(event.bezeichnung)}</span>
+    </div>
+  `;
+}
+
+const PLAN_LIST_CHUNK_DAYS = 30;
+// Harte Obergrenze (10 Jahre) — reines Sicherheitsnetz gegen endloses
+// Nachladen, falls mal jemand wirklich ewig weiterscrollt.
+const PLAN_LIST_MAX_DAYS = 3650;
+let planListNextDate = null;
+let planListMonthKey = null;
+let planListDaysRendered = 0;
+
+function planListDayRowHtml(cellDate, eventsByDate) {
+  const cellIso = isoDateLocal(cellDate);
+  const isToday = cellIso === isoDateLocal(new Date());
+  const dayEvents = eventsByDate.get(cellIso) || [];
+  const dayName = cellDate.toLocaleDateString("de-DE", { weekday: "short" });
+  return `
+    <div class="plan-list-day${isToday ? " today" : ""}" data-date="${cellIso}">
+      <div class="plan-list-daylabel">
+        <span class="plan-list-daynum">${cellDate.getDate()}</span>
+        <span class="plan-list-dayname">${dayName}</span>
+      </div>
+      <div class="plan-list-events">${dayEvents.map(planListEventHtml).join("")}</div>
+    </div>
+  `;
+}
+
+// Fügt weitere Tages-Zeilen ans Ende der Liste an, inkl. Monats-Überschrift
+// beim Überschreiten einer Monatsgrenze — reine Orientierungshilfe beim
+// langen Scrollen, sonst sähen sich zu viele "1", "2", "3" … zu ähnlich.
+function appendPlanListChunk(numDays) {
+  const container = calendarContainerEl.querySelector(".plan-list");
+  if (!container || !planListNextDate || planListDaysRendered >= PLAN_LIST_MAX_DAYS) return;
+  const eventsByDate = eventsByDateMap();
+  let cursor = new Date(planListNextDate);
+  let html = "";
+  for (let i = 0; i < numDays; i++) {
+    const monthKey = `${cursor.getFullYear()}-${cursor.getMonth()}`;
+    if (monthKey !== planListMonthKey) {
+      const label = cursor.toLocaleDateString("de-DE", { month: "long", year: "numeric" });
+      html += `<div class="plan-list-month-heading">${label.charAt(0).toUpperCase() + label.slice(1)}</div>`;
+      planListMonthKey = monthKey;
+    }
+    html += planListDayRowHtml(cursor, eventsByDate);
+    cursor = addDays(cursor, 1);
+  }
+  container.insertAdjacentHTML("beforeend", html);
+  planListNextDate = cursor;
+  planListDaysRendered += numDays;
+}
+
+// loadPlanList() ruft renderCalendar() auch bei jedem 5s-Poll auf (neue/
+// geänderte Termine) — ein kompletter Neuaufbau würde dabei jedes Mal die
+// Scroll-Position und schon geladenen Tage verwerfen. Ist die Liste schon
+// aufgebaut, werden deshalb nur die Termine JE TAG aktualisiert, ohne die
+// Tages-Zeilen selbst anzufassen. Ein echter Neustart (Wechsel auf "Termine"
+// oder Klick auf "Heute", siehe dort) leert vorher gezielt den Container.
+function renderPlanListView() {
+  const existing = calendarContainerEl.querySelector(".plan-list");
+  if (existing) {
+    const eventsByDate = eventsByDateMap();
+    existing.querySelectorAll(".plan-list-day").forEach((dayEl) => {
+      const dayEvents = eventsByDate.get(dayEl.dataset.date) || [];
+      dayEl.querySelector(".plan-list-events").innerHTML = dayEvents.map(planListEventHtml).join("");
+    });
+    return;
+  }
+
+  calendarContainerEl.innerHTML = `<div class="plan-list"></div>`;
+  planListNextDate = new Date();
+  planListNextDate.setHours(0, 0, 0, 0);
+  planListMonthKey = null;
+  planListDaysRendered = 0;
+  appendPlanListChunk(PLAN_LIST_CHUNK_DAYS);
+}
+
+// Eine delegierte, dauerhafte Klick-Erkennung statt pro Chip — Chips kommen
+// laufend per appendPlanListChunk dazu, ein erneutes Verdrahten wäre unnötig
+// (und würde bei jedem Chunk mehr Listener stapeln).
+if (calendarContainerEl) {
+  calendarContainerEl.addEventListener("click", (e) => {
+    if (calendarView !== "list") return;
+    const chip = e.target.closest(".plan-list-chip");
+    if (!chip) return;
+    // Server filtert lastDatedEvents bereits auf das, was diese Person
+    // sehen darf — siehe renderMonthView weiter oben.
+    const event = lastDatedEvents.find((ev) => String(ev.id) === chip.dataset.id);
+    if (event) openEditPlanModal(event);
+  });
+}
+
+// Ein einziger, dauerhafter Scroll-Listener auf dem eigentlichen Scroll-
+// Container (.app-shell, siehe dort) statt pro Render neu angemeldet —
+// no-op außer in der "Termine"-Ansicht.
+if (appShellEl) {
+  appShellEl.addEventListener("scroll", () => {
+    if (calendarView !== "list") return;
+    const nearBottom = appShellEl.scrollTop + appShellEl.clientHeight > appShellEl.scrollHeight - 600;
+    if (nearBottom) appendPlanListChunk(PLAN_LIST_CHUNK_DAYS);
   });
 }
 
@@ -2101,6 +2224,11 @@ function updateCalendarViewSwitchUI() {
   calendarViewSwitchEl.querySelectorAll(".filter").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.calview === calendarView);
   });
+  // "Termine" scrollt endlos statt zu blättern — ‹/› hätten dort nichts zum
+  // Umschalten (siehe renderPlanListView), "Heute" bleibt als Sprung-zurück.
+  const isList = calendarView === "list";
+  if (calPrevBtn) calPrevBtn.classList.toggle("hidden", isList);
+  if (calNextBtn) calNextBtn.classList.toggle("hidden", isList);
 }
 
 function renderCalendar() {
@@ -2111,6 +2239,8 @@ function renderCalendar() {
     renderMonthView();
   } else if (calendarView === "week") {
     renderTimeGridView([...Array(7)].map((_, i) => addDays(startOfWeekMonday(calendarAnchor), i)));
+  } else if (calendarView === "list") {
+    renderPlanListView();
   } else {
     renderTimeGridView([calendarAnchor]);
   }
@@ -2134,6 +2264,9 @@ const calNextBtn = document.getElementById("calNextBtn");
 const calTodayBtn = document.getElementById("calTodayBtn");
 
 function shiftCalendarAnchor(dir) {
+  // "Termine" hat kein Blättern (endlos scrollbar, siehe renderPlanListView)
+  // — weder ‹/›-Buttons (ausgeblendet) noch Wisch-Geste sollen hier etwas tun.
+  if (calendarView === "list") return;
   if (calendarView === "month") calendarAnchor = addMonths(calendarAnchor, dir);
   else if (calendarView === "week") calendarAnchor = addDays(calendarAnchor, dir * 7);
   else calendarAnchor = addDays(calendarAnchor, dir);
@@ -2145,6 +2278,10 @@ if (calTodayBtn) {
   calTodayBtn.addEventListener("click", () => {
     calendarAnchor = new Date();
     calendarAnchor.setHours(0, 0, 0, 0);
+    // "Termine" aktualisiert bei bereits aufgebauter Liste sonst nur die
+    // Termine je Tag (siehe renderPlanListView) — hier ist aber ein
+    // kompletter Neustart ab heute gewollt, deshalb Container vorher leeren.
+    if (calendarView === "list") calendarContainerEl.innerHTML = "";
     renderCalendar();
   });
 }

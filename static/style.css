@@ -319,6 +319,24 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .cal-event-pill{font-size:9.5px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cal-day-more{font-size:9px;color:var(--muted);font-weight:800;padding-left:2px}
 
+/* "Termine": kompakte, endlos scrollbare Tagesliste (siehe renderPlanListView
+   in app.js) — jede Zeile ein Tag, Datumsspalte links bleibt schmal, auch
+   Tage ohne Termin bekommen eine (dann leere) Zeile als Platzhalter. Die
+   Monats-Überschrift ist reine Orientierung beim langen Scrollen. */
+.plan-list{display:flex;flex-direction:column}
+.plan-list-month-heading{font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;padding:14px 0 6px}
+.plan-list-month-heading:first-child{padding-top:0}
+.plan-list-day{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--line);min-height:26px}
+.plan-list-day:last-child{border-bottom:none}
+.plan-list-daylabel{flex:none;width:30px;display:flex;flex-direction:column;align-items:center;line-height:1.15;padding-top:1px}
+.plan-list-daynum{font-size:13px;font-weight:800;color:var(--text)}
+.plan-list-dayname{font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:700}
+.plan-list-day.today .plan-list-daynum{color:var(--yellow)}
+.plan-list-events{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;justify-content:center}
+.plan-list-chip{display:flex;align-items:baseline;gap:7px;font-size:12px;font-weight:700;padding:4px 8px;border-radius:8px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;cursor:pointer}
+.plan-list-chip-time{flex:none;font-size:10.5px;font-weight:800;color:var(--muted)}
+.plan-list-chip-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+
 /* Wochen-/Tagesansicht: Stunden-Zeilen (6–23 Uhr) × Tages-Spalten. Jede
    Zelle enthält direkt ihre Termine (statt einzeln positionierter Blöcke),
    damit mehrere Termine zur selben Stunde einfach übereinander stapeln,
