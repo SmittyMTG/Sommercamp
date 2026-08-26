@@ -1545,22 +1545,6 @@ let calendarIsAdmin = false;
 function calEventColor(event) {
   return (event.created_by && USER_COLORS[event.created_by]) || "#ffd400";
 }
-function calEventTimeLabel(event) {
-  if (!event.uhrzeit) return "";
-  const start = event.uhrzeit.slice(0, 5);
-  return event.uhrzeit_ende ? `${start}–${event.uhrzeit_ende.slice(0, 5)}` : start;
-}
-// Für Tag-/Wochenraster: bei mehrtägigen Terminen ist an Start-/End-/
-// Zwischentagen jeweils nur eine Seite der Zeitspanne (oder gar keine)
-// sinnvoll — anders als calEventTimeLabel() fürs Monatsraster, das immer
-// den ganzen Termin in einer Zeile zusammenfasst.
-function calTimeGridEventLabel(event) {
-  const role = event._dayRole || "single";
-  if (role === "start") return `${event.uhrzeit.slice(0, 5)}→`;
-  if (role === "end") return event.uhrzeit_ende ? `→${event.uhrzeit_ende.slice(0, 5)}` : "";
-  if (role === "middle") return "";
-  return calEventTimeLabel(event);
-}
 function calEventChipHtml(event, cssClass) {
   const color = calEventColor(event);
   const pale = hexToRgba(color, 0.18);
@@ -1765,11 +1749,10 @@ function renderTimeGridView(days) {
       const color = calEventColor(event);
       const pale = hexToRgba(color, 0.18);
       const left = dayIndex * dayWidthPct + lane * laneWidthPct;
-      const time = days.length === 1 ? calTimeGridEventLabel(event) : "";
       const role = event._dayRole || "single";
       eventsHtml += `
         <div class="cal-time-event" data-id="${event.id}" data-day-role="${role}" style="--ev-color:${color};--ev-pale:${pale};top:${top}px;height:${height}px;left:${left}%;width:calc(${laneWidthPct}% - 2px)">
-          <span class="cal-time-event-label">${time ? `${time} ` : ""}${escapeHtml(event.bezeichnung)}</span>
+          <span class="cal-time-event-label">${escapeHtml(event.bezeichnung)}</span>
         </div>
       `;
     });
