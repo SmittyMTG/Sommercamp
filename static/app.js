@@ -425,11 +425,10 @@ function renderPrivateTaskItem(task) {
   const metaParts = [];
   if (task.deadline) {
     const label = `📅 ${formatDeadline(task.deadline)}`;
-    metaParts.push(overdue ? `<span class="danger">⚠️ ${label}</span>` : label);
+    metaParts.push(overdue ? `<span class="danger">${label}</span>` : label);
   }
   if (task.assignees && task.assignees.length) {
-    const verb = task.assignees.length > 1 ? "sind verantwortlich" : "ist verantwortlich";
-    metaParts.push(`${task.assignees.map((a) => nameTag(a.username)).join(", ")} ${verb}`);
+    metaParts.push(task.assignees.map((a) => nameTag(a.username)).join(", "));
   }
   // "Privat" (kein Projekt) wird bewusst nicht angezeigt — nur ein echtes
   // Projekt ist erwähnenswert, und landet dann hier am Ende der Meta-Zeile.
@@ -437,10 +436,6 @@ function renderPrivateTaskItem(task) {
 
   const categoryTag = task.category
     ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
-    : "";
-
-  const descHtml = task.beschreibung
-    ? `<p class="list-card-meta">${escapeHtml(task.beschreibung)}</p>`
     : "";
 
   const subitems = task.subitems || [];
@@ -470,7 +465,6 @@ function renderPrivateTaskItem(task) {
         <p class="list-card-title">${escapeHtml(task.titel)}</p>
         ${categoryTag}
         ${metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : ""}
-        ${descHtml}
         ${subitemsHtml}
       </div>
     </div>
