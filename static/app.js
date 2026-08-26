@@ -1108,11 +1108,13 @@ async function openEditPrivateTaskModal(task) {
 const addPrivateTaskButton = document.getElementById("addPrivateTaskButton");
 if (addPrivateTaskButton) addPrivateTaskButton.addEventListener("click", openAddPrivateTaskModal);
 
-/* ---------- Bottom-Nav: erstmal nur für Admins sichtbar (normale User sehen
-   ausschließlich die Kosten-Seite, ohne jede Navigation) ---------- */
+/* ---------- Bottom-Nav: für alle eingeloggten Personen sichtbar. Termine/
+   Aufgaben ohne Projekt-Freigabe bleiben trotzdem privat — das filtert
+   bereits der Server (_can_access_plan_event/_can_access_private_task in
+   main.py: nur eigene oder für ein eigenes Projekt freigegebene Einträge). */
 fetchUsersAndMe().then(({ me }) => {
   const bottomNavEl = document.getElementById("bottomNav");
-  if (bottomNavEl && me && isAdminRole(me.role)) {
+  if (bottomNavEl && me) {
     bottomNavEl.classList.remove("hidden");
   }
 });
