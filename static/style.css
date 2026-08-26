@@ -60,7 +60,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .plan-card.clickable{cursor:pointer;transition:background .15s}.plan-card.clickable:active{background:var(--surface)}
 .empty{border:1px dashed var(--line);border-radius:18px;padding:25px;text-align:center;color:var(--muted)}
 .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s;display:inline-block}
-.primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--yellow);color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
+.primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--me-color,var(--yellow));color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
 /* Zeigt an, dass "Filtern"/"Sortieren" gerade von der Grundeinstellung
    abweichen — gleiche Sprache wie die aktiven Filter-Pillen (eigene
    Nutzerfarbe statt neutralem Grau). */
@@ -99,7 +99,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .pager:empty{display:none;margin:0}
 .pager-nav,.pager-page{border:1px solid var(--line);background:var(--surface2);color:var(--text);border-radius:999px;min-width:32px;height:32px;padding:0 6px;font-weight:800;font-size:13px;cursor:pointer}
 .pager-nav[disabled]{opacity:.35;cursor:default}
-.pager-page.active{background:var(--yellow);border-color:var(--yellow);color:#111}
+.pager-page.active{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow));color:#111}
 .pager-ellipsis{color:var(--muted);padding:0 2px;font-weight:800}
 /* Dünner Hinweis-Button über der Liste, nur sichtbar, wenn man nicht mehr auf
    Seite 1 ist — bringt direkt zurück zu den neuesten Einträgen, ohne dafür
@@ -112,7 +112,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .compact-list .list-card-meta{font-size:11px;margin-top:1px}
 .list-card.clickable{cursor:pointer}.list-card.clickable:active{background:var(--surface2)}
 .list-card-content{flex:1;display:flex;align-items:center;gap:13px;min-width:0}
-.list-card-checkbox{width:24px;height:24px;flex-shrink:0;border-radius:999px;border:2px solid var(--line);background:none;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}.list-card-checkbox:active{transform:scale(.9)}.list-card-checkbox.checked{background:var(--yellow);border-color:var(--yellow)}.list-card-checkbox.checked::after{content:'✓';color:#111;font-weight:900;font-size:13px}
+.list-card-checkbox{width:24px;height:24px;flex-shrink:0;border-radius:999px;border:2px solid var(--line);background:none;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}.list-card-checkbox:active{transform:scale(.9)}.list-card-checkbox.checked{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow))}.list-card-checkbox.checked::after{content:'✓';color:#111;font-weight:900;font-size:13px}
 .list-card-text{flex:1;min-width:0}.list-card-title{font-weight:800;color:var(--text);margin:0;overflow-wrap:anywhere}.list-card-meta{font-size:12px;color:var(--muted);margin:3px 0 0;overflow-wrap:anywhere}
 /* Ausgaben-Liste: jede Kachel bleibt exakt gleich hoch, egal wie lang
    Betreff/Namen sind — jede Zeile bleibt einzeilig (kein Umbruch mehr); was
@@ -140,7 +140,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--red);color:#fff;font-size:10px;font-weight:900;line-height:1;margin-left:6px;vertical-align:middle}
 .bottom-nav button{position:relative}
 .bottom-nav .nav-badge{position:absolute;top:2px;right:18%;margin-left:0}
-.bottom-nav button{border:none;background:none;color:var(--muted);font-size:11px;padding:6px 2px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bottom-nav button span{display:block;font-size:19px;margin-bottom:3px}.bottom-nav button.active{color:var(--yellow);font-weight:900}
+.bottom-nav button{border:none;background:none;color:var(--muted);font-size:11px;padding:6px 2px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bottom-nav button span{display:block;font-size:19px;margin-bottom:3px}.bottom-nav button.active{color:var(--me-color,var(--yellow));font-weight:900}
 .screen{display:none}.screen.active{display:block}
 .form-stack{display:grid;gap:12px}.form-stack label{display:grid;gap:6px;color:var(--muted);font-size:13px;font-weight:700}.checkbox-group{display:grid;gap:6px}
 .form-row-2col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -189,7 +189,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .subitem-edit-row label span{overflow-wrap:anywhere}
 .subitem-edit-row input[type=checkbox]{width:auto;flex-shrink:0}
 #newSubitemInput{flex:1;min-width:0}
-input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13;color:var(--text);border-radius:13px;padding:13px;outline:none}textarea{min-height:90px;resize:vertical}input:focus,select:focus,textarea:focus{border-color:var(--yellow)}
+input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13;color:var(--text);border-radius:13px;padding:13px;outline:none}textarea{min-height:90px;resize:vertical}input:focus,select:focus,textarea:focus{border-color:var(--me-color,var(--yellow))}
 .error-text{color:var(--red)!important;margin:0}.checkbox-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.check-card{display:flex!important;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px;overflow-wrap:anywhere;min-width:0}.check-card input{width:auto;flex-shrink:0}
 /* Farbige Chips statt Checkbox+Text (z. B. "Für wen?" bei Ausgaben) — blass
    in der Nutzerfarbe solange unausgewählt, voll gesättigt sobald ausgewählt.
@@ -232,7 +232,7 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .delete-dialog .modal-card{border-left:4px solid var(--red)}.delete-dialog .warning-text{color:var(--red);margin:12px 0;font-weight:700}
 
 /* Offene Zahlungen: animierter Rechenweg */
-.link-button{background:none;border:none;color:var(--yellow);font-weight:800;font-size:13px;padding:0;margin-left:4px;cursor:pointer;text-decoration:underline}
+.link-button{background:none;border:none;color:var(--me-color,var(--yellow));font-weight:800;font-size:13px;padding:0;margin-left:4px;cursor:pointer;text-decoration:underline}
 .link-button.danger{color:var(--red);margin-left:0}
 .settled-toggle{display:block;margin:20px 0 10px}
 .explain-body{min-height:220px;padding:6px 2px}
@@ -271,7 +271,7 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .explain-chain{display:flex;align-items:center;gap:6px;margin-bottom:14px}
 .explain-chain-node{font-size:13px;flex:none}
 .explain-chain-arrow{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;min-width:0}
-.explain-chain-amount{font-weight:900;color:var(--yellow);font-size:12px;white-space:nowrap}
+.explain-chain-amount{font-weight:900;color:var(--me-color,var(--yellow));font-size:12px;white-space:nowrap}
 /* Mehrere Ketten untereinander auf einer Folie statt einzeln durchklickbar —
    Trennlinie zwischen den Ketten, damit klar bleibt, wo eine endet und die
    nächste anfängt. */
@@ -284,7 +284,7 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .explain-controls button{flex:none}
 .explain-dots{display:flex;gap:5px}
 .explain-dot{width:6px;height:6px;border-radius:50%;background:var(--line)}
-.explain-dot.active{background:var(--yellow)}
+.explain-dot.active{background:var(--me-color,var(--yellow))}
 
 
 /* Geldfluss-Diagramm (Offene Zahlungen) */
@@ -312,9 +312,9 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .cal-day-cell{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:6px 5px;min-height:62px;display:flex;flex-direction:column;gap:3px;cursor:pointer;transition:background .15s,border-color .15s;min-width:0}
 .cal-day-cell:active{background:var(--surface2)}
 .cal-day-cell.other-month{opacity:.35}
-.cal-day-cell.today{border-color:var(--yellow)}
+.cal-day-cell.today{border-color:var(--me-color,var(--yellow))}
 .cal-day-num{font-size:12px;font-weight:800;color:var(--text)}
-.cal-day-cell.today .cal-day-num{color:var(--yellow)}
+.cal-day-cell.today .cal-day-num{color:var(--me-color,var(--yellow))}
 .cal-day-events{display:flex;flex-direction:column;gap:2px;min-width:0}
 .cal-event-pill{font-size:9.5px;font-weight:700;padding:2px 5px;border-radius:5px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cal-day-more{font-size:9px;color:var(--muted);font-weight:800;padding-left:2px}
@@ -331,7 +331,7 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .plan-list-daylabel{flex:none;width:30px;display:flex;flex-direction:column;align-items:center;line-height:1.15;padding-top:1px}
 .plan-list-daynum{font-size:13px;font-weight:800;color:var(--text)}
 .plan-list-dayname{font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:700}
-.plan-list-day.today .plan-list-daynum{color:var(--yellow)}
+.plan-list-day.today .plan-list-daynum{color:var(--me-color,var(--yellow))}
 .plan-list-events{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;justify-content:center}
 .plan-list-chip{display:flex;align-items:baseline;gap:7px;font-size:12px;font-weight:700;padding:4px 8px;border-radius:8px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;cursor:pointer}
 .plan-list-chip-time{flex:none;font-size:10.5px;font-weight:800;color:var(--muted)}
@@ -344,7 +344,7 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .cal-time-grid{display:grid;grid-template-columns:38px repeat(var(--cal-cols,1),minmax(0,1fr));border-top:1px solid var(--line);border-left:1px solid var(--line);border-radius:12px;overflow:hidden}
 .cal-corner{background:var(--surface);border-bottom:1px solid var(--line)}
 .cal-col-header{background:var(--surface);border-bottom:1px solid var(--line);border-right:1px solid var(--line);text-align:center;font-size:11px;font-weight:800;padding:7px 2px;color:var(--muted)}
-.cal-col-header.today{color:var(--yellow)}
+.cal-col-header.today{color:var(--me-color,var(--yellow))}
 /* Dunkler als die Wochentags-Überschriften (--muted), damit die schmale
    Stundenspalte sichtbar zurücktritt statt gleich stark wie "Mo"/"Di" zu wirken. */
 .cal-hour-label{box-sizing:border-box;background:var(--bg);border-bottom:1px solid var(--line);border-right:1px solid var(--line);font-size:9.5px;color:#6e6e78;text-align:right;padding:3px 4px 0 0;font-weight:700}
