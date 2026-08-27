@@ -119,7 +119,7 @@ class PlanEventCreate(BaseModel):
     # Erzeugungs-Befehl beim Anlegen/Bearbeiten.
     recurrence_freq: str | None = None  # "daily" | "weekly" | "monthly" | "yearly"
     recurrence_interval: int = 1
-    recurrence_end_mode: str | None = None  # "count" | "until"
+    recurrence_end_mode: str | None = None  # "never" | "count" | "until"
     recurrence_count: int | None = None
     recurrence_until: str | None = None
     tag_ids: list[int] = []
@@ -1007,7 +1007,22 @@ def _validate_plan_payload(payload: PlanEventCreate, db: Session):
 PLAN_RECURRENCE_FREQS = {"daily", "weekly", "monthly", "yearly"}
 # Sicherheitsnetz gegen Tippfehler ("täglich, endet nach 9999") statt echter
 # fachlicher Grenze — 366 deckt z. B. "täglich ein Jahr lang" komfortabel ab.
+# Gilt für "nach Anzahl"/"an einem Datum", wo die Person die Zahl selbst
+# eingibt (bzw. per Datum implizit vorgibt) und ein fester Deckel nur vor
+# Extremfällen schützt.
 PLAN_RECURRENCE_MAX_OCCURRENCES = 366
+
+# Bei "nie" (kein explizites Ende) ist dagegen NICHTS über die gewünschte
+# Serienlänge bekannt — derselbe feste Deckel wäre bei "jährlich" 366 JAHRE
+# statt der bei "täglich" gemeinten ~1 Jahr. Der Horizont richtet sich daher
+# nach der Häufigkeit: ein an der Frequenz orientierter, plausibler Zeitraum
+# statt einer Anzahl.
+PLAN_RECURRENCE_NEVER_MAX_OCCURRENCES = {
+    "daily": 366,  # ~1 Jahr
+    "weekly": 260,  # ~5 Jahre
+    "monthly": 60,  # ~5 Jahre
+    "yearly": 20,  # 20 Jahre
+}
 
 
 def _validate_recurrence_payload(payload: PlanEventCreate, event_date: date):
@@ -1023,7 +1038,13 @@ def _validate_recurrence_payload(payload: PlanEventCreate, event_date: date):
     if interval < 1 or interval > 365:
         return JSONResponse(status_code=400, content={"error": "Ungültiger Wiederholungs-Abstand"})
 
-    end_mode = payload.recurrence_end_mode or "count"
+    end_mode = payload.recurrence_end_mode or "never"
+    if end_mode == "never":
+        # Kein Enddatum/keine Anzahl gewünscht — _generate_recurring_events
+        # deckelt trotzdem hart bei PLAN_RECURRENCE_MAX_OCCURRENCES, damit
+        # daraus nie eine echt endlose Serie wird.
+        return (payload.recurrence_freq, interval, "never", None, None)
+
     if end_mode == "until":
         if not payload.recurrence_until:
             return JSONResponse(status_code=400, content={"error": "Enddatum der Serie fehlt"})
@@ -1080,6 +1101,11 @@ def _generate_recurring_events(
     normaler Termin fälschlich als "Serie mit 1 Mitglied" markiert)."""
     span_days = (base_event.datum_ende - base_event.datum).days if base_event.datum_ende else 0
     group_id = base_event.recurrence_group or uuid.uuid4().hex[:12]
+    max_occurrences = (
+        PLAN_RECURRENCE_NEVER_MAX_OCCURRENCES.get(freq, PLAN_RECURRENCE_MAX_OCCURRENCES)
+        if end_mode == "never"
+        else PLAN_RECURRENCE_MAX_OCCURRENCES
+    )
 
     created = []
     current_date = base_event.datum
@@ -1087,7 +1113,7 @@ def _generate_recurring_events(
     while True:
         if end_mode == "count" and occurrences >= count:
             break
-        if occurrences >= PLAN_RECURRENCE_MAX_OCCURRENCES:
+        if occurrences >= max_occurrences:
             break
         current_date = _add_interval(current_date, freq, interval)
         if end_mode == "until" and current_date > until:

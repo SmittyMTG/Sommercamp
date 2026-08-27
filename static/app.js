@@ -2817,23 +2817,24 @@ function planModalBodyHtml(prefill = {}, projects = [], tags = []) {
                 <label>Wiederholung
                   <select id="planRecurrenceFreqSelect">
                     <option value="daily">Täglich</option>
-                    <option value="weekly" selected>Wöchentlich</option>
+                    <option value="weekly">Wöchentlich</option>
                     <option value="monthly">Monatlich</option>
-                    <option value="yearly">Jährlich</option>
+                    <option value="yearly" selected>Jährlich</option>
                   </select>
                 </label>
-                <label>Alle <span id="planRecurrenceIntervalUnit">Wochen</span>
+                <label>Alle <span id="planRecurrenceIntervalUnit">Jahre</span>
                   <input type="number" id="planRecurrenceIntervalInput" min="1" max="365" value="1">
                 </label>
               </div>
               <div class="form-row-2col">
                 <label>Endet
                   <select id="planRecurrenceEndModeSelect">
+                    <option value="never" selected>Nie</option>
                     <option value="count">nach Anzahl</option>
                     <option value="until">an einem Datum</option>
                   </select>
                 </label>
-                <label id="planRecurrenceCountWrap">Anzahl Termine
+                <label id="planRecurrenceCountWrap" class="hidden">Anzahl Termine
                   <input type="number" id="planRecurrenceCountInput" min="2" max="366" value="10">
                 </label>
                 <label id="planRecurrenceUntilWrap" class="hidden">Bis einschließlich
@@ -2971,9 +2972,8 @@ function wirePlanRecurrenceUI() {
     intervalUnit.textContent = PLAN_RECURRENCE_UNIT_LABELS[freqSelect.value] || "";
   });
   endModeSelect.addEventListener("change", () => {
-    const untilMode = endModeSelect.value === "until";
-    countWrap.classList.toggle("hidden", untilMode);
-    untilWrap.classList.toggle("hidden", !untilMode);
+    countWrap.classList.toggle("hidden", endModeSelect.value !== "count");
+    untilWrap.classList.toggle("hidden", endModeSelect.value !== "until");
   });
 }
 
