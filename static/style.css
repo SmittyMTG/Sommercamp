@@ -161,7 +161,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .sort-select{margin-bottom:16px}.costs-view{display:grid;gap:2px}
 /* h3/p behalten sonst ihre Browser-Standardmargins (~1em oben+unten) — macht
    zusammen mit dem grid-gap oben einen viel zu großen Abstand zwischen
-   Überschrift und Beschreibungstext bei "Offen"/"Erhaltene Zahlungen"/"Log". */
+   Überschrift und Beschreibungstext bei "Offen"/"Zahlungen"/"Log". */
 .costs-view h3,.costs-view .view-heading-row{margin:0 0 4px}
 .costs-view>p.muted{margin:0 0 10px}
 .view-heading-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
@@ -170,7 +170,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 /* line-height:1 hält die Kachel bewusst niedriger als die H3-Zeilenhöhe —
    sonst bestimmt der Chip (statt der Überschrift) die Höhe der ganzen Zeile
    und der Untertitel darunter beginnt tiefer als bei Überschriften ohne
-   Chip (z. B. "Erhaltene Zahlungen"). */
+   Chip (z. B. "Zahlungen"). */
 .balance-chip{display:flex;flex-direction:row;align-items:center;gap:6px;text-align:right;flex-shrink:0;line-height:1}
 .balance-chip-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
 .balance-chip-value{font-size:10px;font-weight:900}

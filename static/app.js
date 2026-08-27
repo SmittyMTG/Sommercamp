@@ -4209,7 +4209,7 @@ if (settlementExplainPrevBtn) {
   });
 }
 
-/* ---------- Kosten: Erhaltene Zahlungen ---------- */
+/* ---------- Kosten: Zahlungen ---------- */
 const receivedListEl = document.getElementById("receivedList");
 
 function renderReceivedItem(r) {
@@ -4261,7 +4261,7 @@ function renderReceivedItem(r) {
 
 let lastReceivedSignature = null;
 
-// Rote Zahl an "Kosten" (Bottom-Nav) und am "Erhaltene Zahlungen"-Tab, solange
+// Rote Zahl an "Kosten" (Bottom-Nav) und am "Zahlungen"-Tab, solange
 // mindestens eine Zahlung auf Bestätigung wartet — auf einen Blick ersichtlich,
 // dass hier etwas zu tun ist.
 function updateReceivedBadge(count) {
