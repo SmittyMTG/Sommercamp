@@ -1854,10 +1854,17 @@ function planListEventHtml(event) {
   const time = event.uhrzeit
     ? `${event.uhrzeit.slice(0, 5)}${event.uhrzeit_ende ? `–${event.uhrzeit_ende.slice(0, 5)}` : ""}`
     : "";
+  // "Auf Karte anzeigen" gibt's NUR noch hier rechts auf der Terminkarte,
+  // nicht mehr im Bearbeiten-Fenster — eigener Klick-Fall in der delegierten
+  // Chip-Erkennung unten, damit er öffnet statt das Bearbeiten-Modal.
+  const mapLink = event.location
+    ? `<a href="${mapsUrl(event.location)}" target="_blank" rel="noopener" class="plan-list-chip-map" aria-label="Auf Karte anzeigen" title="Auf Karte anzeigen">📍</a>`
+    : "";
   return `
     <div class="plan-list-chip" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">
       ${time ? `<span class="plan-list-chip-time">${time}</span>` : ""}
       <span class="plan-list-chip-title">${escapeHtml(event.bezeichnung)}</span>
+      ${mapLink}
     </div>
   `;
 }
@@ -1941,6 +1948,9 @@ function renderPlanListView() {
 if (calendarContainerEl) {
   calendarContainerEl.addEventListener("click", (e) => {
     if (calendarView !== "list") return;
+    // Eigener Link mit eigenem target="_blank" — soll normal navigieren statt
+    // das Bearbeiten-Modal zu öffnen (siehe planListEventHtml).
+    if (e.target.closest(".plan-list-chip-map")) return;
     const chip = e.target.closest(".plan-list-chip");
     if (chip) {
       // Server filtert lastDatedEvents bereits auf das, was diese Person
@@ -2570,11 +2580,6 @@ function planModalBodyHtml(prefill = {}, projects = []) {
         </label>
         <label>Location (Adresse)
           <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
-          ${
-            prefill.location
-              ? `<a href="${mapsUrl(prefill.location)}" target="_blank" rel="noopener" class="link-button">📍 Auf Karte anzeigen</a>`
-              : ""
-          }
         </label>
       </div>
       <div class="form-row-2col">
