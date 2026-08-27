@@ -343,26 +343,6 @@ modalForm.addEventListener("submit", async (e) => {
   }
 });
 
-/* ---------- Aufgaben-Kategorien (z. B. "Einkauf", "Aufbau") — wird von der
-   privaten "Tasks"-Seite weiterverwendet, siehe unten ---------- */
-let cachedTaskCategories = null;
-
-async function fetchTaskCategories(forceRefresh) {
-  if (cachedTaskCategories && !forceRefresh) return cachedTaskCategories;
-  const res = await fetch("/api/task-categories");
-  cachedTaskCategories = res.ok ? await res.json() : [];
-  return cachedTaskCategories;
-}
-
-function taskCategoryOptionsHtml(categories, selectedId) {
-  return categories
-    .map(
-      (c) =>
-        `<option value="${c.id}"${c.id === selectedId ? " selected" : ""}>${escapeHtml(c.bezeichnung)}</option>`
-    )
-    .join("");
-}
-
 /* ---------- "Tasks" (privat/projekt-getaggt/öffentlich, für alle sichtbar
    über die Nav — welche Tasks tatsächlich ankommen, filtert serverseitig
    _can_access_private_task in main.py, siehe unten) ---------- */
@@ -377,6 +357,7 @@ let lastPrivateTaskItems = [];
 let privateTaskScopeMode = "alle";
 let privateTaskStatusFilter = "alle";
 let privateTaskProjectFilterId = "";
+let privateTaskTagFilterId = "";
 let privateTaskSortMode = "deadline";
 let cachedProjects = null;
 let cachedTags = null;
@@ -406,18 +387,17 @@ function tagChipsHtml(tags) {
     .join("");
 }
 
-// Normaler Chip: Checkbox+Name (Zuweisen) + Stift-Button (Umschalten in den
-// Bearbeiten-Modus desselben Chips, siehe tagPickerEditHtml).
+// Normaler Chip: Checkbox+Name zum Zuweisen, wie .beneficiary-chip. Gedrückt
+// halten (siehe wireTagPicker) klappt denselben Chip in die Inline-
+// Bearbeitung um (tagPickerEditHtml) — kein extra Stift-Button mehr, der
+// bei den ohnehin schon kompakten Chips nur unruhig aussah.
 function tagPickerChipHtml(tag, checked) {
   const pale = hexToRgba(tag.farbe, 0.16);
   return `
-    <span class="tag-picker-chip${checked ? " checked" : ""}" style="--chip-color:${tag.farbe};--chip-pale:${pale}" data-tag-id="${tag.id}">
-      <label class="tag-picker-chip-select">
-        <input type="checkbox" class="tag-picker-checkbox" value="${tag.id}"${checked ? " checked" : ""}>
-        <span>${escapeHtml(tag.bezeichnung)}</span>
-      </label>
-      <button type="button" class="tag-picker-edit-btn" aria-label="Tag bearbeiten">✏️</button>
-    </span>
+    <label class="tag-picker-chip${checked ? " checked" : ""}" style="--chip-color:${tag.farbe};--chip-pale:${pale}" data-tag-id="${tag.id}">
+      <input type="checkbox" class="tag-picker-checkbox" value="${tag.id}"${checked ? " checked" : ""}>
+      <span>${escapeHtml(tag.bezeichnung)}</span>
+    </label>
   `;
 }
 
@@ -486,6 +466,48 @@ function wireTagPicker(containerId) {
     if (chip) chip.classList.toggle("checked", cb.checked);
   });
 
+  // Gedrückt halten (statt eines eigenen Stift-Buttons) klappt einen Chip in
+  // die Inline-Bearbeitung um — gleiches Halten-Prinzip wie beim Anlegen
+  // eines Termins per Ziehen im Kalender (siehe wireCalDayDragCreate):
+  // Long-Press-Timer, der bei zu großer Bewegung (Scrollen gemeint) oder
+  // vorzeitigem Loslassen (normaler Tap zum Zuweisen) wieder verworfen wird.
+  // Der Chip wird noch VOR dem Loslassen ersetzt — das synthetische "click"
+  // danach hat dadurch kein Ziel mehr im DOM und togglet nicht versehentlich
+  // die Checkbox.
+  const TAG_LONG_PRESS_MS = 450;
+  const TAG_MOVE_CANCEL_PX = 10;
+  let longPressState = null;
+
+  function cancelLongPress() {
+    if (longPressState) clearTimeout(longPressState.timer);
+    longPressState = null;
+  }
+
+  container.addEventListener("pointerdown", (e) => {
+    const chip = e.target.closest(".tag-picker-chip:not(.tag-picker-chip-editing)");
+    if (!chip) return;
+    longPressState = { chip, startX: e.clientX, startY: e.clientY };
+    longPressState.timer = setTimeout(async () => {
+      longPressState = null;
+      if (navigator.vibrate) navigator.vibrate(15);
+      const tags = await fetchTags();
+      const tag = tags.find((t) => String(t.id) === chip.dataset.tagId);
+      if (tag) chip.replaceWith(htmlToElement(tagPickerEditHtml(tag, chip.classList.contains("checked"))));
+    }, TAG_LONG_PRESS_MS);
+  });
+  container.addEventListener("pointermove", (e) => {
+    if (!longPressState) return;
+    if (
+      Math.abs(e.clientX - longPressState.startX) > TAG_MOVE_CANCEL_PX ||
+      Math.abs(e.clientY - longPressState.startY) > TAG_MOVE_CANCEL_PX
+    ) {
+      cancelLongPress();
+    }
+  });
+  container.addEventListener("pointerup", cancelLongPress);
+  container.addEventListener("pointercancel", cancelLongPress);
+  container.addEventListener("pointerleave", cancelLongPress);
+
   // Enter in einem der Tag-Textfelder soll die jeweilige Tag-Aktion
   // auslösen statt (Standardverhalten von <input> in einem <form>) das
   // ganze Termin-/Task-Formular abzuschicken.
@@ -501,15 +523,6 @@ function wireTagPicker(containerId) {
   });
 
   container.addEventListener("click", async (e) => {
-    const editBtn = e.target.closest(".tag-picker-edit-btn");
-    if (editBtn) {
-      const chip = editBtn.closest(".tag-picker-chip");
-      const tags = await fetchTags();
-      const tag = tags.find((t) => String(t.id) === chip.dataset.tagId);
-      if (tag) chip.replaceWith(htmlToElement(tagPickerEditHtml(tag, chip.classList.contains("checked"))));
-      return;
-    }
-
     const cancelBtn = e.target.closest(".tag-edit-cancel");
     if (cancelBtn) {
       const chip = cancelBtn.closest(".tag-picker-chip");
@@ -596,7 +609,7 @@ function isPrivateTaskOverdue(task) {
   return new Date(task.deadline) < today;
 }
 
-function filterPrivateTasks(items, scopeMode, statusFilter, projectId) {
+function filterPrivateTasks(items, scopeMode, statusFilter, projectId, tagId) {
   let out = items;
   if (scopeMode === "meine" && cachedMe) out = out.filter((t) => t.assignees.some((a) => a.id === cachedMe.id));
   else if (scopeMode === "privat") out = out.filter((t) => !t.project && !t.is_public);
@@ -604,6 +617,7 @@ function filterPrivateTasks(items, scopeMode, statusFilter, projectId) {
   else if (statusFilter === "ueberfaellig") out = out.filter((t) => isPrivateTaskOverdue(t));
   if (projectId === "privat") out = out.filter((t) => !t.project && !t.is_public);
   else if (projectId) out = out.filter((t) => t.project && String(t.project.id) === String(projectId));
+  if (tagId) out = out.filter((t) => (t.tags || []).some((tag) => String(tag.id) === String(tagId)));
   return out;
 }
 
@@ -618,12 +632,6 @@ function sortPrivateTasks(items, mode) {
         if (!a.deadline) return 1;
         if (!b.deadline) return -1;
         return new Date(a.deadline) - new Date(b.deadline);
-      });
-    } else if (mode === "kategorie") {
-      out.sort((a, b) => {
-        const an = a.category ? a.category.bezeichnung : "￿";
-        const bn = b.category ? b.category.bezeichnung : "￿";
-        return an.localeCompare(bn, "de");
       });
     } else if (mode === "projekt") {
       out.sort((a, b) => {
@@ -660,9 +668,6 @@ function renderPrivateTaskItem(task) {
   if (task.is_public) metaParts.push(`🌐 Öffentlich`);
   else if (task.project) metaParts.push(`🗂 ${escapeHtml(task.project.name)}`);
 
-  const categoryTag = task.category
-    ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
-    : "";
   const taskTags = tagChipsHtml(task.tags);
 
   const subitems = task.subitems || [];
@@ -690,7 +695,7 @@ function renderPrivateTaskItem(task) {
       <button type="button" class="list-card-checkbox${task.done ? " checked" : ""}" aria-label="Erledigt"></button>
       <div class="list-card-text">
         <p class="list-card-title">${escapeHtml(task.titel)}</p>
-        ${categoryTag}${taskTags}
+        ${taskTags}
         ${metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : ""}
         ${subitemsHtml}
       </div>
@@ -749,7 +754,8 @@ function renderFilteredSortedPrivateTasks() {
     lastPrivateTaskItems,
     privateTaskScopeMode,
     privateTaskStatusFilter,
-    privateTaskProjectFilterId
+    privateTaskProjectFilterId,
+    privateTaskTagFilterId
   );
   const sorted = sortPrivateTasks(filtered, privateTaskSortMode);
 
@@ -802,7 +808,7 @@ if (privateTaskFilterRow) {
 // sichtbares Zeichen, dass gerade eingegrenzt/umsortiert ist.
 function updatePrivateTaskFilterSortButtons() {
   if (privateTaskFilterBtn) {
-    const active = privateTaskStatusFilter !== "alle" || !!privateTaskProjectFilterId;
+    const active = privateTaskStatusFilter !== "alle" || !!privateTaskProjectFilterId || !!privateTaskTagFilterId;
     privateTaskFilterBtn.classList.toggle("filter-btn-active", active);
   }
   if (privateTaskSortBtn) {
@@ -812,6 +818,7 @@ function updatePrivateTaskFilterSortButtons() {
 
 async function openPrivateTaskFilterModal() {
   const projects = await fetchProjects();
+  const tags = await fetchTags();
   openModal({
     eyebrow: "Tasks",
     title: "Filtern",
@@ -832,22 +839,31 @@ async function openPrivateTaskFilterModal() {
             ${privateTaskProjectOptionsHtml(projects, "")}
           </select>
         </label>
+        <label>Tag
+          <select id="taskFilterTagSelect">
+            <option value="">Alle Tags</option>
+            ${tags.map((t) => `<option value="${t.id}">${escapeHtml(t.bezeichnung)}</option>`).join("")}
+          </select>
+        </label>
       </div>
     `,
     onSubmit: async () => {
       privateTaskStatusFilter = document.getElementById("taskFilterStatusSelect").value;
       privateTaskProjectFilterId = document.getElementById("taskFilterProjectSelect").value;
+      privateTaskTagFilterId = document.getElementById("taskFilterTagSelect").value;
       closeModal();
       renderFilteredSortedPrivateTasks();
       updatePrivateTaskFilterSortButtons();
       saveUiState({
         tasksStatusFilter: privateTaskStatusFilter,
         tasksProjectFilter: privateTaskProjectFilterId,
+        tasksTagFilter: privateTaskTagFilterId,
       });
     },
   });
   document.getElementById("taskFilterStatusSelect").value = privateTaskStatusFilter;
   document.getElementById("taskFilterProjectSelect").value = privateTaskProjectFilterId;
+  document.getElementById("taskFilterTagSelect").value = privateTaskTagFilterId;
 }
 
 function openPrivateTaskSortModal() {
@@ -862,7 +878,6 @@ function openPrivateTaskSortModal() {
             <option value="deadline">Deadline</option>
             <option value="neu">Neu zuerst</option>
             <option value="titel">Titel (A–Z)</option>
-            <option value="kategorie">Kategorie</option>
             <option value="projekt">Projekt</option>
           </select>
         </label>
@@ -900,8 +915,7 @@ function privateTaskProjectOptionsHtml(projects, selectedId) {
     .join("");
 }
 
-function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, users = [], tags = []) {
-  const currentCategoryId = prefill.category ? prefill.category.id : null;
+function privateTaskModalBodyHtml(projects, isAdmin, prefill = {}, users = [], tags = []) {
   const currentProjectId = prefill.is_public ? "" : prefill.project ? prefill.project.id : "";
   const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 10) : "";
 
@@ -951,23 +965,6 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, u
       `
           : ""
       }
-      <label>Kategorie (optional)
-        <select id="privTaskCategorySelect">
-          <option value="">— keine Angabe —</option>
-          ${taskCategoryOptionsHtml(categories, currentCategoryId)}
-          <option value="__new__">+ Neue Kategorie anlegen…</option>
-        </select>
-      </label>
-      <div id="newPrivTaskCategoryFields" class="form-stack hidden">
-        <label>Farbe
-          <input type="color" id="newPrivTaskCategoryColor" value="#ffd400">
-        </label>
-        <label>Bezeichnung
-          <input type="text" id="newPrivTaskCategoryLabel" maxlength="16">
-        </label>
-        <button type="button" id="createPrivTaskCategoryBtn" class="secondary compact">Kategorie anlegen</button>
-        <p class="error-text hidden new-priv-task-category-error"></p>
-      </div>
       <div class="checkbox-group">
         <div class="eyebrow">Tags</div>
         <div id="privTaskTagsPicker">${tagPickerFieldHtml(tags, (prefill.tags || []).map((t) => t.id))}</div>
@@ -1024,49 +1021,6 @@ function wirePrivateTaskDeadlineShortcuts() {
   });
 }
 
-function wirePrivateTaskCategoryPicker() {
-  const categorySelect = document.getElementById("privTaskCategorySelect");
-  const newFields = document.getElementById("newPrivTaskCategoryFields");
-  categorySelect.addEventListener("change", () => {
-    newFields.classList.toggle("hidden", categorySelect.value !== "__new__");
-  });
-
-  document.getElementById("createPrivTaskCategoryBtn").addEventListener("click", async () => {
-    const colorInput = document.getElementById("newPrivTaskCategoryColor");
-    const labelInput = document.getElementById("newPrivTaskCategoryLabel");
-    const errEl = document.querySelector(".new-priv-task-category-error");
-    const bezeichnung = labelInput.value.trim();
-    errEl.classList.add("hidden");
-
-    if (!bezeichnung) {
-      errEl.textContent = "Bitte eine Bezeichnung eingeben.";
-      errEl.classList.remove("hidden");
-      return;
-    }
-
-    const res = await fetch("/api/task-categories", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ farbe: colorInput.value, bezeichnung }),
-    });
-
-    if (res.ok) {
-      const created = await res.json();
-      const categories = await fetchTaskCategories(true);
-      categorySelect.innerHTML = `
-        <option value="">— keine Angabe —</option>
-        ${taskCategoryOptionsHtml(categories, created.id)}
-        <option value="__new__">+ Neue Kategorie anlegen…</option>
-      `;
-      newFields.classList.add("hidden");
-    } else {
-      const data = await res.json().catch(() => ({}));
-      errEl.textContent = data.error || "Konnte nicht angelegt werden.";
-      errEl.classList.remove("hidden");
-    }
-  });
-}
-
 function wirePrivateTaskProjectPicker() {
   const projectSelect = document.getElementById("privTaskProjectSelect");
   const newFields = document.getElementById("newPrivTaskProjectFields");
@@ -1110,42 +1064,6 @@ function wirePrivateTaskProjectPicker() {
       errEl.classList.remove("hidden");
     }
   });
-}
-
-async function resolvePrivateTaskCategoryId() {
-  const categorySelect = document.getElementById("privTaskCategorySelect");
-  if (categorySelect.value !== "__new__") {
-    return { ok: true, category_id: categorySelect.value ? parseInt(categorySelect.value, 10) : null };
-  }
-
-  const colorInput = document.getElementById("newPrivTaskCategoryColor");
-  const labelInput = document.getElementById("newPrivTaskCategoryLabel");
-  const errEl = document.querySelector(".new-priv-task-category-error");
-  const bezeichnung = labelInput.value.trim();
-  errEl.classList.add("hidden");
-
-  if (!bezeichnung) {
-    errEl.textContent = "Bitte eine Bezeichnung für die neue Kategorie eingeben.";
-    errEl.classList.remove("hidden");
-    return { ok: false };
-  }
-
-  const res = await fetch("/api/task-categories", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ farbe: colorInput.value, bezeichnung }),
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    errEl.textContent = data.error || "Kategorie konnte nicht angelegt werden.";
-    errEl.classList.remove("hidden");
-    return { ok: false };
-  }
-
-  const created = await res.json();
-  await fetchTaskCategories(true);
-  return { ok: true, category_id: created.id };
 }
 
 async function resolvePrivateTaskProjectId() {
@@ -1198,9 +1116,6 @@ async function readPrivateTaskForm() {
     document.querySelectorAll("#privTaskTagsPicker .tag-picker-checkbox:checked")
   ).map((el) => parseInt(el.value, 10));
 
-  const categoryResult = await resolvePrivateTaskCategoryId();
-  if (!categoryResult.ok) return null;
-
   const projectResult = await resolvePrivateTaskProjectId();
   if (!projectResult.ok) return null;
 
@@ -1209,7 +1124,6 @@ async function readPrivateTaskForm() {
     beschreibung,
     assignee_ids,
     tag_ids,
-    category_id: categoryResult.category_id,
     project_id: projectResult.project_id,
     is_public: projectResult.is_public,
     deadline,
@@ -1252,14 +1166,19 @@ function renderPrivateTaskSubitemsEditor(taskId, subitems) {
   });
 }
 
+// Gibt die Hinzufügen-Funktion zurück, statt sie nur an addBtn zu hängen —
+// "Speichern" im Haupt-Formular ruft dieselbe Funktion vorher noch einmal
+// auf (siehe openEditPrivateTaskModal), damit ein eingetippter, aber nicht
+// per "+ Hinzufügen" bestätigter Text beim Speichern nicht verloren geht.
 function wirePrivateTaskSubitems(taskId, initialSubitems) {
   const subitems = (initialSubitems || []).slice();
   renderPrivateTaskSubitemsEditor(taskId, subitems);
 
   const addBtn = document.getElementById("addPrivSubitemBtn");
   const input = document.getElementById("newPrivSubitemInput");
-  if (!addBtn || !input) return;
-  addBtn.addEventListener("click", async () => {
+  if (!addBtn || !input) return null;
+
+  async function addSubitem() {
     const titel = input.value.trim();
     if (!titel) return;
     const res = await fetch(`/api/private-tasks/${taskId}/subitems`, {
@@ -1273,12 +1192,14 @@ function wirePrivateTaskSubitems(taskId, initialSubitems) {
       input.value = "";
       renderPrivateTaskSubitemsEditor(taskId, subitems);
     }
-  });
+  }
+
+  addBtn.addEventListener("click", addSubitem);
+  return addSubitem;
 }
 
 async function openAddPrivateTaskModal() {
   const { me, users } = await fetchUsersAndMe();
-  const categories = await fetchTaskCategories();
   const projects = await fetchProjects();
   const tags = await fetchTags();
   const isAdmin = !!(me && isAdminRole(me.role));
@@ -1288,7 +1209,6 @@ async function openAddPrivateTaskModal() {
     title: "Task hinzufügen",
     submitLabel: "Speichern",
     bodyHtml: privateTaskModalBodyHtml(
-      categories,
       projects,
       isAdmin,
       { assignees: me ? [{ id: me.id }] : [] },
@@ -1314,24 +1234,28 @@ async function openAddPrivateTaskModal() {
 
   wirePrivateTaskAssigneeChips();
   wirePrivateTaskDeadlineShortcuts();
-  wirePrivateTaskCategoryPicker();
   if (isAdmin) wirePrivateTaskProjectPicker();
   wireTagPicker("privTaskTagsPicker");
 }
 
 async function openEditPrivateTaskModal(task) {
   const { me, users } = await fetchUsersAndMe();
-  const categories = await fetchTaskCategories();
   const projects = await fetchProjects();
   const tags = await fetchTags();
   const isAdmin = !!(me && isAdminRole(me.role));
+  let addPendingSubitem = null;
 
   openModal({
     eyebrow: "Task",
     title: "Task bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, task, users, tags),
+    bodyHtml: privateTaskModalBodyHtml(projects, isAdmin, task, users, tags),
     onSubmit: async () => {
+      // Ein eingetippter, aber nicht extra per "+ Hinzufügen" bestätigter
+      // Teilaufgaben-Text soll beim Speichern nicht verloren gehen —
+      // "Speichern" stößt hier dieselbe Funktion wie "+ Hinzufügen" an.
+      if (addPendingSubitem) await addPendingSubitem();
+
       const form = await readPrivateTaskForm();
       if (!form) return;
 
@@ -1350,10 +1274,9 @@ async function openEditPrivateTaskModal(task) {
 
   wirePrivateTaskAssigneeChips();
   wirePrivateTaskDeadlineShortcuts();
-  wirePrivateTaskCategoryPicker();
   if (isAdmin) wirePrivateTaskProjectPicker();
   wireTagPicker("privTaskTagsPicker");
-  wirePrivateTaskSubitems(task.id, task.subitems);
+  addPendingSubitem = wirePrivateTaskSubitems(task.id, task.subitems);
 }
 
 const addPrivateTaskButton = document.getElementById("addPrivateTaskButton");
@@ -1416,6 +1339,7 @@ fetchUsersAndMe().then(async ({ me }) => {
     if (state.tasksScope) setPrivateTaskScopeUI(state.tasksScope);
     if (state.tasksStatusFilter) privateTaskStatusFilter = state.tasksStatusFilter;
     if (typeof state.tasksProjectFilter === "string") privateTaskProjectFilterId = state.tasksProjectFilter;
+    if (typeof state.tasksTagFilter === "string") privateTaskTagFilterId = state.tasksTagFilter;
     if (state.tasksSort) privateTaskSortMode = state.tasksSort;
     updatePrivateTaskFilterSortButtons();
   }

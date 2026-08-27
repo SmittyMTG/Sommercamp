@@ -23,7 +23,6 @@ from database import (
     Tag,
     PlanEventTag,
     PrivateTaskTag,
-    TaskCategory,
     Project,
     ProjectAccess,
     PrivateTask,
@@ -98,11 +97,6 @@ def log_action(db: Session, actor: str, affected: str | None, action: str, messa
 
 
 # --- Schemas ---
-class TaskCategoryCreate(BaseModel):
-    farbe: str
-    bezeichnung: str
-
-
 class PlanEventCreate(BaseModel):
     datum: str | None = None
     datum_ende: str | None = None
@@ -150,7 +144,6 @@ class PrivateTaskCreate(BaseModel):
     titel: str
     beschreibung: str | None = None
     deadline: str | None = None
-    category_id: int | None = None
     project_id: int | None = None
     assignee_ids: list[int] = []
     is_public: bool = False
@@ -308,46 +301,9 @@ def push_send(request: Request, payload: PushSendRequest, db: Session = Depends(
     return push.send_to_all(db, title, body)
 
 
-@app.get("/api/task-categories")
-def list_task_categories(request: Request, db: Session = Depends(get_db)):
-    if not get_current_user(request):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    categories = db.query(TaskCategory).order_by(TaskCategory.bezeichnung.asc()).all()
-    return [{"id": c.id, "farbe": c.farbe, "bezeichnung": c.bezeichnung} for c in categories]
-
-
-@app.post("/api/task-categories")
-def create_task_category(
-    request: Request, payload: TaskCategoryCreate, db: Session = Depends(get_db)
-):
-    if not get_current_user(request):
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    bezeichnung = payload.bezeichnung.strip()
-    if not bezeichnung:
-        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
-    if len(bezeichnung) > 16:
-        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 16 Zeichen haben"})
-
-    farbe = payload.farbe.strip().lower()
-    if not re.fullmatch(r"#[0-9a-f]{6}", farbe):
-        return JSONResponse(status_code=400, content={"error": "Farbe muss ein Hex-Code sein, z. B. #ffd400"})
-
-    existing = db.query(TaskCategory).filter(TaskCategory.bezeichnung == bezeichnung).first()
-    if existing:
-        return JSONResponse(status_code=400, content={"error": "Diese Bezeichnung gibt es schon"})
-
-    category = TaskCategory(farbe=farbe, bezeichnung=bezeichnung)
-    db.add(category)
-    db.commit()
-    db.refresh(category)
-    return {"id": category.id, "farbe": category.farbe, "bezeichnung": category.bezeichnung}
-
-
 # --- Tags: persönliche, pro Person selbst verwaltete Mehrfach-Markierung für
-# Termine und Tasks (siehe Tag-Modell in database.py für die Abgrenzung zu
-# TaskCategory oben). ---
+# Termine und Tasks (siehe Tag-Modell in database.py). Ersetzt die früheren,
+# globalen Aufgaben-Kategorien (/api/task-categories, entfernt). ---
 def _validate_tag_payload(payload: TagCreate):
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
@@ -512,10 +468,6 @@ def _validate_private_task_payload(payload: PrivateTaskCreate, db: Session):
         except ValueError:
             return JSONResponse(status_code=400, content={"error": "Ungültige Deadline"})
 
-    category_id = payload.category_id
-    if category_id is not None and not db.query(TaskCategory).filter(TaskCategory.id == category_id).first():
-        return JSONResponse(status_code=400, content={"error": "Unbekannte Kategorie"})
-
     project_id = payload.project_id
     if project_id is not None and not db.query(Project).filter(Project.id == project_id).first():
         return JSONResponse(status_code=400, content={"error": "Unbekanntes Projekt"})
@@ -527,19 +479,17 @@ def _validate_private_task_payload(payload: PrivateTaskCreate, db: Session):
         if not set(assignee_ids).issubset(valid_ids):
             return JSONResponse(status_code=400, content={"error": "Unbekannte Person ausgewählt"})
 
-    return titel, beschreibung, deadline, category_id, project_id, assignee_ids, payload.is_public
+    return titel, beschreibung, deadline, project_id, assignee_ids, payload.is_public
 
 
 def _serialize_private_task(
     task: PrivateTask,
     assignee_ids: list[int],
     usernames: dict[int, str],
-    categories: dict[int, TaskCategory],
     projects: dict[int, Project],
     subitems: list[PrivateTaskSubitem] | None = None,
     tags: list[Tag] | None = None,
 ) -> dict:
-    category = categories.get(task.category_id) if task.category_id else None
     project = projects.get(task.project_id) if task.project_id else None
     return {
         "id": task.id,
@@ -552,11 +502,6 @@ def _serialize_private_task(
         "assignees": [
             {"id": uid, "username": usernames.get(uid, "?")} for uid in assignee_ids
         ],
-        "category": (
-            {"id": category.id, "farbe": category.farbe, "bezeichnung": category.bezeichnung}
-            if category
-            else None
-        ),
         "project": ({"id": project.id, "name": project.name} if project else None),
         "subitems": [{"id": s.id, "titel": s.titel, "done": s.done} for s in (subitems or [])],
         "tags": _serialize_tags(tags),
@@ -574,7 +519,6 @@ def list_private_tasks(request: Request, db: Session = Depends(get_db)):
     visible = [t for t in tasks if _can_access_private_task(db, me, t)]
 
     usernames = {u.id: u.username for u in db.query(User).all()}
-    categories = {c.id: c for c in db.query(TaskCategory).all()}
     projects = {p.id: p for p in db.query(Project).all()}
     assignees_by_task: dict[int, list[int]] = {}
     for a in db.query(PrivateTaskAssignee).all():
@@ -596,7 +540,6 @@ def list_private_tasks(request: Request, db: Session = Depends(get_db)):
             t,
             assignees_by_task.get(t.id, []),
             usernames,
-            categories,
             projects,
             subitems_by_task.get(t.id, []),
             tags_by_task.get(t.id),
@@ -615,7 +558,7 @@ def create_private_task(request: Request, payload: PrivateTaskCreate, db: Sessio
     validated = _validate_private_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, category_id, project_id, assignee_ids, is_public = validated
+    titel, beschreibung, deadline, project_id, assignee_ids, is_public = validated
 
     if not _can_use_private_project(db, me, project_id):
         return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
@@ -625,7 +568,6 @@ def create_private_task(request: Request, payload: PrivateTaskCreate, db: Sessio
         beschreibung=beschreibung,
         deadline=deadline,
         created_by=username,
-        category_id=category_id,
         project_id=project_id,
         is_public=is_public,
     )
@@ -639,10 +581,9 @@ def create_private_task(request: Request, payload: PrivateTaskCreate, db: Sessio
     db.commit()
 
     usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
-    categories = {c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()}
     projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
     my_tags = _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids)
-    return _serialize_private_task(task, assignee_ids, usernames, categories, projects, [], my_tags)
+    return _serialize_private_task(task, assignee_ids, usernames, projects, [], my_tags)
 
 
 @app.patch("/api/private-tasks/{task_id}")
@@ -661,7 +602,7 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
     validated = _validate_private_task_payload(payload, db)
     if isinstance(validated, JSONResponse):
         return validated
-    titel, beschreibung, deadline, category_id, project_id, assignee_ids, is_public = validated
+    titel, beschreibung, deadline, project_id, assignee_ids, is_public = validated
 
     if project_id != task.project_id and not _can_use_private_project(db, me, project_id):
         return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
@@ -669,7 +610,6 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
     task.titel = titel
     task.beschreibung = beschreibung
     task.deadline = deadline
-    task.category_id = category_id
     task.project_id = project_id
     task.is_public = is_public
     db.query(PrivateTaskAssignee).filter(PrivateTaskAssignee.task_id == task.id).delete(synchronize_session=False)
@@ -679,7 +619,6 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
     db.commit()
 
     usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
-    categories = {c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()}
     projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
     subitems = (
         db.query(PrivateTaskSubitem)
@@ -688,7 +627,7 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
         .all()
     )
     my_tags = _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids)
-    return _serialize_private_task(task, assignee_ids, usernames, categories, projects, subitems, my_tags)
+    return _serialize_private_task(task, assignee_ids, usernames, projects, subitems, my_tags)
 
 
 @app.patch("/api/private-tasks/{task_id}/toggle")

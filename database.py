@@ -121,15 +121,6 @@ class PrivateTaskTag(Base):
     tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
 
 
-# Kategorie-Tag für Aufgaben (z. B. "Einkauf", "Aufbau") — erweiterbare Liste
-# aus Farbe + Kurzname, direkt beim Anlegen einer Aufgabe mit erstellbar.
-class TaskCategory(Base):
-    __tablename__ = "task_categories"
-    id = Column(Integer, primary_key=True, index=True)
-    farbe = Column(String(20), nullable=False)
-    bezeichnung = Column(String(16), nullable=False, unique=True)
-
-
 # Projekt-Tag für die private "Tasks"-Seite (main.py: /api/private-tasks): eine
 # Aufgabe ohne project_id gilt als "privat" (nur für created_by sichtbar), mit
 # project_id als geteilt mit allen Usern, die eine ProjectAccess-Zeile dafür
@@ -158,7 +149,10 @@ class PrivateTask(Base):
     beschreibung = Column(Text, nullable=True)
     done = Column(Boolean, nullable=False, default=False)
     deadline = Column(DateTime, nullable=True)
-    category_id = Column(Integer, ForeignKey("task_categories.id"), nullable=True)
+    # Kategorien wurden durch Tags ersetzt (siehe Tag-Modell oben) — die
+    # gleichnamige DB-Spalte/Tabelle bleibt unangetastet bestehen (nur nicht
+    # mehr gemappt), ein DROP auf der Live-DB wäre unnötiges Risiko für
+    # etwas, das ohnehin nirgends mehr gelesen wird.
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     # Gegenteil von "privat": für ALLE sichtbar, unabhängig von Projekt-
     # Mitgliedschaft (siehe _can_access_private_task in main.py).

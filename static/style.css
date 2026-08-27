@@ -189,10 +189,9 @@ label.plan-recurring-toggle{display:flex;align-items:center;gap:8px;color:var(--
 .balance-chip-value{font-size:10px;font-weight:900}
 .balance-chip-value.success{color:var(--green)}.balance-chip-value.danger{color:var(--red)}.balance-chip-value.muted{color:var(--muted)}
 .source-tag{display:inline-block;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;color:#111;margin-top:5px}
-.category-tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--muted);margin-top:5px}
-.category-tag-dot{width:7px;height:7px;border-radius:50%;flex:none}
-/* Persönliche Tags (siehe Tag-Modell) — gleiche Optik wie category-tag,
-   aber mehrere nebeneinander statt nur einer festen Kategorie. */
+/* Persönliche Tags (siehe Tag-Modell) — ersetzen die frühere Aufgaben-
+   Kategorie (fester Einzelwert), daher mehrere Chips nebeneinander statt
+   nur einem. */
 .tag-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--muted);margin-top:5px;margin-right:8px}
 .tag-chip-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .name-tag{display:inline-block;padding:1px 7px;border-radius:999px;font-weight:800;color:#111}
@@ -214,18 +213,22 @@ label.plan-recurring-toggle{display:flex;align-items:center;gap:8px;color:var(--
 .subitem-edit-row label span{overflow-wrap:anywhere}
 .subitem-edit-row input[type=checkbox]{width:auto;flex-shrink:0}
 /* Tag-Picker (Termin-/Task-Modal): Zuweisen+Anlegen+Bearbeiten+Löschen direkt
-   hier statt in einem eigenen "Tags verwalten"-Fenster. */
+   hier statt in einem eigenen "Tags verwalten"-Fenster. Gedrückt halten
+   (statt eines Stift-Buttons) wechselt in die Inline-Bearbeitung, siehe
+   wireTagPicker — daher user-select:none/touch-callout:none, damit ein
+   längerer Druck auf Touch-Geräten nicht Textauswahl/Kontextmenü auslöst. */
 .tag-picker-chips{margin-bottom:8px}
-.tag-picker-chip{position:relative;display:inline-flex;align-items:center;gap:2px;padding:3px 6px 3px 4px;border-radius:999px;font-weight:800;background:var(--chip-pale,var(--surface2));border:1px solid var(--chip-pale,var(--line));color:var(--text);transition:background .15s,border-color .15s,color .15s}
+/* "label.tag-picker-chip" statt nur ".tag-picker-chip" — braucht dieselbe
+   Selektor-Spezifität wie ".form-stack label" (Typ+Klasse), sonst gewinnt
+   dessen display:grid (siehe .plan-recurring-toggle weiter oben für
+   denselben Bug). */
+label.tag-picker-chip{position:relative;display:inline-flex;align-items:center;gap:6px;padding:9px 15px;border-radius:999px;font-weight:800;cursor:pointer;background:var(--chip-pale,var(--surface2));border:1px solid var(--chip-pale,var(--line));color:var(--text);transition:background .15s,border-color .15s,color .15s;-webkit-touch-callout:none;user-select:none}
 .tag-picker-chip.checked{background:var(--chip-color,var(--yellow));border-color:var(--chip-color,var(--yellow));color:#111}
-/* "label.tag-picker-chip-select" statt nur ".tag-picker-chip-select" —
-   braucht dieselbe Selektor-Spezifität wie ".form-stack label" (Typ+Klasse),
-   sonst gewinnt dessen display:grid (siehe .plan-recurring-toggle weiter
-   oben für denselben Bug). */
-label.tag-picker-chip-select{display:inline-flex;align-items:center;gap:6px;padding:6px 4px 6px 9px;cursor:pointer}
-.tag-picker-chip-select input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
-.tag-picker-edit-btn{flex:none;background:none;border:none;padding:4px;cursor:pointer;font-size:11px;line-height:1;opacity:.6;color:inherit}
-.tag-picker-edit-btn:hover{opacity:1}
+/* [type=checkbox] statt nur "input" — die Bearbeiten-Variante desselben
+   Chips (tag-picker-chip-editing) trägt aus JS-.closest()-Gründen ebenfalls
+   die Klasse tag-picker-chip, ihre Farbe-/Text-Inputs sollen davon aber
+   nicht mitversteckt werden. */
+.tag-picker-chip input[type=checkbox]{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
 .tag-picker-chip-editing{display:inline-flex;align-items:center;gap:4px;padding:4px;border-radius:999px;background:var(--surface2);border:1px solid var(--line)}
 .tag-picker-chip-editing input[type=color]{flex:none;width:30px;height:30px;padding:2px;border-radius:8px}
 .tag-picker-chip-editing input[type=text]{flex:none;width:110px;padding:6px 8px;font-size:12px;border-radius:8px}
