@@ -1942,11 +1942,17 @@ if (calendarContainerEl) {
   calendarContainerEl.addEventListener("click", (e) => {
     if (calendarView !== "list") return;
     const chip = e.target.closest(".plan-list-chip");
-    if (!chip) return;
-    // Server filtert lastDatedEvents bereits auf das, was diese Person
-    // sehen darf — siehe renderMonthView weiter oben.
-    const event = lastDatedEvents.find((ev) => String(ev.id) === chip.dataset.id);
-    if (event) openEditPlanModal(event);
+    if (chip) {
+      // Server filtert lastDatedEvents bereits auf das, was diese Person
+      // sehen darf — siehe renderMonthView weiter oben.
+      const event = lastDatedEvents.find((ev) => String(ev.id) === chip.dataset.id);
+      if (event) openEditPlanModal(event);
+      return;
+    }
+    // Klick auf den restlichen Tag (nicht auf einen Termin-Chip) legt einen
+    // neuen Termin für genau diesen Tag an, voreingestellt über "datum".
+    const dayRow = e.target.closest(".plan-list-day");
+    if (dayRow) openAddPlanModal({ datum: dayRow.dataset.date });
   });
 }
 
@@ -2125,12 +2131,14 @@ function renderTimeGridView(days) {
   });
 }
 
-// Tagesansicht: Zelle gedrückt halten und dann ziehen erlaubt, die Uhrzeit
-// beim Anlegen eines Termins noch anzupassen, statt nur die angetippte volle
-// Stunde zu treffen — release übernimmt die Stunde der zuletzt berührten
-// Zelle. Delegiert auf #calendarContainer (bleibt über Re-Renders hinweg
-// bestehen, anders als das darin neu aufgebaute Grid), daher nur einmal
-// verdrahtet statt bei jedem renderTimeGridView erneut.
+// Tages- und Wochenansicht: Zelle gedrückt halten und dann ziehen erlaubt,
+// die Uhrzeit beim Anlegen eines Termins noch anzupassen, statt nur die
+// angetippte volle Stunde zu treffen — release übernimmt die Stunde der
+// zuletzt berührten Zelle. In der Wochenansicht bleibt das Ziehen auf die
+// Start-Spalte (den Starttag) begrenzt, siehe die date-Prüfung im
+// pointermove-Handler. Delegiert auf #calendarContainer (bleibt über
+// Re-Renders hinweg bestehen, anders als das darin neu aufgebaute Grid),
+// daher nur einmal verdrahtet statt bei jedem renderTimeGridView erneut.
 const CAL_LONG_PRESS_MS = 350;
 const CAL_MOVE_CANCEL_PX = 10;
 let calDragState = null;
@@ -2182,7 +2190,7 @@ function wireCalDayDragCreate(container) {
   if (!container) return;
 
   container.addEventListener("pointerdown", (e) => {
-    if (calendarView !== "day") return;
+    if (calendarView !== "day" && calendarView !== "week") return;
     const cell = e.target.closest(".cal-hour-cell");
     if (!cell || e.target.closest(".cal-time-event")) return;
 
