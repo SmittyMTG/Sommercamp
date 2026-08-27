@@ -1857,8 +1857,14 @@ function planListEventHtml(event) {
   // "Auf Karte anzeigen" gibt's NUR noch hier rechts auf der Terminkarte,
   // nicht mehr im Bearbeiten-Fenster — eigener Klick-Fall in der delegierten
   // Chip-Erkennung unten, damit er öffnet statt das Bearbeiten-Modal.
+  // Location-Text daneben (per CSS-ellipsis gekürzt, falls zu lang) gibt
+  // schon in der Liste einen Hinweis aufs Wo, ohne erst den Pin antippen
+  // zu müssen — title="…" zeigt den vollen Text bei Bedarf per Tooltip.
   const mapLink = event.location
-    ? `<a href="${mapsUrl(event.location)}" target="_blank" rel="noopener" class="plan-list-chip-map" aria-label="Auf Karte anzeigen" title="Auf Karte anzeigen">📍</a>`
+    ? `
+      <span class="plan-list-chip-location" title="${escapeHtml(event.location)}">${escapeHtml(event.location)}</span>
+      <a href="${mapsUrl(event.location)}" target="_blank" rel="noopener" class="plan-list-chip-map" aria-label="Auf Karte anzeigen" title="Auf Karte anzeigen">📍</a>
+    `
     : "";
   return `
     <div class="plan-list-chip" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">

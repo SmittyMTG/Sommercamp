@@ -347,11 +347,14 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .plan-list-events{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;justify-content:center}
 .plan-list-chip{display:flex;align-items:baseline;gap:7px;font-size:12px;font-weight:700;padding:4px 8px;border-radius:8px;background:var(--ev-pale);border-left:3px solid var(--ev-color);color:var(--text);overflow:hidden;cursor:pointer}
 .plan-list-chip-time{flex:none;font-size:10.5px;font-weight:800;color:var(--muted)}
-.plan-list-chip-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.plan-list-chip-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex-shrink:1}
 /* Rechtsbündig via margin-left:auto statt justify-content:space-between —
-   damit rutscht der Link bei fehlender Location einfach weg, ohne die
-   Chip-Breite (durch overflow:hidden begrenzt) neu verteilen zu müssen. */
-.plan-list-chip-map{flex:none;margin-left:auto;padding-left:4px;font-size:13px;line-height:1}
+   damit rutscht der Block bei fehlender Location einfach weg, ohne die
+   Chip-Breite (durch overflow:hidden begrenzt) neu verteilen zu müssen.
+   max-width begrenzt den Location-Text, statt den Titel per flex-shrink
+   komplett zu verdrängen — beide bekommen so etwas Platz. */
+.plan-list-chip-location{flex-shrink:2;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;font-size:10.5px;font-weight:600;color:var(--muted)}
+.plan-list-chip-map{flex:none;padding-left:4px;font-size:13px;line-height:1}
 
 /* Wochen-/Tagesansicht: Stunden-Zeilen (6–23 Uhr) × Tages-Spalten. Jede
    Zelle enthält direkt ihre Termine (statt einzeln positionierter Blöcke),
