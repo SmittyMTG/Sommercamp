@@ -3886,8 +3886,8 @@ function renderSettledList() {
   if (!settledListEl || !settledToggleBtn) return;
   settledToggleBtn.classList.toggle("hidden", lastSettledPayments.length === 0);
   settledToggleBtn.textContent = settledListExpanded
-    ? "Bereits getilgt ausblenden"
-    : `Bereits getilgt anzeigen (${lastSettledPayments.length})`;
+    ? "Vergangene Zahlungen ausblenden"
+    : `Vergangene Zahlungen anzeigen (${lastSettledPayments.length})`;
   settledListEl.classList.toggle("hidden", !settledListExpanded);
   if (!settledListExpanded) return;
   settledListEl.innerHTML = "";
