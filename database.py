@@ -87,6 +87,40 @@ class PushSubscription(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+# Persönlicher Tag (Bezeichnung+Farbe), von jeder Person selbst verwaltet
+# (siehe /api/tags in main.py) — anders als TaskCategory unten (global, ein
+# fester Wert pro Aufgabe) ist ein Tag eine private Mehrfach-Markierung:
+# JEDE Person markiert Termine/Aufgaben mit ihren EIGENEN Tags, unabhängig
+# davon, wer den Termin/die Aufgabe angelegt hat oder ob andere sie auch
+# sehen. Zwei Personen können denselben geteilten Termin unterschiedlich
+# taggen, ohne sich gegenseitig zu beeinflussen (siehe _sync_personal_tags).
+class Tag(Base):
+    __tablename__ = "tags"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    bezeichnung = Column(String(24), nullable=False)
+    farbe = Column(String(7), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Verknüpfungstabellen Tag <-> Termin/Aufgabe (viele-zu-viele). Kein
+# ORM-Cascade konfiguriert — Aufräumen beim Löschen von Tag/Termin/Aufgabe
+# läuft wie überall in main.py per expliziter Query (siehe delete_tag,
+# delete_plan_event, delete_private_task).
+class PlanEventTag(Base):
+    __tablename__ = "plan_event_tags"
+    id = Column(Integer, primary_key=True, index=True)
+    plan_event_id = Column(Integer, ForeignKey("plan_events.id"), nullable=False, index=True)
+    tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
+
+
+class PrivateTaskTag(Base):
+    __tablename__ = "private_task_tags"
+    id = Column(Integer, primary_key=True, index=True)
+    private_task_id = Column(Integer, ForeignKey("private_tasks.id"), nullable=False, index=True)
+    tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
+
+
 # Kategorie-Tag für Aufgaben (z. B. "Einkauf", "Aufbau") — erweiterbare Liste
 # aus Farbe + Kurzname, direkt beim Anlegen einer Aufgabe mit erstellbar.
 class TaskCategory(Base):

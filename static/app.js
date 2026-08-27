@@ -379,6 +379,180 @@ let privateTaskStatusFilter = "alle";
 let privateTaskProjectFilterId = "";
 let privateTaskSortMode = "deadline";
 let cachedProjects = null;
+let cachedTags = null;
+
+// Persönliche Tags (Termine + Tasks): siehe Tag-Modell in database.py — jede
+// Person verwaltet ihre eigenen (Bezeichnung+Farbe), unabhängig davon, wer
+// den getaggten Termin/die Aufgabe angelegt hat.
+async function fetchTags(forceRefresh) {
+  if (cachedTags && !forceRefresh) return cachedTags;
+  const res = await fetch("/api/tags");
+  cachedTags = res.ok ? await res.json() : [];
+  return cachedTags;
+}
+
+// Toggle-Chips im selben Look wie die "Verantwortlich"-Chips bei Tasks
+// (.beneficiary-chip), nur mit der individuellen Tag-Farbe statt der
+// Nutzerfarbe — siehe wirePrivateTaskAssigneeChips für dasselbe
+// :has()-Fallback-Prinzip.
+function tagPickerHtml(tags, selectedIds) {
+  if (!tags.length) {
+    return `<p class="muted">Noch keine Tags angelegt — über 🏷️ oben rechts verwalten.</p>`;
+  }
+  const selected = new Set(selectedIds || []);
+  return tags
+    .map((t) => {
+      const pale = hexToRgba(t.farbe, 0.16);
+      const checked = selected.has(t.id);
+      return `<label class="beneficiary-chip${checked ? " checked" : ""}" style="--chip-color:${t.farbe};--chip-pale:${pale}"><input type="checkbox" class="tag-picker-checkbox" value="${t.id}"${checked ? " checked" : ""}><span>${escapeHtml(t.bezeichnung)}</span></label>`;
+    })
+    .join("");
+}
+
+function wireTagPickerChips(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.querySelectorAll(".beneficiary-chip").forEach((chip) => {
+    const cb = chip.querySelector(".tag-picker-checkbox");
+    if (!cb) return;
+    cb.addEventListener("change", () => chip.classList.toggle("checked", cb.checked));
+  });
+}
+
+function tagChipsHtml(tags) {
+  return (tags || [])
+    .map(
+      (t) =>
+        `<span class="tag-chip"><span class="tag-chip-dot" style="background:${escapeHtml(t.farbe)}"></span>${escapeHtml(t.bezeichnung)}</span>`
+    )
+    .join("");
+}
+
+/* ---------- Tags verwalten (Bezeichnung+Farbe, pro Person eigene Liste) ----------
+   Eigenes kleines Modal statt Teil eines anderen Formulars — alle Änderungen
+   hier speichern sofort einzeln (data-live-save, wie die Teilaufgaben-Liste
+   im Task-Modal), der Fußzeilen-Button dient nur zum Schließen. */
+function tagManageRowHtml(tag) {
+  return `
+    <div class="tag-manage-row" data-tag-id="${tag.id}">
+      <input type="color" class="tag-manage-color" value="${tag.farbe}" aria-label="Farbe">
+      <input type="text" class="tag-manage-label" maxlength="24" value="${escapeHtml(tag.bezeichnung)}" aria-label="Bezeichnung">
+      <button type="button" class="icon-button tag-manage-delete" aria-label="Löschen">${TRASH_ICON_SVG}</button>
+    </div>
+  `;
+}
+
+function tagsManageModalBodyHtml(tags) {
+  return `
+    <div class="form-stack" data-live-save>
+      <div id="tagsManageList" class="stack">
+        ${tags.length ? tags.map(tagManageRowHtml).join("") : `<p class="muted">Noch keine Tags angelegt.</p>`}
+      </div>
+      <div class="form-row-2col">
+        <input type="color" id="newTagColorInput" value="#ffd400" aria-label="Farbe">
+        <input type="text" id="newTagLabelInput" maxlength="24" placeholder="Neuer Tag …">
+      </div>
+      <button type="button" id="addTagBtn" class="secondary compact">+ Tag anlegen</button>
+      <p class="error-text hidden tags-manage-error"></p>
+    </div>
+  `;
+}
+
+function wireTagsManageModal() {
+  const listEl = document.getElementById("tagsManageList");
+  const addBtn = document.getElementById("addTagBtn");
+  const errEl = document.querySelector(".tags-manage-error");
+  if (!listEl) return;
+
+  function showError(msg) {
+    if (!errEl) return;
+    errEl.textContent = msg;
+    errEl.classList.remove("hidden");
+  }
+  function clearError() {
+    if (errEl) errEl.classList.add("hidden");
+  }
+
+  async function refreshList() {
+    const tags = await fetchTags(true);
+    listEl.innerHTML = tags.length ? tags.map(tagManageRowHtml).join("") : `<p class="muted">Noch keine Tags angelegt.</p>`;
+    wireRows();
+  }
+
+  function wireRows() {
+    listEl.querySelectorAll(".tag-manage-row").forEach((row) => {
+      const id = row.dataset.tagId;
+      const colorInput = row.querySelector(".tag-manage-color");
+      const labelInput = row.querySelector(".tag-manage-label");
+      const deleteBtn = row.querySelector(".tag-manage-delete");
+
+      async function saveRow() {
+        const bezeichnung = labelInput.value.trim();
+        if (!bezeichnung) return;
+        clearError();
+        const res = await fetch(`/api/tags/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bezeichnung, farbe: colorInput.value }),
+        });
+        cachedTags = null;
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showError(data.error || "Konnte nicht gespeichert werden.");
+        }
+      }
+      colorInput.addEventListener("change", saveRow);
+      labelInput.addEventListener("change", saveRow);
+
+      deleteBtn.addEventListener("click", async () => {
+        if (!(await showConfirm("Dieser Tag wird von allen Terminen/Aufgaben entfernt.", "Ja, löschen"))) return;
+        const res = await fetch(`/api/tags/${id}`, { method: "DELETE" });
+        cachedTags = null;
+        if (res.ok) refreshList();
+      });
+    });
+  }
+
+  if (addBtn) {
+    addBtn.addEventListener("click", async () => {
+      const colorInput = document.getElementById("newTagColorInput");
+      const labelInput = document.getElementById("newTagLabelInput");
+      const bezeichnung = labelInput.value.trim();
+      if (!bezeichnung) return;
+      clearError();
+      const res = await fetch("/api/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bezeichnung, farbe: colorInput.value }),
+      });
+      cachedTags = null;
+      if (res.ok) {
+        labelInput.value = "";
+        await refreshList();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showError(data.error || "Konnte nicht angelegt werden.");
+      }
+    });
+  }
+
+  wireRows();
+}
+
+async function openTagsManageModal() {
+  const tags = await fetchTags(true);
+  openModal({
+    eyebrow: "Verwaltung",
+    title: "Tags verwalten",
+    submitLabel: "Fertig",
+    bodyHtml: tagsManageModalBodyHtml(tags),
+    onSubmit: () => closeModal(),
+  });
+  wireTagsManageModal();
+}
+
+const tagsManageButton = document.getElementById("tagsManageButton");
+if (tagsManageButton) tagsManageButton.addEventListener("click", openTagsManageModal);
 
 function formatDeadline(iso) {
   const d = new Date(iso);
@@ -462,6 +636,7 @@ function renderPrivateTaskItem(task) {
   const categoryTag = task.category
     ? `<span class="category-tag"><span class="category-tag-dot" style="background:${escapeHtml(task.category.farbe)}"></span>${escapeHtml(task.category.bezeichnung)}</span>`
     : "";
+  const taskTags = tagChipsHtml(task.tags);
 
   const subitems = task.subitems || [];
   const subitemsDone = subitems.filter((s) => s.done).length;
@@ -488,7 +663,7 @@ function renderPrivateTaskItem(task) {
       <button type="button" class="list-card-checkbox${task.done ? " checked" : ""}" aria-label="Erledigt"></button>
       <div class="list-card-text">
         <p class="list-card-title">${escapeHtml(task.titel)}</p>
-        ${categoryTag}
+        ${categoryTag}${taskTags}
         ${metaParts.length ? `<p class="list-card-meta">${metaParts.join(" · ")}</p>` : ""}
         ${subitemsHtml}
       </div>
@@ -698,7 +873,7 @@ function privateTaskProjectOptionsHtml(projects, selectedId) {
     .join("");
 }
 
-function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, users = []) {
+function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, users = [], tags = []) {
   const currentCategoryId = prefill.category ? prefill.category.id : null;
   const currentProjectId = prefill.is_public ? "" : prefill.project ? prefill.project.id : "";
   const deadlineValue = prefill.deadline ? prefill.deadline.slice(0, 10) : "";
@@ -765,6 +940,10 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, u
         </label>
         <button type="button" id="createPrivTaskCategoryBtn" class="secondary compact">Kategorie anlegen</button>
         <p class="error-text hidden new-priv-task-category-error"></p>
+      </div>
+      <div class="checkbox-group">
+        <div class="eyebrow">Tags</div>
+        <div id="privTaskTagsPicker" class="chip-row">${tagPickerHtml(tags, (prefill.tags || []).map((t) => t.id))}</div>
       </div>
       <div class="deadline-row">
         <label>Deadline (optional)
@@ -988,6 +1167,9 @@ async function readPrivateTaskForm() {
   const assignee_ids = Array.from(
     document.querySelectorAll("#privTaskAssignees .beneficiary-checkbox:checked")
   ).map((el) => parseInt(el.value, 10));
+  const tag_ids = Array.from(
+    document.querySelectorAll("#privTaskTagsPicker .tag-picker-checkbox:checked")
+  ).map((el) => parseInt(el.value, 10));
 
   const categoryResult = await resolvePrivateTaskCategoryId();
   if (!categoryResult.ok) return null;
@@ -999,6 +1181,7 @@ async function readPrivateTaskForm() {
     titel,
     beschreibung,
     assignee_ids,
+    tag_ids,
     category_id: categoryResult.category_id,
     project_id: projectResult.project_id,
     is_public: projectResult.is_public,
@@ -1070,13 +1253,21 @@ async function openAddPrivateTaskModal() {
   const { me, users } = await fetchUsersAndMe();
   const categories = await fetchTaskCategories();
   const projects = await fetchProjects();
+  const tags = await fetchTags();
   const isAdmin = !!(me && isAdminRole(me.role));
 
   openModal({
     eyebrow: "Task",
     title: "Task hinzufügen",
     submitLabel: "Speichern",
-    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, { assignees: me ? [{ id: me.id }] : [] }, users),
+    bodyHtml: privateTaskModalBodyHtml(
+      categories,
+      projects,
+      isAdmin,
+      { assignees: me ? [{ id: me.id }] : [] },
+      users,
+      tags
+    ),
     onSubmit: async () => {
       const form = await readPrivateTaskForm();
       if (!form) return;
@@ -1098,19 +1289,21 @@ async function openAddPrivateTaskModal() {
   wirePrivateTaskDeadlineShortcuts();
   wirePrivateTaskCategoryPicker();
   if (isAdmin) wirePrivateTaskProjectPicker();
+  wireTagPickerChips("privTaskTagsPicker");
 }
 
 async function openEditPrivateTaskModal(task) {
   const { me, users } = await fetchUsersAndMe();
   const categories = await fetchTaskCategories();
   const projects = await fetchProjects();
+  const tags = await fetchTags();
   const isAdmin = !!(me && isAdminRole(me.role));
 
   openModal({
     eyebrow: "Task",
     title: "Task bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, task, users),
+    bodyHtml: privateTaskModalBodyHtml(categories, projects, isAdmin, task, users, tags),
     onSubmit: async () => {
       const form = await readPrivateTaskForm();
       if (!form) return;
@@ -1132,6 +1325,7 @@ async function openEditPrivateTaskModal(task) {
   wirePrivateTaskDeadlineShortcuts();
   wirePrivateTaskCategoryPicker();
   if (isAdmin) wirePrivateTaskProjectPicker();
+  wireTagPickerChips("privTaskTagsPicker");
   wirePrivateTaskSubitems(task.id, task.subitems);
 }
 
@@ -1866,10 +2060,20 @@ function planListEventHtml(event) {
       <a href="${mapsUrl(event.location)}" target="_blank" rel="noopener" class="plan-list-chip-map" aria-label="Auf Karte anzeigen" title="Auf Karte anzeigen">📍</a>
     `
     : "";
+  // Nur farbige Punkte statt voller Chips mit Text — für Namen ist in dieser
+  // kompakten einzeiligen Karte kein Platz, der Tag-Name steht im Tooltip.
+  // Gemeinsamer Wrapper statt einzelner Spans, damit die Punkte enger
+  // beieinander stehen als der reguläre 7px-Chip-Abstand der Karte.
+  const tagDots = event.tags && event.tags.length
+    ? `<span class="plan-list-chip-tags">${event.tags
+        .map((t) => `<span class="plan-list-chip-tag-dot" style="background:${escapeHtml(t.farbe)}" title="${escapeHtml(t.bezeichnung)}"></span>`)
+        .join("")}</span>`
+    : "";
   return `
     <div class="plan-list-chip" style="--ev-color:${color};--ev-pale:${pale}" data-id="${event.id}">
       ${time ? `<span class="plan-list-chip-time">${time}</span>` : ""}
       <span class="plan-list-chip-title">${escapeHtml(event.bezeichnung)}</span>
+      ${tagDots}
       ${mapLink}
     </div>
   `;
@@ -2552,7 +2756,7 @@ async function loadPlanList(force) {
 
 // Zwei Felder pro Zeile (Bezeichnung+Datum, Von+Bis) statt jedes für sich —
 // braucht deutlich weniger Scroll-Höhe im Erfassungsfenster.
-function planModalBodyHtml(prefill = {}, projects = []) {
+function planModalBodyHtml(prefill = {}, projects = [], tags = []) {
   const today = isoDateLocal(new Date());
   const startDateStr = prefill.datum || today;
   const startTimeStr = prefill.uhrzeit || "12:00";
@@ -2649,6 +2853,10 @@ function planModalBodyHtml(prefill = {}, projects = []) {
           ${privateTaskProjectOptionsHtml(projects, prefill.is_public ? "" : prefill.shared_project_id || "")}
         </select>
       </label>
+      <div class="checkbox-group">
+        <div class="eyebrow">Tags</div>
+        <div id="planTagsPicker" class="chip-row">${tagPickerHtml(tags, (prefill.tags || []).map((t) => t.id))}</div>
+      </div>
       <p class="error-text hidden plan-modal-error"></p>
       ${
         prefill.id && (calendarIsAdmin || (cachedMe && prefill.created_by === cachedMe.username))
@@ -2704,6 +2912,9 @@ async function submitPlanForm(url, method) {
       recurrence_end_mode: recurrenceEndMode,
       recurrence_count: recurrenceEndMode === "count" ? parseInt(document.getElementById("planRecurrenceCountInput").value, 10) || null : null,
       recurrence_until: recurrenceEndMode === "until" ? document.getElementById("planRecurrenceUntilInput").value || null : null,
+      tag_ids: Array.from(document.querySelectorAll("#planTagsPicker .tag-picker-checkbox:checked")).map((el) =>
+        parseInt(el.value, 10)
+      ),
     }),
   });
 
@@ -2796,27 +3007,31 @@ function wirePlanEndTimeAutoAdjust() {
 
 async function openAddPlanModal(prefill = {}) {
   const projects = await fetchProjects();
+  const tags = await fetchTags();
   openModal({
     eyebrow: "Kalender",
     title: "Termin hinzufügen",
-    bodyHtml: planModalBodyHtml(prefill, projects),
+    bodyHtml: planModalBodyHtml(prefill, projects, tags),
     onSubmit: () => submitPlanForm("/api/plan", "POST"),
   });
   wirePlanEndTimeAutoAdjust();
   wirePlanRecurrenceUI();
+  wireTagPickerChips("planTagsPicker");
 }
 
 async function openEditPlanModal(event) {
   const projects = await fetchProjects();
+  const tags = await fetchTags();
   openModal({
     eyebrow: "Kalender",
     title: "Termin bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: planModalBodyHtml(event, projects),
+    bodyHtml: planModalBodyHtml(event, projects, tags),
     onSubmit: () => submitPlanForm(`/api/plan/${event.id}`, "PATCH"),
   });
   wirePlanEndTimeAutoAdjust();
   wirePlanRecurrenceUI();
+  wireTagPickerChips("planTagsPicker");
   const deleteBtn = document.getElementById("planDeleteBtn");
   if (deleteBtn) deleteBtn.addEventListener("click", () => deletePlanEvent(event.id));
   const deleteSeriesBtn = document.getElementById("planDeleteSeriesBtn");

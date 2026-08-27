@@ -184,6 +184,10 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .source-tag{display:inline-block;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;color:#111;margin-top:5px}
 .category-tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--muted);margin-top:5px}
 .category-tag-dot{width:7px;height:7px;border-radius:50%;flex:none}
+/* Persönliche Tags (siehe Tag-Modell) — gleiche Optik wie category-tag,
+   aber mehrere nebeneinander statt nur einer festen Kategorie. */
+.tag-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--muted);margin-top:5px;margin-right:8px}
+.tag-chip-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .name-tag{display:inline-block;padding:1px 7px;border-radius:999px;font-weight:800;color:#111}
 .name-with-avatar{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
 .name-avatar{border-radius:999px;object-fit:cover;flex:none}
@@ -202,6 +206,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .subitem-edit-row label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);font-weight:400;flex:1;min-width:0}
 .subitem-edit-row label span{overflow-wrap:anywhere}
 .subitem-edit-row input[type=checkbox]{width:auto;flex-shrink:0}
+.tag-manage-row{display:flex;align-items:center;gap:8px}
+.tag-manage-row .tag-manage-color{flex:none;width:36px;height:36px;padding:2px}
+.tag-manage-row .tag-manage-label{flex:1;min-width:0}
 #newSubitemInput{flex:1;min-width:0}
 input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13;color:var(--text);border-radius:13px;padding:13px;outline:none}textarea{min-height:90px;resize:vertical}input:focus,select:focus,textarea:focus{border-color:var(--me-color,var(--yellow))}
 .error-text{color:var(--red)!important;margin:0}.checkbox-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.check-card{display:flex!important;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px;overflow-wrap:anywhere;min-width:0}.check-card input{width:auto;flex-shrink:0}
@@ -357,6 +364,8 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
    komplett zu verdrängen — beide bekommen so etwas Platz. */
 .plan-list-chip-location{flex-shrink:2;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%;font-size:10.5px;font-weight:600;color:var(--muted)}
 .plan-list-chip-map{flex:none;padding-left:4px;font-size:13px;line-height:1}
+.plan-list-chip-tags{flex:none;display:flex;align-items:center;gap:3px}
+.plan-list-chip-tag-dot{width:6px;height:6px;border-radius:50%;flex:none}
 
 /* Wochen-/Tagesansicht: Stunden-Zeilen (6–23 Uhr) × Tages-Spalten. Jede
    Zelle enthält direkt ihre Termine (statt einzeln positionierter Blöcke),

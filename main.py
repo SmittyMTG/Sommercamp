@@ -20,6 +20,9 @@ from database import (
     User,
     UserSession,
     PlanEvent,
+    Tag,
+    PlanEventTag,
+    PrivateTaskTag,
     TaskCategory,
     Project,
     ProjectAccess,
@@ -119,6 +122,7 @@ class PlanEventCreate(BaseModel):
     recurrence_end_mode: str | None = None  # "count" | "until"
     recurrence_count: int | None = None
     recurrence_until: str | None = None
+    tag_ids: list[int] = []
 
 
 class ExpenseCreate(BaseModel):
@@ -150,6 +154,12 @@ class PrivateTaskCreate(BaseModel):
     project_id: int | None = None
     assignee_ids: list[int] = []
     is_public: bool = False
+    tag_ids: list[int] = []
+
+
+class TagCreate(BaseModel):
+    bezeichnung: str
+    farbe: str
 
 
 class PrivateTaskSubitemCreate(BaseModel):
@@ -335,6 +345,128 @@ def create_task_category(
     return {"id": category.id, "farbe": category.farbe, "bezeichnung": category.bezeichnung}
 
 
+# --- Tags: persönliche, pro Person selbst verwaltete Mehrfach-Markierung für
+# Termine und Tasks (siehe Tag-Modell in database.py für die Abgrenzung zu
+# TaskCategory oben). ---
+def _validate_tag_payload(payload: TagCreate):
+    bezeichnung = payload.bezeichnung.strip()
+    if not bezeichnung:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
+    if len(bezeichnung) > 24:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 24 Zeichen haben"})
+    farbe = payload.farbe.strip().lower()
+    if not re.fullmatch(r"#[0-9a-f]{6}", farbe):
+        return JSONResponse(status_code=400, content={"error": "Farbe muss ein Hex-Code sein, z. B. #ffd400"})
+    return bezeichnung, farbe
+
+
+@app.get("/api/tags")
+def list_tags(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    tags = db.query(Tag).filter(Tag.user_id == me.id).order_by(Tag.bezeichnung.asc()).all()
+    return [{"id": t.id, "bezeichnung": t.bezeichnung, "farbe": t.farbe} for t in tags]
+
+
+@app.post("/api/tags")
+def create_tag(request: Request, payload: TagCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    validated = _validate_tag_payload(payload)
+    if isinstance(validated, JSONResponse):
+        return validated
+    bezeichnung, farbe = validated
+
+    if db.query(Tag).filter(Tag.user_id == me.id, Tag.bezeichnung == bezeichnung).first():
+        return JSONResponse(status_code=400, content={"error": "Diesen Tag hast du schon"})
+
+    tag = Tag(user_id=me.id, bezeichnung=bezeichnung, farbe=farbe)
+    db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    return {"id": tag.id, "bezeichnung": tag.bezeichnung, "farbe": tag.farbe}
+
+
+@app.patch("/api/tags/{tag_id}")
+def update_tag(tag_id: int, request: Request, payload: TagCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if not tag or tag.user_id != me.id:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    validated = _validate_tag_payload(payload)
+    if isinstance(validated, JSONResponse):
+        return validated
+    bezeichnung, farbe = validated
+
+    if db.query(Tag).filter(Tag.user_id == me.id, Tag.bezeichnung == bezeichnung, Tag.id != tag.id).first():
+        return JSONResponse(status_code=400, content={"error": "Diesen Tag hast du schon"})
+
+    tag.bezeichnung = bezeichnung
+    tag.farbe = farbe
+    db.commit()
+    return {"id": tag.id, "bezeichnung": tag.bezeichnung, "farbe": tag.farbe}
+
+
+@app.delete("/api/tags/{tag_id}")
+def delete_tag(tag_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    tag = db.query(Tag).filter(Tag.id == tag_id).first()
+    if tag:
+        # Tags sind rein persönlich — kein Admin-Bypass wie sonst üblich,
+        # fremde Tags gehen niemanden sonst etwas an.
+        if tag.user_id != me.id:
+            return JSONResponse(status_code=403, content={"error": "Nur eigene Tags löschbar"})
+        db.query(PlanEventTag).filter(PlanEventTag.tag_id == tag.id).delete(synchronize_session=False)
+        db.query(PrivateTaskTag).filter(PrivateTaskTag.tag_id == tag.id).delete(synchronize_session=False)
+        db.delete(tag)
+        db.commit()
+    return {"ok": True}
+
+
+def _sync_personal_tags(db: Session, me: User, link_model, item_fk_name: str, item_id: int, tag_ids: list[int]):
+    """Ersetzt die Tag-Zuordnungen DIESER Person für ein Item (Termin/Task)
+    durch tag_ids. Tags anderer Personen an demselben (ggf. geteilten) Item
+    bleiben unangetastet, da Tags rein persönlich sind (siehe Tag-Modell) —
+    daher wird hier gezielt nur unter den eigenen Tags aufgeräumt, nicht per
+    Filter auf item_id allein. tag_ids, die nicht der aufrufenden Person
+    gehören (z. B. Tippfehler/Manipulation), werden still ignoriert."""
+    my_tag_ids = {t.id for t in db.query(Tag).filter(Tag.user_id == me.id).all()}
+    keep_ids = my_tag_ids & set(tag_ids)
+
+    existing_links = db.query(link_model).filter(getattr(link_model, item_fk_name) == item_id).all()
+    for link in existing_links:
+        if link.tag_id in my_tag_ids:
+            db.delete(link)
+    for tid in keep_ids:
+        db.add(link_model(**{item_fk_name: item_id, "tag_id": tid}))
+
+
+def _my_tags_by_id(db: Session, me: User) -> dict[int, Tag]:
+    return {t.id: t for t in db.query(Tag).filter(Tag.user_id == me.id).all()}
+
+
+def _tags_for_ids(tags_by_id: dict[int, Tag], tag_ids: list[int]) -> list[Tag]:
+    return [tags_by_id[tid] for tid in tag_ids if tid in tags_by_id]
+
+
+def _serialize_tags(tags: list[Tag] | None) -> list[dict]:
+    return [{"id": t.id, "bezeichnung": t.bezeichnung, "farbe": t.farbe} for t in (tags or [])]
+
+
 # --- "Tasks"-Seite (privat/projekt-getaggt, aktuell nur für Felix erreichbar
 # über die Nav, siehe app.js) — Sichtbarkeit läuft über created_by ("privat")
 # bzw. ProjectAccess (geteiltes Projekt), nicht über eine feste Zuweisungsliste
@@ -405,6 +537,7 @@ def _serialize_private_task(
     categories: dict[int, TaskCategory],
     projects: dict[int, Project],
     subitems: list[PrivateTaskSubitem] | None = None,
+    tags: list[Tag] | None = None,
 ) -> dict:
     category = categories.get(task.category_id) if task.category_id else None
     project = projects.get(task.project_id) if task.project_id else None
@@ -426,6 +559,7 @@ def _serialize_private_task(
         ),
         "project": ({"id": project.id, "name": project.name} if project else None),
         "subitems": [{"id": s.id, "titel": s.titel, "done": s.done} for s in (subitems or [])],
+        "tags": _serialize_tags(tags),
     }
 
 
@@ -449,9 +583,23 @@ def list_private_tasks(request: Request, db: Session = Depends(get_db)):
     for s in db.query(PrivateTaskSubitem).order_by(PrivateTaskSubitem.created_at.asc()).all():
         subitems_by_task.setdefault(s.task_id, []).append(s)
 
+    # Nur MEINE eigenen Tags anhängen — siehe list_plan_events für die
+    # gleiche Logik/Begründung.
+    my_tags = _my_tags_by_id(db, me)
+    tags_by_task: dict[int, list[Tag]] = {}
+    if my_tags:
+        for link in db.query(PrivateTaskTag).filter(PrivateTaskTag.tag_id.in_(my_tags.keys())).all():
+            tags_by_task.setdefault(link.private_task_id, []).append(my_tags[link.tag_id])
+
     return [
         _serialize_private_task(
-            t, assignees_by_task.get(t.id, []), usernames, categories, projects, subitems_by_task.get(t.id, [])
+            t,
+            assignees_by_task.get(t.id, []),
+            usernames,
+            categories,
+            projects,
+            subitems_by_task.get(t.id, []),
+            tags_by_task.get(t.id),
         )
         for t in visible
     ]
@@ -487,13 +635,14 @@ def create_private_task(request: Request, payload: PrivateTaskCreate, db: Sessio
 
     for uid in assignee_ids:
         db.add(PrivateTaskAssignee(task_id=task.id, user_id=uid))
-    if assignee_ids:
-        db.commit()
+    _sync_personal_tags(db, me, PrivateTaskTag, "private_task_id", task.id, payload.tag_ids)
+    db.commit()
 
     usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
     categories = {c.id: c for c in db.query(TaskCategory).filter(TaskCategory.id == task.category_id).all()}
     projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
-    return _serialize_private_task(task, assignee_ids, usernames, categories, projects, [])
+    my_tags = _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids)
+    return _serialize_private_task(task, assignee_ids, usernames, categories, projects, [], my_tags)
 
 
 @app.patch("/api/private-tasks/{task_id}")
@@ -526,6 +675,7 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
     db.query(PrivateTaskAssignee).filter(PrivateTaskAssignee.task_id == task.id).delete(synchronize_session=False)
     for uid in assignee_ids:
         db.add(PrivateTaskAssignee(task_id=task.id, user_id=uid))
+    _sync_personal_tags(db, me, PrivateTaskTag, "private_task_id", task.id, payload.tag_ids)
     db.commit()
 
     usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
@@ -537,7 +687,8 @@ def update_private_task(task_id: int, request: Request, payload: PrivateTaskCrea
         .order_by(PrivateTaskSubitem.created_at.asc())
         .all()
     )
-    return _serialize_private_task(task, assignee_ids, usernames, categories, projects, subitems)
+    my_tags = _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids)
+    return _serialize_private_task(task, assignee_ids, usernames, categories, projects, subitems, my_tags)
 
 
 @app.patch("/api/private-tasks/{task_id}/toggle")
@@ -571,6 +722,7 @@ def delete_private_task(task_id: int, request: Request, db: Session = Depends(ge
             return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
         db.query(PrivateTaskSubitem).filter(PrivateTaskSubitem.task_id == task.id).delete(synchronize_session=False)
         db.query(PrivateTaskAssignee).filter(PrivateTaskAssignee.task_id == task.id).delete(synchronize_session=False)
+        db.query(PrivateTaskTag).filter(PrivateTaskTag.private_task_id == task.id).delete(synchronize_session=False)
         db.delete(task)
         db.commit()
     return {"ok": True}
@@ -972,7 +1124,7 @@ def _can_access_plan_event(db: Session, user: User, event: PlanEvent) -> bool:
     return bool(event.shared_project_id and event.shared_project_id in _user_project_ids(db, user.id))
 
 
-def _serialize_plan_event(e: PlanEvent) -> dict:
+def _serialize_plan_event(e: PlanEvent, tags: list[Tag] | None = None) -> dict:
     return {
         "id": e.id,
         "datum": e.datum.isoformat() if e.datum else None,
@@ -986,6 +1138,7 @@ def _serialize_plan_event(e: PlanEvent) -> dict:
         "is_public": e.is_public,
         "created_by": e.created_by,
         "recurrence_group": e.recurrence_group,
+        "tags": _serialize_tags(tags),
     }
 
 
@@ -999,7 +1152,17 @@ def list_plan_events(request: Request, db: Session = Depends(get_db)):
         return JSONResponse(status_code=404, content={"error": "not found"})
 
     events = db.query(PlanEvent).order_by(PlanEvent.datum.asc(), PlanEvent.uhrzeit.asc()).all()
-    return [_serialize_plan_event(e) for e in events if _can_access_plan_event(db, me, e)]
+    visible = [e for e in events if _can_access_plan_event(db, me, e)]
+
+    # Nur MEINE eigenen Tags anhängen (siehe Tag-Modell) — Tags anderer
+    # Personen an demselben geteilten Termin gehen hier niemanden etwas an.
+    my_tags = _my_tags_by_id(db, me)
+    tags_by_event: dict[int, list[Tag]] = {}
+    if my_tags:
+        for link in db.query(PlanEventTag).filter(PlanEventTag.tag_id.in_(my_tags.keys())).all():
+            tags_by_event.setdefault(link.plan_event_id, []).append(my_tags[link.tag_id])
+
+    return [_serialize_plan_event(e, tags_by_event.get(e.id)) for e in visible]
 
 
 @app.post("/api/plan")
@@ -1039,14 +1202,22 @@ def create_plan_event(
     )
     db.add(new_event)
 
+    recurring_events = []
     if recurrence:
         freq, interval, end_mode, until, count = recurrence
-        _generate_recurring_events(new_event, freq, interval, end_mode, until, count, db)
+        recurring_events = _generate_recurring_events(new_event, freq, interval, end_mode, until, count, db)
+
+    # flush statt commit: vergibt IDs an new_event + recurring_events, ohne
+    # die Transaktion schon abzuschließen — die Tag-Verknüpfungen unten
+    # brauchen die IDs als Fremdschlüssel.
+    db.flush()
+    for ev in [new_event, *recurring_events]:
+        _sync_personal_tags(db, me, PlanEventTag, "plan_event_id", ev.id, payload.tag_ids)
 
     db.commit()
     db.refresh(new_event)
 
-    return _serialize_plan_event(new_event)
+    return _serialize_plan_event(new_event, _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids))
 
 
 @app.patch("/api/plan/{event_id}")
@@ -1090,16 +1261,21 @@ def update_plan_event(
     existing.shared_project_id = shared_project_id
     existing.is_public = is_public
 
+    recurring_events = []
     if recurrence:
         # Erzeugt Folgetermine AB diesem (gerade gespeicherten) Termin — so
         # kann man auch einen längst bestehenden Einzeltermin nachträglich im
         # Bearbeiten-Fenster "wiederkehrend machen".
         freq, interval, end_mode, until, count = recurrence
-        _generate_recurring_events(existing, freq, interval, end_mode, until, count, db)
+        recurring_events = _generate_recurring_events(existing, freq, interval, end_mode, until, count, db)
+
+    db.flush()
+    for ev in [existing, *recurring_events]:
+        _sync_personal_tags(db, me, PlanEventTag, "plan_event_id", ev.id, payload.tag_ids)
 
     db.commit()
 
-    return _serialize_plan_event(existing)
+    return _serialize_plan_event(existing, _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids))
 
 
 @app.delete("/api/plan/{event_id}")
@@ -1115,6 +1291,7 @@ def delete_plan_event(event_id: int, request: Request, db: Session = Depends(get
         # projekt-geteilte) darf man weiterhin nur bearbeiten, nicht löschen.
         if event.created_by != username and not _require_admin(db, username):
             return JSONResponse(status_code=403, content={"error": "Nur eigene Termine oder als Admin löschbar"})
+        db.query(PlanEventTag).filter(PlanEventTag.plan_event_id == event.id).delete(synchronize_session=False)
         db.delete(event)
         db.commit()
     return {"ok": True}
@@ -1133,6 +1310,9 @@ def delete_plan_series(group_id: str, request: Request, db: Session = Depends(ge
     for event in events:
         if event.created_by != username and not is_admin:
             return JSONResponse(status_code=403, content={"error": "Nur eigene Termine oder als Admin löschbar"})
+    event_ids = [e.id for e in events]
+    if event_ids:
+        db.query(PlanEventTag).filter(PlanEventTag.plan_event_id.in_(event_ids)).delete(synchronize_session=False)
     for event in events:
         db.delete(event)
     db.commit()
