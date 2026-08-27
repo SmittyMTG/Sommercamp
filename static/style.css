@@ -161,8 +161,12 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .sort-select{margin-bottom:16px}.costs-view{display:grid;gap:2px}
 /* h3/p behalten sonst ihre Browser-Standardmargins (~1em oben+unten) — macht
    zusammen mit dem grid-gap oben einen viel zu großen Abstand zwischen
-   Überschrift und Beschreibungstext bei "Offen"/"Zahlungen"/"Log". */
-.costs-view h3,.costs-view .view-heading-row{margin:0 0 4px}
+   Überschrift und Beschreibungstext bei "Offen"/"Zahlungen"/"Log".
+   ">h3" statt "h3", damit das verschachtelte h3 in .view-heading-row (bei
+   "Ausgaben"/"Offen") nicht zusätzlich zur Row-Margin seine eigene Margin
+   bekommt — sonst ist der Abstand dort doppelt so groß wie bei "Log". */
+.costs-view>h3,.costs-view .view-heading-row{margin:0 0 4px}
+.view-heading-row h3{margin:0}
 .costs-view>p.muted{margin:0 0 10px}
 .view-heading-row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 /* Label steht links NEBEN dem Betrag (eine Zeile) statt darüber — sonst steht
