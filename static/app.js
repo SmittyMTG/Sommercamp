@@ -2600,6 +2600,45 @@ function planModalBodyHtml(prefill = {}, projects = []) {
         <input type="time" id="planUhrzeitInput" value="${startTimeStr}" aria-label="Von Uhrzeit" required>
         <input type="time" id="planUhrzeitEndeInput" value="${prefill.uhrzeit_ende || defaultEndTime}" aria-label="Bis Uhrzeit">
       </div>
+      ${
+        prefill.recurrence_group
+          ? `<p class="muted">🔁 Teil einer wiederkehrenden Serie. Änderungen hier gelten nur für diesen einen Termin.</p>`
+          : `
+            <label class="plan-recurring-toggle">
+              <input type="checkbox" id="planRecurringCheckbox">
+              🔁 Wiederkehrender Termin
+            </label>
+            <div id="planRecurrenceFields" class="form-stack hidden">
+              <div class="form-row-2col">
+                <label>Wiederholung
+                  <select id="planRecurrenceFreqSelect">
+                    <option value="daily">Täglich</option>
+                    <option value="weekly" selected>Wöchentlich</option>
+                    <option value="monthly">Monatlich</option>
+                    <option value="yearly">Jährlich</option>
+                  </select>
+                </label>
+                <label>Alle <span id="planRecurrenceIntervalUnit">Wochen</span>
+                  <input type="number" id="planRecurrenceIntervalInput" min="1" max="365" value="1">
+                </label>
+              </div>
+              <div class="form-row-2col">
+                <label>Endet
+                  <select id="planRecurrenceEndModeSelect">
+                    <option value="count">nach Anzahl</option>
+                    <option value="until">an einem Datum</option>
+                  </select>
+                </label>
+                <label id="planRecurrenceCountWrap">Anzahl Termine
+                  <input type="number" id="planRecurrenceCountInput" min="2" max="366" value="10">
+                </label>
+                <label id="planRecurrenceUntilWrap" class="hidden">Bis einschließlich
+                  <input type="date" id="planRecurrenceUntilInput" value="${startDateStr}">
+                </label>
+              </div>
+            </div>
+          `
+      }
       <label>Beschreibung
         <textarea id="planBeschreibungInput" placeholder="Was ist geplant?">${escapeHtml(prefill.beschreibung || "")}</textarea>
       </label>
@@ -2614,6 +2653,11 @@ function planModalBodyHtml(prefill = {}, projects = []) {
       ${
         prefill.id && (calendarIsAdmin || (cachedMe && prefill.created_by === cachedMe.username))
           ? `<button type="button" id="planDeleteBtn" class="link-button danger">🗑 Termin löschen</button>`
+          : ""
+      }
+      ${
+        prefill.recurrence_group && (calendarIsAdmin || (cachedMe && prefill.created_by === cachedMe.username))
+          ? `<button type="button" id="planDeleteSeriesBtn" class="link-button danger">🗑 Ganze Serie löschen</button>`
           : ""
       }
     </div>
@@ -2634,6 +2678,12 @@ async function submitPlanForm(url, method) {
 
   if (!datum || !uhrzeit || !bezeichnung) return;
 
+  const recurringCheckbox = document.getElementById("planRecurringCheckbox");
+  const isRecurring = !!(recurringCheckbox && recurringCheckbox.checked);
+  const recurrenceEndMode = isRecurring
+    ? document.getElementById("planRecurrenceEndModeSelect").value
+    : null;
+
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -2647,6 +2697,13 @@ async function submitPlanForm(url, method) {
       beschreibung,
       shared_project_id: sharedProjectId,
       is_public: isPublic,
+      recurrence_freq: isRecurring ? document.getElementById("planRecurrenceFreqSelect").value : null,
+      recurrence_interval: isRecurring
+        ? parseInt(document.getElementById("planRecurrenceIntervalInput").value, 10) || 1
+        : 1,
+      recurrence_end_mode: recurrenceEndMode,
+      recurrence_count: recurrenceEndMode === "count" ? parseInt(document.getElementById("planRecurrenceCountInput").value, 10) || null : null,
+      recurrence_until: recurrenceEndMode === "until" ? document.getElementById("planRecurrenceUntilInput").value || null : null,
     }),
   });
 
@@ -2670,6 +2727,43 @@ async function deletePlanEvent(eventId) {
     closeModal();
     loadPlanList(true);
   }
+}
+
+async function deletePlanSeries(groupId) {
+  if (!(await showConfirm("Alle Termine dieser wiederkehrenden Serie werden endgültig gelöscht.", "Ja, ganze Serie löschen"))) return;
+  const res = await fetch(`/api/plan/series/${groupId}`, { method: "DELETE" });
+  if (res.ok) {
+    closeModal();
+    loadPlanList(true);
+  }
+}
+
+// Checkbox blendet die Wiederholungsfelder ein/aus; die Einheit hinter "Alle
+// __" folgt der gewählten Häufigkeit (Tage/Wochen/Monate/Jahre), und "Endet"
+// schaltet zwischen "nach Anzahl" und "an einem Datum" um — siehe
+// planModalBodyHtml für die Feld-IDs.
+const PLAN_RECURRENCE_UNIT_LABELS = { daily: "Tage", weekly: "Wochen", monthly: "Monate", yearly: "Jahre" };
+
+function wirePlanRecurrenceUI() {
+  const checkbox = document.getElementById("planRecurringCheckbox");
+  const fields = document.getElementById("planRecurrenceFields");
+  if (!checkbox || !fields) return;
+
+  const freqSelect = document.getElementById("planRecurrenceFreqSelect");
+  const intervalUnit = document.getElementById("planRecurrenceIntervalUnit");
+  const endModeSelect = document.getElementById("planRecurrenceEndModeSelect");
+  const countWrap = document.getElementById("planRecurrenceCountWrap");
+  const untilWrap = document.getElementById("planRecurrenceUntilWrap");
+
+  checkbox.addEventListener("change", () => fields.classList.toggle("hidden", !checkbox.checked));
+  freqSelect.addEventListener("change", () => {
+    intervalUnit.textContent = PLAN_RECURRENCE_UNIT_LABELS[freqSelect.value] || "";
+  });
+  endModeSelect.addEventListener("change", () => {
+    const untilMode = endModeSelect.value === "until";
+    countWrap.classList.toggle("hidden", untilMode);
+    untilWrap.classList.toggle("hidden", !untilMode);
+  });
 }
 
 // Ändert man die Startzeit nachträglich im offenen Formular (nicht nur beim
@@ -2709,6 +2803,7 @@ async function openAddPlanModal(prefill = {}) {
     onSubmit: () => submitPlanForm("/api/plan", "POST"),
   });
   wirePlanEndTimeAutoAdjust();
+  wirePlanRecurrenceUI();
 }
 
 async function openEditPlanModal(event) {
@@ -2721,8 +2816,11 @@ async function openEditPlanModal(event) {
     onSubmit: () => submitPlanForm(`/api/plan/${event.id}`, "PATCH"),
   });
   wirePlanEndTimeAutoAdjust();
+  wirePlanRecurrenceUI();
   const deleteBtn = document.getElementById("planDeleteBtn");
   if (deleteBtn) deleteBtn.addEventListener("click", () => deletePlanEvent(event.id));
+  const deleteSeriesBtn = document.getElementById("planDeleteSeriesBtn");
+  if (deleteSeriesBtn) deleteSeriesBtn.addEventListener("click", () => deletePlanSeries(event.recurrence_group));
 }
 
 const addPlanButton = document.getElementById("addPlanButton");

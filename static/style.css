@@ -152,6 +152,8 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .screen{display:none}.screen.active{display:block}
 .form-stack{display:grid;gap:12px}.form-stack label{display:grid;gap:6px;color:var(--muted);font-size:13px;font-weight:700}.checkbox-group{display:grid;gap:6px}
 .form-row-2col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.plan-recurring-toggle{display:flex;align-items:center;gap:8px;color:var(--text);font-size:13px;font-weight:700}
+.plan-recurring-toggle input[type=checkbox]{width:auto;flex-shrink:0}
 /* Deadline bei Tasks: Datumsfeld so schmal wie möglich statt volle Breite,
    daneben "Heute!"/"Morgen!" zum schnellen Setzen (siehe privateTaskModalBodyHtml). */
 .deadline-row{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}

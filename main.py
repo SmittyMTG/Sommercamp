@@ -1,9 +1,10 @@
+import calendar
 import json
 import re
 import secrets
 import time
 import uuid
-from datetime import date, datetime as dt
+from datetime import date, datetime as dt, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -109,6 +110,15 @@ class PlanEventCreate(BaseModel):
     beschreibung: str | None = None
     shared_project_id: int | None = None
     is_public: bool = False
+    # Wiederkehrender Termin: recurrence_freq gesetzt heißt "beim Speichern
+    # zusätzliche Folgetermine erzeugen" (siehe _generate_recurring_events) —
+    # kein dauerhaft gepflegtes Wiederholungsmuster, nur ein einmaliger
+    # Erzeugungs-Befehl beim Anlegen/Bearbeiten.
+    recurrence_freq: str | None = None  # "daily" | "weekly" | "monthly" | "yearly"
+    recurrence_interval: int = 1
+    recurrence_end_mode: str | None = None  # "count" | "until"
+    recurrence_count: int | None = None
+    recurrence_until: str | None = None
 
 
 class ExpenseCreate(BaseModel):
@@ -842,6 +852,116 @@ def _validate_plan_payload(payload: PlanEventCreate, db: Session):
     )
 
 
+PLAN_RECURRENCE_FREQS = {"daily", "weekly", "monthly", "yearly"}
+# Sicherheitsnetz gegen Tippfehler ("täglich, endet nach 9999") statt echter
+# fachlicher Grenze — 366 deckt z. B. "täglich ein Jahr lang" komfortabel ab.
+PLAN_RECURRENCE_MAX_OCCURRENCES = 366
+
+
+def _validate_recurrence_payload(payload: PlanEventCreate, event_date: date):
+    """Wie _validate_plan_payload, aber für die optionalen Wiederholungs-Felder.
+    None heißt "keine Wiederholung gewünscht"; sonst ein Tupel
+    (freq, interval, end_mode, until, count) oder eine JSONResponse mit Fehler."""
+    if not payload.recurrence_freq:
+        return None
+    if payload.recurrence_freq not in PLAN_RECURRENCE_FREQS:
+        return JSONResponse(status_code=400, content={"error": "Ungültige Wiederholung"})
+
+    interval = payload.recurrence_interval or 1
+    if interval < 1 or interval > 365:
+        return JSONResponse(status_code=400, content={"error": "Ungültiger Wiederholungs-Abstand"})
+
+    end_mode = payload.recurrence_end_mode or "count"
+    if end_mode == "until":
+        if not payload.recurrence_until:
+            return JSONResponse(status_code=400, content={"error": "Enddatum der Serie fehlt"})
+        try:
+            until = date.fromisoformat(payload.recurrence_until)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültiges Enddatum der Serie"})
+        if until <= event_date:
+            return JSONResponse(status_code=400, content={"error": "Enddatum der Serie muss nach dem Termin liegen"})
+        return (payload.recurrence_freq, interval, "until", until, None)
+
+    if end_mode == "count":
+        count = payload.recurrence_count or 0
+        if count < 2 or count > PLAN_RECURRENCE_MAX_OCCURRENCES:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Anzahl muss zwischen 2 und {PLAN_RECURRENCE_MAX_OCCURRENCES} liegen"},
+            )
+        return (payload.recurrence_freq, interval, "count", None, count)
+
+    return JSONResponse(status_code=400, content={"error": "Ungültiges Serien-Ende"})
+
+
+def _add_interval(d: date, freq: str, n: int) -> date:
+    """Addiert n*Einheit auf d. Monat/Jahr klemmen einen überlaufenden
+    Kalendertag auf den letzten Tag des Zielmonats (z. B. 31. Jan + 1 Monat
+    -> 28./29. Feb statt eines ValueError durch date(y, m, 31))."""
+    if freq == "daily":
+        return d + timedelta(days=n)
+    if freq == "weekly":
+        return d + timedelta(weeks=n)
+    if freq == "monthly":
+        month_index = d.month - 1 + n
+        year = d.year + month_index // 12
+        month = month_index % 12 + 1
+        day = min(d.day, calendar.monthrange(year, month)[1])
+        return date(year, month, day)
+    if freq == "yearly":
+        year = d.year + n
+        day = 28 if (d.month == 2 and d.day == 29 and not calendar.isleap(year)) else d.day
+        return date(year, d.month, day)
+    raise ValueError(f"unknown freq {freq!r}")
+
+
+def _generate_recurring_events(
+    base_event: PlanEvent, freq: str, interval: int, end_mode: str, until: date | None, count: int | None, db: Session
+):
+    """Erzeugt die auf base_event folgenden Termine einer Serie als neue,
+    unabhängige Zeilen (base_event selbst bleibt der erste Termin) und
+    verknüpft alle über eine gemeinsame recurrence_group — rein zum
+    gruppierten Löschen der ganzen Serie, keine fortlaufend gepflegte
+    Wiederholungsregel. base_event.recurrence_group wird nur gesetzt, wenn
+    tatsächlich mindestens ein Folgetermin entsteht (sonst bliebe ein
+    normaler Termin fälschlich als "Serie mit 1 Mitglied" markiert)."""
+    span_days = (base_event.datum_ende - base_event.datum).days if base_event.datum_ende else 0
+    group_id = base_event.recurrence_group or uuid.uuid4().hex[:12]
+
+    created = []
+    current_date = base_event.datum
+    occurrences = 1  # base_event zählt als erster Termin der Serie
+    while True:
+        if end_mode == "count" and occurrences >= count:
+            break
+        if occurrences >= PLAN_RECURRENCE_MAX_OCCURRENCES:
+            break
+        current_date = _add_interval(current_date, freq, interval)
+        if end_mode == "until" and current_date > until:
+            break
+        new_event = PlanEvent(
+            datum=current_date,
+            datum_ende=(current_date + timedelta(days=span_days)) if span_days else None,
+            uhrzeit=base_event.uhrzeit,
+            uhrzeit_ende=base_event.uhrzeit_ende,
+            bezeichnung=base_event.bezeichnung,
+            location=base_event.location,
+            beschreibung=base_event.beschreibung,
+            shared_project_id=base_event.shared_project_id,
+            is_public=base_event.is_public,
+            created_by=base_event.created_by,
+            recurrence_group=group_id,
+        )
+        db.add(new_event)
+        created.append(new_event)
+        occurrences += 1
+
+    if created:
+        base_event.recurrence_group = group_id
+    return created
+
+
 def _can_access_plan_event(db: Session, user: User, event: PlanEvent) -> bool:
     """Ein Termin ist standardmäßig nur für die anlegende Person sichtbar —
     erst eine Freigabe für ein Projekt (shared_project_id) oder als öffentlich
@@ -865,6 +985,7 @@ def _serialize_plan_event(e: PlanEvent) -> dict:
         "shared_project_id": e.shared_project_id,
         "is_public": e.is_public,
         "created_by": e.created_by,
+        "recurrence_group": e.recurrence_group,
     }
 
 
@@ -898,6 +1019,10 @@ def create_plan_event(
     if not _can_use_private_project(db, me, shared_project_id):
         return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
 
+    recurrence = _validate_recurrence_payload(payload, event_date)
+    if isinstance(recurrence, JSONResponse):
+        return recurrence
+
     new_event = PlanEvent(
         datum=event_date,
         # eintägig (Ende == Von-Tag) bewusst als NULL gespeichert, nicht als
@@ -913,6 +1038,11 @@ def create_plan_event(
         created_by=username,
     )
     db.add(new_event)
+
+    if recurrence:
+        freq, interval, end_mode, until, count = recurrence
+        _generate_recurring_events(new_event, freq, interval, end_mode, until, count, db)
+
     db.commit()
     db.refresh(new_event)
 
@@ -946,6 +1076,10 @@ def update_plan_event(
     if shared_project_id != existing.shared_project_id and not _can_use_private_project(db, me, shared_project_id):
         return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
 
+    recurrence = _validate_recurrence_payload(payload, event_date)
+    if isinstance(recurrence, JSONResponse):
+        return recurrence
+
     existing.datum = event_date
     existing.datum_ende = event_date_ende if event_date_ende != event_date else None
     existing.uhrzeit = event_time
@@ -955,6 +1089,14 @@ def update_plan_event(
     existing.beschreibung = beschreibung
     existing.shared_project_id = shared_project_id
     existing.is_public = is_public
+
+    if recurrence:
+        # Erzeugt Folgetermine AB diesem (gerade gespeicherten) Termin — so
+        # kann man auch einen längst bestehenden Einzeltermin nachträglich im
+        # Bearbeiten-Fenster "wiederkehrend machen".
+        freq, interval, end_mode, until, count = recurrence
+        _generate_recurring_events(existing, freq, interval, end_mode, until, count, db)
+
     db.commit()
 
     return _serialize_plan_event(existing)
@@ -976,6 +1118,25 @@ def delete_plan_event(event_id: int, request: Request, db: Session = Depends(get
         db.delete(event)
         db.commit()
     return {"ok": True}
+
+
+@app.delete("/api/plan/series/{group_id}")
+def delete_plan_series(group_id: str, request: Request, db: Session = Depends(get_db)):
+    """Löscht alle Termine einer wiederkehrenden Serie auf einmal — sonst
+    müsste man z. B. 52 wöchentliche Termine einzeln entfernen."""
+    username = get_current_user(request)
+    if not username:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    events = db.query(PlanEvent).filter(PlanEvent.recurrence_group == group_id).all()
+    is_admin = _require_admin(db, username)
+    for event in events:
+        if event.created_by != username and not is_admin:
+            return JSONResponse(status_code=403, content={"error": "Nur eigene Termine oder als Admin löschbar"})
+    for event in events:
+        db.delete(event)
+    db.commit()
+    return {"ok": True, "deleted": len(events)}
 
 
 # --- User-Übersicht (für die Auswahl in der Ausgaben-Maske) ---

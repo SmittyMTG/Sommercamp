@@ -180,6 +180,13 @@ class PlanEvent(Base):
     is_public = Column(Boolean, nullable=False, default=False)
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Gemeinsame ID aller auf einmal erzeugten Termine einer wiederkehrenden
+    # Serie (siehe _generate_recurring_events in main.py) — NULL heißt
+    # "einzelner Termin". Rein zum Gruppieren fürs Löschen der ganzen Serie;
+    # die einzelnen Termine sind danach unabhängige Zeilen ohne fortlaufend
+    # gepflegte Wiederholungsregel (bewusst kein RRULE-Format o.ä., dafür ist
+    # der Anwendungsfall hier zu einfach).
+    recurrence_group = Column(String(32), nullable=True, index=True)
 
 
 # Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
@@ -261,6 +268,7 @@ _ensure_column("plan_events", "uhrzeit_ende", "TIME")
 _ensure_column("plan_events", "shared_project_id", "INTEGER")
 _ensure_column("plan_events", "datum_ende", "DATE")
 _ensure_column("plan_events", "is_public", "BOOLEAN", "DEFAULT 0")
+_ensure_column("plan_events", "recurrence_group", "TEXT")
 _ensure_column("private_tasks", "is_public", "BOOLEAN", "DEFAULT 0")
 
 
