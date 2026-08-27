@@ -383,40 +383,18 @@ let cachedTags = null;
 
 // Persönliche Tags (Termine + Tasks): siehe Tag-Modell in database.py — jede
 // Person verwaltet ihre eigenen (Bezeichnung+Farbe), unabhängig davon, wer
-// den getaggten Termin/die Aufgabe angelegt hat.
+// den getaggten Termin/die Aufgabe angelegt hat. Anlegen/Umbenennen/Farbe
+// ändern/Löschen passiert direkt im Tag-Picker der Termin-/Task-Eingabemaske
+// (kein eigenes "Tags verwalten"-Fenster mehr) — jede dieser Aktionen
+// speichert sofort einzeln (data-live-save), unabhängig vom "Speichern" des
+// umschließenden Formulars. Nur das ZUWEISEN (Checkbox an/aus) hängt am
+// normalen Formular-Speichern, damit "Abbrechen" eine Zuweisungsänderung
+// wie jedes andere Feld verwerfen kann.
 async function fetchTags(forceRefresh) {
   if (cachedTags && !forceRefresh) return cachedTags;
   const res = await fetch("/api/tags");
   cachedTags = res.ok ? await res.json() : [];
   return cachedTags;
-}
-
-// Toggle-Chips im selben Look wie die "Verantwortlich"-Chips bei Tasks
-// (.beneficiary-chip), nur mit der individuellen Tag-Farbe statt der
-// Nutzerfarbe — siehe wirePrivateTaskAssigneeChips für dasselbe
-// :has()-Fallback-Prinzip.
-function tagPickerHtml(tags, selectedIds) {
-  if (!tags.length) {
-    return `<p class="muted">Noch keine Tags angelegt — über 🏷️ oben rechts verwalten.</p>`;
-  }
-  const selected = new Set(selectedIds || []);
-  return tags
-    .map((t) => {
-      const pale = hexToRgba(t.farbe, 0.16);
-      const checked = selected.has(t.id);
-      return `<label class="beneficiary-chip${checked ? " checked" : ""}" style="--chip-color:${t.farbe};--chip-pale:${pale}"><input type="checkbox" class="tag-picker-checkbox" value="${t.id}"${checked ? " checked" : ""}><span>${escapeHtml(t.bezeichnung)}</span></label>`;
-    })
-    .join("");
-}
-
-function wireTagPickerChips(containerId) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  container.querySelectorAll(".beneficiary-chip").forEach((chip) => {
-    const cb = chip.querySelector(".tag-picker-checkbox");
-    if (!cb) return;
-    cb.addEventListener("change", () => chip.classList.toggle("checked", cb.checked));
-  });
 }
 
 function tagChipsHtml(tags) {
@@ -428,41 +406,69 @@ function tagChipsHtml(tags) {
     .join("");
 }
 
-/* ---------- Tags verwalten (Bezeichnung+Farbe, pro Person eigene Liste) ----------
-   Eigenes kleines Modal statt Teil eines anderen Formulars — alle Änderungen
-   hier speichern sofort einzeln (data-live-save, wie die Teilaufgaben-Liste
-   im Task-Modal), der Fußzeilen-Button dient nur zum Schließen. */
-function tagManageRowHtml(tag) {
+// Normaler Chip: Checkbox+Name (Zuweisen) + Stift-Button (Umschalten in den
+// Bearbeiten-Modus desselben Chips, siehe tagPickerEditHtml).
+function tagPickerChipHtml(tag, checked) {
+  const pale = hexToRgba(tag.farbe, 0.16);
   return `
-    <div class="tag-manage-row" data-tag-id="${tag.id}">
-      <input type="color" class="tag-manage-color" value="${tag.farbe}" aria-label="Farbe">
-      <input type="text" class="tag-manage-label" maxlength="24" value="${escapeHtml(tag.bezeichnung)}" aria-label="Bezeichnung">
-      <button type="button" class="icon-button tag-manage-delete" aria-label="Löschen">${TRASH_ICON_SVG}</button>
-    </div>
+    <span class="tag-picker-chip${checked ? " checked" : ""}" style="--chip-color:${tag.farbe};--chip-pale:${pale}" data-tag-id="${tag.id}">
+      <label class="tag-picker-chip-select">
+        <input type="checkbox" class="tag-picker-checkbox" value="${tag.id}"${checked ? " checked" : ""}>
+        <span>${escapeHtml(tag.bezeichnung)}</span>
+      </label>
+      <button type="button" class="tag-picker-edit-btn" aria-label="Tag bearbeiten">✏️</button>
+    </span>
   `;
 }
 
-function tagsManageModalBodyHtml(tags) {
+// Ersetzt denselben Chip temporär durch Farbe+Name+Speichern/Löschen/
+// Abbrechen — data-checked hält fest, ob der Chip vor dem Umschalten
+// angehakt war, damit "Speichern"/"Abbrechen" ihn korrekt wiederherstellen,
+// obwohl der Bearbeiten-Modus selbst keine Checkbox zeigt. data-live-save
+// nimmt die Eingaben hier aus der Änderungs-Erkennung des Hauptformulars
+// heraus (siehe snapshotModalFormState) — sie speichern ja schon sofort.
+function tagPickerEditHtml(tag, checked) {
   return `
-    <div class="form-stack" data-live-save>
-      <div id="tagsManageList" class="stack">
-        ${tags.length ? tags.map(tagManageRowHtml).join("") : `<p class="muted">Noch keine Tags angelegt.</p>`}
-      </div>
-      <div class="form-row-2col">
-        <input type="color" id="newTagColorInput" value="#ffd400" aria-label="Farbe">
-        <input type="text" id="newTagLabelInput" maxlength="24" placeholder="Neuer Tag …">
-      </div>
-      <button type="button" id="addTagBtn" class="secondary compact">+ Tag anlegen</button>
-      <p class="error-text hidden tags-manage-error"></p>
-    </div>
+    <span class="tag-picker-chip tag-picker-chip-editing" data-tag-id="${tag.id}" data-checked="${checked ? 1 : 0}" data-live-save>
+      <input type="color" class="tag-edit-color" value="${tag.farbe}" aria-label="Farbe">
+      <input type="text" class="tag-edit-label" maxlength="24" value="${escapeHtml(tag.bezeichnung)}" aria-label="Bezeichnung">
+      <button type="button" class="tag-edit-save" aria-label="Speichern">✓</button>
+      <button type="button" class="tag-edit-delete" aria-label="Löschen">${TRASH_ICON_SVG}</button>
+      <button type="button" class="tag-edit-cancel" aria-label="Abbrechen">✕</button>
+    </span>
   `;
 }
 
-function wireTagsManageModal() {
-  const listEl = document.getElementById("tagsManageList");
-  const addBtn = document.getElementById("addTagBtn");
-  const errEl = document.querySelector(".tags-manage-error");
-  if (!listEl) return;
+function tagPickerFieldHtml(tags, selectedIds) {
+  const selected = new Set(selectedIds || []);
+  const chips = tags.map((t) => tagPickerChipHtml(t, selected.has(t.id))).join("");
+  return `
+    <div class="chip-row tag-picker-chips">${chips}</div>
+    <div class="tag-picker-add-row" data-live-save>
+      <input type="color" class="tag-picker-new-color" value="#ffd400" aria-label="Farbe">
+      <input type="text" class="tag-picker-new-label" maxlength="24" placeholder="Neuer Tag …">
+      <button type="button" class="secondary compact tag-picker-add-btn">+ Tag</button>
+    </div>
+    <p class="error-text hidden tag-picker-error"></p>
+  `;
+}
+
+// Ein Element (statt outerHTML-String), um es direkt in den Picker
+// einzuhängen bzw. einen bestehenden Chip damit zu ersetzen.
+function htmlToElement(html) {
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = html.trim();
+  return wrapper.firstElementChild;
+}
+
+// Ein Wiring pro Picker-Container (Termin- UND Task-Modal rufen das mit
+// ihrer jeweiligen Container-ID auf) — komplett über Event-Delegation auf
+// dem Container, damit neu eingefügte/ersetzte Chips (Anlegen, Speichern,
+// Abbrechen) ohne erneutes Verdrahten funktionieren.
+function wireTagPicker(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const errEl = container.querySelector(".tag-picker-error");
 
   function showError(msg) {
     if (!errEl) return;
@@ -473,50 +479,85 @@ function wireTagsManageModal() {
     if (errEl) errEl.classList.add("hidden");
   }
 
-  async function refreshList() {
-    const tags = await fetchTags(true);
-    listEl.innerHTML = tags.length ? tags.map(tagManageRowHtml).join("") : `<p class="muted">Noch keine Tags angelegt.</p>`;
-    wireRows();
-  }
+  container.addEventListener("change", (e) => {
+    const cb = e.target.closest(".tag-picker-checkbox");
+    if (!cb) return;
+    const chip = cb.closest(".tag-picker-chip");
+    if (chip) chip.classList.toggle("checked", cb.checked);
+  });
 
-  function wireRows() {
-    listEl.querySelectorAll(".tag-manage-row").forEach((row) => {
-      const id = row.dataset.tagId;
-      const colorInput = row.querySelector(".tag-manage-color");
-      const labelInput = row.querySelector(".tag-manage-label");
-      const deleteBtn = row.querySelector(".tag-manage-delete");
+  // Enter in einem der Tag-Textfelder soll die jeweilige Tag-Aktion
+  // auslösen statt (Standardverhalten von <input> in einem <form>) das
+  // ganze Termin-/Task-Formular abzuschicken.
+  container.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    if (e.target.classList.contains("tag-picker-new-label")) {
+      e.preventDefault();
+      container.querySelector(".tag-picker-add-btn").click();
+    } else if (e.target.classList.contains("tag-edit-label")) {
+      e.preventDefault();
+      e.target.closest(".tag-picker-chip").querySelector(".tag-edit-save").click();
+    }
+  });
 
-      async function saveRow() {
-        const bezeichnung = labelInput.value.trim();
-        if (!bezeichnung) return;
-        clearError();
-        const res = await fetch(`/api/tags/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bezeichnung, farbe: colorInput.value }),
-        });
-        cachedTags = null;
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          showError(data.error || "Konnte nicht gespeichert werden.");
-        }
-      }
-      colorInput.addEventListener("change", saveRow);
-      labelInput.addEventListener("change", saveRow);
+  container.addEventListener("click", async (e) => {
+    const editBtn = e.target.closest(".tag-picker-edit-btn");
+    if (editBtn) {
+      const chip = editBtn.closest(".tag-picker-chip");
+      const tags = await fetchTags();
+      const tag = tags.find((t) => String(t.id) === chip.dataset.tagId);
+      if (tag) chip.replaceWith(htmlToElement(tagPickerEditHtml(tag, chip.classList.contains("checked"))));
+      return;
+    }
 
-      deleteBtn.addEventListener("click", async () => {
-        if (!(await showConfirm("Dieser Tag wird von allen Terminen/Aufgaben entfernt.", "Ja, löschen"))) return;
-        const res = await fetch(`/api/tags/${id}`, { method: "DELETE" });
-        cachedTags = null;
-        if (res.ok) refreshList();
+    const cancelBtn = e.target.closest(".tag-edit-cancel");
+    if (cancelBtn) {
+      const chip = cancelBtn.closest(".tag-picker-chip");
+      const tags = await fetchTags();
+      const tag = tags.find((t) => String(t.id) === chip.dataset.tagId);
+      if (tag) chip.replaceWith(htmlToElement(tagPickerChipHtml(tag, chip.dataset.checked === "1")));
+      return;
+    }
+
+    const saveBtn = e.target.closest(".tag-edit-save");
+    if (saveBtn) {
+      const chip = saveBtn.closest(".tag-picker-chip");
+      const id = chip.dataset.tagId;
+      const bezeichnung = chip.querySelector(".tag-edit-label").value.trim();
+      const farbe = chip.querySelector(".tag-edit-color").value;
+      if (!bezeichnung) return;
+      clearError();
+      const res = await fetch(`/api/tags/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bezeichnung, farbe }),
       });
-    });
-  }
+      cachedTags = null;
+      if (res.ok) {
+        const updated = await res.json();
+        chip.replaceWith(htmlToElement(tagPickerChipHtml(updated, chip.dataset.checked === "1")));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showError(data.error || "Konnte nicht gespeichert werden.");
+      }
+      return;
+    }
 
-  if (addBtn) {
-    addBtn.addEventListener("click", async () => {
-      const colorInput = document.getElementById("newTagColorInput");
-      const labelInput = document.getElementById("newTagLabelInput");
+    const deleteBtn = e.target.closest(".tag-edit-delete");
+    if (deleteBtn) {
+      const chip = deleteBtn.closest(".tag-picker-chip");
+      if (!(await showConfirm("Dieser Tag wird von allen Terminen/Aufgaben entfernt.", "Ja, löschen"))) return;
+      const res = await fetch(`/api/tags/${chip.dataset.tagId}`, { method: "DELETE" });
+      cachedTags = null;
+      if (res.ok) chip.remove();
+      return;
+    }
+
+    const addBtn = e.target.closest(".tag-picker-add-btn");
+    if (addBtn) {
+      const addRow = addBtn.closest(".tag-picker-add-row");
+      const colorInput = addRow.querySelector(".tag-picker-new-color");
+      const labelInput = addRow.querySelector(".tag-picker-new-label");
       const bezeichnung = labelInput.value.trim();
       if (!bezeichnung) return;
       clearError();
@@ -527,32 +568,18 @@ function wireTagsManageModal() {
       });
       cachedTags = null;
       if (res.ok) {
+        const created = await res.json();
+        // Direkt angehakt eingefügt — ein frisch angelegter Tag wird in
+        // aller Regel sofort für genau diesen Termin/Task gebraucht.
+        container.querySelector(".tag-picker-chips").insertAdjacentElement("beforeend", htmlToElement(tagPickerChipHtml(created, true)));
         labelInput.value = "";
-        await refreshList();
       } else {
         const data = await res.json().catch(() => ({}));
         showError(data.error || "Konnte nicht angelegt werden.");
       }
-    });
-  }
-
-  wireRows();
-}
-
-async function openTagsManageModal() {
-  const tags = await fetchTags(true);
-  openModal({
-    eyebrow: "Verwaltung",
-    title: "Tags verwalten",
-    submitLabel: "Fertig",
-    bodyHtml: tagsManageModalBodyHtml(tags),
-    onSubmit: () => closeModal(),
+    }
   });
-  wireTagsManageModal();
 }
-
-const tagsManageButton = document.getElementById("tagsManageButton");
-if (tagsManageButton) tagsManageButton.addEventListener("click", openTagsManageModal);
 
 function formatDeadline(iso) {
   const d = new Date(iso);
@@ -943,7 +970,7 @@ function privateTaskModalBodyHtml(categories, projects, isAdmin, prefill = {}, u
       </div>
       <div class="checkbox-group">
         <div class="eyebrow">Tags</div>
-        <div id="privTaskTagsPicker" class="chip-row">${tagPickerHtml(tags, (prefill.tags || []).map((t) => t.id))}</div>
+        <div id="privTaskTagsPicker">${tagPickerFieldHtml(tags, (prefill.tags || []).map((t) => t.id))}</div>
       </div>
       <div class="deadline-row">
         <label>Deadline (optional)
@@ -1289,7 +1316,7 @@ async function openAddPrivateTaskModal() {
   wirePrivateTaskDeadlineShortcuts();
   wirePrivateTaskCategoryPicker();
   if (isAdmin) wirePrivateTaskProjectPicker();
-  wireTagPickerChips("privTaskTagsPicker");
+  wireTagPicker("privTaskTagsPicker");
 }
 
 async function openEditPrivateTaskModal(task) {
@@ -1325,7 +1352,7 @@ async function openEditPrivateTaskModal(task) {
   wirePrivateTaskDeadlineShortcuts();
   wirePrivateTaskCategoryPicker();
   if (isAdmin) wirePrivateTaskProjectPicker();
-  wireTagPickerChips("privTaskTagsPicker");
+  wireTagPicker("privTaskTagsPicker");
   wirePrivateTaskSubitems(task.id, task.subitems);
 }
 
@@ -2856,7 +2883,7 @@ function planModalBodyHtml(prefill = {}, projects = [], tags = []) {
       </label>
       <div class="checkbox-group">
         <div class="eyebrow">Tags</div>
-        <div id="planTagsPicker" class="chip-row">${tagPickerHtml(tags, (prefill.tags || []).map((t) => t.id))}</div>
+        <div id="planTagsPicker">${tagPickerFieldHtml(tags, (prefill.tags || []).map((t) => t.id))}</div>
       </div>
       <p class="error-text hidden plan-modal-error"></p>
       ${
@@ -3016,7 +3043,7 @@ async function openAddPlanModal(prefill = {}) {
   });
   wirePlanEndTimeAutoAdjust();
   wirePlanRecurrenceUI();
-  wireTagPickerChips("planTagsPicker");
+  wireTagPicker("planTagsPicker");
 }
 
 async function openEditPlanModal(event) {
@@ -3031,7 +3058,7 @@ async function openEditPlanModal(event) {
   });
   wirePlanEndTimeAutoAdjust();
   wirePlanRecurrenceUI();
-  wireTagPickerChips("planTagsPicker");
+  wireTagPicker("planTagsPicker");
   const deleteBtn = document.getElementById("planDeleteBtn");
   if (deleteBtn) deleteBtn.addEventListener("click", () => deletePlanEvent(event.id));
   const deleteSeriesBtn = document.getElementById("planDeleteSeriesBtn");
