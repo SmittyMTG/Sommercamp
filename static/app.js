@@ -350,14 +350,20 @@ const privateTaskListEl = document.getElementById("privateTaskList");
 const privateTaskFilterRow = document.getElementById("privateTaskFilterRow");
 const privateTaskFilterBtn = document.getElementById("privateTaskFilterBtn");
 const privateTaskSortBtn = document.getElementById("privateTaskSortBtn");
+const privateTaskSearchEl = document.getElementById("privateTaskSearchInput");
 
 let lastPrivateTaskItems = [];
 // scopeMode: schnelle Pillen (Alle/Meine/Privat). statusFilter/projectFilterId:
-// Detail-Filter aus dem "Filtern"-Fenster. Alle drei kombinieren sich (UND).
+// Detail-Filter aus dem "Filtern"-Fenster. Alle vier kombinieren sich (UND).
 let privateTaskScopeMode = "alle";
 let privateTaskStatusFilter = "alle";
 let privateTaskProjectFilterId = "";
 let privateTaskTagFilterId = "";
+// Freitext-Suche (siehe taskSearchableText) — bewusst NICHT über saveUiState
+// persistiert, anders als die übrigen Filter: ein Suchbegriff ist eine
+// Momentaufnahme für "gerade eben", kein Zustand, der geräteübergreifend
+// wiederhergestellt werden sollte.
+let privateTaskSearchText = "";
 let privateTaskSortMode = "deadline";
 let cachedProjects = null;
 let cachedTags = null;
@@ -620,7 +626,26 @@ function isPrivateTaskOverdue(task) {
   return new Date(task.deadline) < today;
 }
 
-function filterPrivateTasks(items, scopeMode, statusFilter, projectId, tagId) {
+// Baut EINEN durchsuchbaren Text aus wirklich allen Attributen einer Task —
+// Titel, Beschreibung, Ersteller:in, Projekt/Sichtbarkeit, Status, Deadline,
+// Verantwortliche, Tags und Teilaufgaben — für die Freitext-Suche unten.
+function taskSearchableText(task) {
+  const parts = [
+    task.titel,
+    task.beschreibung,
+    task.created_by,
+    task.project ? task.project.name : "",
+    task.is_public ? "öffentlich" : "",
+    task.done ? "erledigt" : "offen",
+    task.deadline ? formatDeadline(task.deadline) : "",
+    ...(task.assignees || []).map((a) => a.username),
+    ...(task.tags || []).map((t) => t.bezeichnung),
+    ...(task.subitems || []).map((s) => s.titel),
+  ];
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+function filterPrivateTasks(items, scopeMode, statusFilter, projectId, tagId, searchText) {
   let out = items;
   if (scopeMode === "meine" && cachedMe) out = out.filter((t) => t.assignees.some((a) => a.id === cachedMe.id));
   else if (scopeMode === "privat") out = out.filter((t) => !t.project && !t.is_public);
@@ -629,6 +654,7 @@ function filterPrivateTasks(items, scopeMode, statusFilter, projectId, tagId) {
   if (projectId === "privat") out = out.filter((t) => !t.project && !t.is_public);
   else if (projectId) out = out.filter((t) => t.project && String(t.project.id) === String(projectId));
   if (tagId) out = out.filter((t) => (t.tags || []).some((tag) => String(tag.id) === String(tagId)));
+  if (searchText) out = out.filter((t) => taskSearchableText(t).includes(searchText));
   return out;
 }
 
@@ -766,7 +792,8 @@ function renderFilteredSortedPrivateTasks() {
     privateTaskScopeMode,
     privateTaskStatusFilter,
     privateTaskProjectFilterId,
-    privateTaskTagFilterId
+    privateTaskTagFilterId,
+    privateTaskSearchText
   );
   const sorted = sortPrivateTasks(filtered, privateTaskSortMode);
 
@@ -811,6 +838,15 @@ if (privateTaskFilterRow) {
       renderFilteredSortedPrivateTasks();
       saveUiState({ tasksScope: privateTaskScopeMode });
     });
+  });
+}
+
+// Filtert bei jedem Tastendruck sofort neu (kein Absenden/Enter nötig) —
+// durchsucht ALLE Task-Attribute, siehe taskSearchableText.
+if (privateTaskSearchEl) {
+  privateTaskSearchEl.addEventListener("input", () => {
+    privateTaskSearchText = privateTaskSearchEl.value.trim().toLowerCase();
+    renderFilteredSortedPrivateTasks();
   });
 }
 
@@ -2220,7 +2256,10 @@ if (appShellEl) {
     if (calendarView !== "list") return;
     const nearBottom = appShellEl.scrollTop + appShellEl.clientHeight > appShellEl.scrollHeight - 600;
     if (nearBottom) appendPlanListChunk(PLAN_LIST_CHUNK_DAYS);
-    if (appShellEl.scrollTop < 400) prependPlanListChunk(PLAN_LIST_CHUNK_DAYS);
+    // Vergangenheit lädt bewusst NICHT automatisch beim Hochscrollen nach —
+    // nur der explizite Klick auf "Vorherige Termine anzeigen" (siehe
+    // renderPlanListView), damit man beim normalen Scrollen nicht unbeabsichtigt
+    // in alte Termine "hineinrutscht".
   });
 }
 
