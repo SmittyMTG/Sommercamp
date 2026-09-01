@@ -121,6 +121,13 @@ class PrivateTaskTag(Base):
     tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
 
 
+class EventTemplateTag(Base):
+    __tablename__ = "event_template_tags"
+    id = Column(Integer, primary_key=True, index=True)
+    event_template_id = Column(Integer, ForeignKey("event_templates.id"), nullable=False, index=True)
+    tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
+
+
 # Projekt-Tag für die private "Tasks"-Seite (main.py: /api/private-tasks): eine
 # Aufgabe ohne project_id gilt als "privat" (nur für created_by sichtbar), mit
 # project_id als geteilt mit allen Usern, die eine ProjectAccess-Zeile dafür
@@ -215,6 +222,26 @@ class PlanEvent(Base):
     # gepflegte Wiederholungsregel (bewusst kein RRULE-Format o.ä., dafür ist
     # der Anwendungsfall hier zu einfach).
     recurrence_group = Column(String(32), nullable=True, index=True)
+
+
+# Vorlage für wiederkehrend ähnliche Termine (z. B. "Zahnarzt", immer gleiche
+# Uhrzeit+Ort), OHNE eigenes Datum — beim Anlegen eines neuen Termins schlägt
+# das Frontend per Präfix-Match auf bezeichnung eine passende Vorlage vor
+# (siehe wirePlanTemplateAutocomplete in app.js) und übernimmt deren Felder.
+# Rein persönlich (user_id), analog zum Tag-Modell oben: fremde Vorlagen gehen
+# niemanden sonst etwas an, auch wenn der ursprüngliche Termin geteilt war.
+class EventTemplate(Base):
+    __tablename__ = "event_templates"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    bezeichnung = Column(String(60), nullable=False)
+    uhrzeit = Column(Time, nullable=True)
+    uhrzeit_ende = Column(Time, nullable=True)
+    location = Column(String(120), nullable=True)
+    beschreibung = Column(Text, nullable=True)
+    shared_project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
+    is_public = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 # Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
@@ -486,6 +513,50 @@ def _consolidate_expense_created_logs():
 
 
 _consolidate_expense_created_logs()
+
+
+def _backfill_payment_log_messages():
+    """Einmaliger Nachtrag für payment_reported/payment_confirmed-Logeinträge von
+    vor dem Fix, der die betroffene Person namentlich statt mit dem generischen
+    "dir"/"deine" nennt (settle_expenses/confirm_received_payment in main.py) —
+    das Log zeigt denselben Text ungefiltert JEDER Person, die es sich ansieht,
+    "dir"/"deine" stimmte davon nur für die eine tatsächlich betroffene Person
+    (analog zum älteren Fix in _backfill_expense_log_messages oben). Läuft nur
+    für Zeilen mit dem alten Platzhaltertext, ist also bei jedem Start
+    ungefährlich erneut ausführbar (No-Op nach dem ersten Mal).
+    """
+    db = SessionLocal()
+    try:
+        changed = False
+        reported = (
+            db.query(ActivityLog)
+            .filter(ActivityLog.action == "payment_reported", ActivityLog.message.like("% hat gemeldet, dir %"))
+            .all()
+        )
+        for r in reported:
+            if not r.affected_username:
+                continue
+            r.message = r.message.replace(" hat gemeldet, dir ", f" hat gemeldet, {r.affected_username} ")
+            changed = True
+
+        confirmed = (
+            db.query(ActivityLog)
+            .filter(ActivityLog.action == "payment_confirmed", ActivityLog.message.like("% hat deine Zahlung von %"))
+            .all()
+        )
+        for r in confirmed:
+            if not r.affected_username:
+                continue
+            r.message = r.message.replace(" hat deine Zahlung von ", f" hat {r.affected_username}s Zahlung von ")
+            changed = True
+
+        if changed:
+            db.commit()
+    finally:
+        db.close()
+
+
+_backfill_payment_log_messages()
 
 # Dependency to get DB session
 def get_db():

@@ -23,6 +23,8 @@ from database import (
     Tag,
     PlanEventTag,
     PrivateTaskTag,
+    EventTemplate,
+    EventTemplateTag,
     Project,
     ProjectAccess,
     PrivateTask,
@@ -85,6 +87,38 @@ BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
 def today_berlin() -> date:
     return dt.now(BERLIN_TZ).date()
+
+
+# "Termine" zeigt seit der Rückwärts-Scroll-Erweiterung (siehe
+# prependPlanListChunk in app.js) auch vergangene Termine an, aber nur die
+# letzten PLAN_PAST_RETENTION_DAYS — ohne Aufräumen würde die Tabelle sonst
+# über die Jahre unbegrenzt wachsen. _last_plan_purge_date verhindert, dass
+# das DELETE bei jedem 5-Sekunden-Poll von /api/plan erneut läuft.
+PLAN_PAST_RETENTION_DAYS = 365
+_last_plan_purge_date: date | None = None
+
+
+def _purge_old_plan_events(db: Session):
+    global _last_plan_purge_date
+    today = today_berlin()
+    if _last_plan_purge_date == today:
+        return
+    _last_plan_purge_date = today
+
+    cutoff = today - timedelta(days=PLAN_PAST_RETENTION_DAYS)
+    # func.coalesce(...) ist bei datum=NULL ebenfalls NULL — "NULL < cutoff" ist
+    # in SQL unbekannt/falsch, datumslose "noch offene" Termine bleiben also
+    # automatisch unangetastet, ohne das extra abzufragen.
+    old_ids = [
+        row[0]
+        for row in db.query(PlanEvent.id)
+        .filter(func.coalesce(PlanEvent.datum_ende, PlanEvent.datum) < cutoff)
+        .all()
+    ]
+    if old_ids:
+        db.query(PlanEventTag).filter(PlanEventTag.plan_event_id.in_(old_ids)).delete(synchronize_session=False)
+        db.query(PlanEvent).filter(PlanEvent.id.in_(old_ids)).delete(synchronize_session=False)
+        db.commit()
 
 
 # Aktivitäts-Log: absichtlich sehr eng gehalten (nur die Aktionen, bei denen
@@ -153,6 +187,17 @@ class PrivateTaskCreate(BaseModel):
 class TagCreate(BaseModel):
     bezeichnung: str
     farbe: str
+
+
+class EventTemplateCreate(BaseModel):
+    bezeichnung: str
+    uhrzeit: str | None = None
+    uhrzeit_ende: str | None = None
+    location: str | None = None
+    beschreibung: str | None = None
+    shared_project_id: int | None = None
+    is_public: bool = False
+    tag_ids: list[int] = []
 
 
 class PrivateTaskSubitemCreate(BaseModel):
@@ -388,6 +433,7 @@ def delete_tag(tag_id: int, request: Request, db: Session = Depends(get_db)):
             return JSONResponse(status_code=403, content={"error": "Nur eigene Tags löschbar"})
         db.query(PlanEventTag).filter(PlanEventTag.tag_id == tag.id).delete(synchronize_session=False)
         db.query(PrivateTaskTag).filter(PrivateTaskTag.tag_id == tag.id).delete(synchronize_session=False)
+        db.query(EventTemplateTag).filter(EventTemplateTag.tag_id == tag.id).delete(synchronize_session=False)
         db.delete(tag)
         db.commit()
     return {"ok": True}
@@ -421,6 +467,122 @@ def _tags_for_ids(tags_by_id: dict[int, Tag], tag_ids: list[int]) -> list[Tag]:
 
 def _serialize_tags(tags: list[Tag] | None) -> list[dict]:
     return [{"id": t.id, "bezeichnung": t.bezeichnung, "farbe": t.farbe} for t in (tags or [])]
+
+
+# --- Termin-Vorlagen: rein persönlich (analog zu Tags), OHNE eigenes Datum —
+# beim Anlegen eines neuen Termins schlägt das Frontend per Präfix-Match auf
+# bezeichnung eine passende Vorlage vor (siehe wirePlanTemplateAutocomplete
+# in app.js) und übernimmt Uhrzeiten/Location/Beschreibung/Sichtbarkeit/Tags.
+def _serialize_event_template(t: EventTemplate, tags: list[Tag] | None = None) -> dict:
+    return {
+        "id": t.id,
+        "bezeichnung": t.bezeichnung,
+        "uhrzeit": t.uhrzeit.strftime("%H:%M") if t.uhrzeit else None,
+        "uhrzeit_ende": t.uhrzeit_ende.strftime("%H:%M") if t.uhrzeit_ende else None,
+        "location": t.location,
+        "beschreibung": t.beschreibung,
+        "shared_project_id": t.shared_project_id,
+        "is_public": t.is_public,
+        "tags": _serialize_tags(tags),
+    }
+
+
+@app.get("/api/event-templates")
+def list_event_templates(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    templates = (
+        db.query(EventTemplate)
+        .filter(EventTemplate.user_id == me.id)
+        .order_by(EventTemplate.bezeichnung.asc())
+        .all()
+    )
+    my_tags = _my_tags_by_id(db, me)
+    tags_by_template: dict[int, list[Tag]] = {}
+    if my_tags:
+        for link in db.query(EventTemplateTag).filter(EventTemplateTag.tag_id.in_(my_tags.keys())).all():
+            tags_by_template.setdefault(link.event_template_id, []).append(my_tags[link.tag_id])
+
+    return [_serialize_event_template(t, tags_by_template.get(t.id)) for t in templates]
+
+
+@app.post("/api/event-templates")
+def create_event_template(request: Request, payload: EventTemplateCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    bezeichnung = payload.bezeichnung.strip()
+    if not bezeichnung:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
+    if len(bezeichnung) > 60:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 60 Zeichen haben"})
+
+    location = (payload.location or "").strip() or None
+    if location and len(location) > 120:
+        return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
+
+    template_time = None
+    if payload.uhrzeit:
+        try:
+            template_time = dt.strptime(payload.uhrzeit, "%H:%M").time()
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültige Uhrzeit"})
+
+    template_time_ende = None
+    if payload.uhrzeit_ende:
+        try:
+            template_time_ende = dt.strptime(payload.uhrzeit_ende, "%H:%M").time()
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Ungültige Endzeit"})
+
+    shared_project_id = payload.shared_project_id
+    if shared_project_id is not None:
+        project = db.query(Project).filter(Project.id == shared_project_id).first()
+        if not project:
+            return JSONResponse(status_code=400, content={"error": "Projekt nicht gefunden"})
+
+    beschreibung = (payload.beschreibung or "").strip() or None
+
+    template = EventTemplate(
+        user_id=me.id,
+        bezeichnung=bezeichnung,
+        uhrzeit=template_time,
+        uhrzeit_ende=template_time_ende,
+        location=location,
+        beschreibung=beschreibung,
+        shared_project_id=shared_project_id,
+        is_public=payload.is_public,
+    )
+    db.add(template)
+    db.flush()
+    _sync_personal_tags(db, me, EventTemplateTag, "event_template_id", template.id, payload.tag_ids)
+    db.commit()
+    db.refresh(template)
+
+    return _serialize_event_template(template, _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids))
+
+
+@app.delete("/api/event-templates/{template_id}")
+def delete_event_template(template_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _user_by_username(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    template = db.query(EventTemplate).filter(EventTemplate.id == template_id).first()
+    if template:
+        # Vorlagen sind rein persönlich — kein Admin-Bypass, analog zu Tags.
+        if template.user_id != me.id:
+            return JSONResponse(status_code=403, content={"error": "Nur eigene Vorlagen löschbar"})
+        db.query(EventTemplateTag).filter(EventTemplateTag.event_template_id == template.id).delete(synchronize_session=False)
+        db.delete(template)
+        db.commit()
+    return {"ok": True}
 
 
 # --- "Tasks"-Seite (privat/projekt-getaggt, aktuell nur für Felix erreichbar
@@ -1115,6 +1277,8 @@ def list_plan_events(request: Request, db: Session = Depends(get_db)):
     me = _user_by_username(db, username)
     if not me:
         return JSONResponse(status_code=404, content={"error": "not found"})
+
+    _purge_old_plan_events(db)
 
     events = db.query(PlanEvent).order_by(PlanEvent.datum.asc(), PlanEvent.uhrzeit.asc()).all()
     visible = [e for e in events if _can_access_plan_event(db, me, e)]
@@ -2285,9 +2449,12 @@ def settle_expenses(
     db.commit()
 
     amount_str = f"{amount:.2f} €".replace(".", ",")
+    # Name statt "dir" — das Log zeigt denselben Text ungefiltert JEDER Person,
+    # die es sich ansieht, nicht nur dem Empfänger selbst (siehe analoger Fix
+    # für expense_created in _backfill_expense_log_messages, database.py).
     log_action(
         db, me.username, creditor.username, "payment_reported",
-        f"{me.username} hat gemeldet, dir {amount_str} überwiesen zu haben",
+        f"{me.username} hat gemeldet, {creditor.username} {amount_str} überwiesen zu haben",
     )
     db.commit()
 
@@ -2362,9 +2529,10 @@ def confirm_received_payment(
     original_sender = db.query(User).filter(User.id == row.glaubiger_id).first()
     if original_sender:
         amount_str = f"{float(row.cash):.2f} €".replace(".", ",")
+        # Name statt "deine" — siehe Kommentar bei payment_reported oben.
         log_action(
             db, me.username, original_sender.username, "payment_confirmed",
-            f"{me.username} hat deine Zahlung von {amount_str} bestätigt",
+            f"{me.username} hat {original_sender.username}s Zahlung von {amount_str} bestätigt",
         )
         db.commit()
 

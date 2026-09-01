@@ -378,6 +378,17 @@ async function fetchTags(forceRefresh) {
   return cachedTags;
 }
 
+// Termin-Vorlagen (siehe EventTemplate in database.py): rein persönlich,
+// beim Anlegen eines neuen Termins per Präfix-Match auf die Bezeichnung
+// vorgeschlagen (siehe wirePlanTemplateAutocomplete).
+let cachedEventTemplates = null;
+async function fetchEventTemplates(forceRefresh) {
+  if (cachedEventTemplates && !forceRefresh) return cachedEventTemplates;
+  const res = await fetch("/api/event-templates");
+  cachedEventTemplates = res.ok ? await res.json() : [];
+  return cachedEventTemplates;
+}
+
 function tagChipsHtml(tags) {
   return (tags || [])
     .map(
@@ -2038,6 +2049,14 @@ let planListNextDate = null;
 let planListMonthKey = null;
 let planListDaysRendered = 0;
 
+// Rückwärts (Vergangenheit) ist auf PLAN_PAST_RETENTION_DAYS gedeckelt, exakt
+// wie die serverseitige Aufräum-Grenze (siehe PLAN_PAST_RETENTION_DAYS in
+// main.py) — weiter zurückscrollen könnte ohnehin nur noch leere Tage zeigen,
+// da ältere Termine dort bereits gelöscht wurden.
+const PLAN_LIST_MAX_PAST_DAYS = 365;
+let planListEarliestDate = null;
+let planListPastDaysRendered = 0;
+
 function planListDayRowHtml(cellDate, eventsByDate) {
   const cellIso = isoDateLocal(cellDate);
   const isToday = cellIso === isoDateLocal(new Date());
@@ -2078,6 +2097,63 @@ function appendPlanListChunk(numDays) {
   planListDaysRendered += numDays;
 }
 
+function updatePlanListLoadPastBtn() {
+  const btn = document.getElementById("planListLoadPastBtn");
+  if (!btn) return;
+  btn.classList.toggle("hidden", planListPastDaysRendered >= PLAN_LIST_MAX_PAST_DAYS);
+}
+
+// Fügt weitere Tages-Zeilen an den ANFANG der Liste an (Vergangenheit) — auf
+// Klick auf "Vorherige Termine anzeigen" oder beim Hochscrollen bis knapp
+// unter den oberen Rand (siehe Scroll-Listener unten). Baut den Chunk wie
+// appendPlanListChunk chronologisch aufsteigend, damit dieselbe
+// Monats-Überschriften-Logik greift, fügt ihn dann aber vorn ein.
+function prependPlanListChunk(numDays) {
+  const container = calendarContainerEl.querySelector(".plan-list");
+  if (!container || !planListEarliestDate) return;
+  const daysToLoad = Math.min(numDays, PLAN_LIST_MAX_PAST_DAYS - planListPastDaysRendered);
+  if (daysToLoad <= 0) return;
+
+  const oldEarliestDate = new Date(planListEarliestDate);
+  const chunkStart = addDays(oldEarliestDate, -daysToLoad);
+  const eventsByDate = eventsByDateMap();
+
+  let cursor = new Date(chunkStart);
+  let html = "";
+  let lastMonthKeyInChunk = null;
+  for (let i = 0; i < daysToLoad; i++) {
+    const monthKey = `${cursor.getFullYear()}-${cursor.getMonth()}`;
+    if (monthKey !== lastMonthKeyInChunk) {
+      const label = cursor.toLocaleDateString("de-DE", { month: "long", year: "numeric" });
+      html += `<div class="plan-list-month-heading">${label.charAt(0).toUpperCase() + label.slice(1)}</div>`;
+      lastMonthKeyInChunk = monthKey;
+    }
+    html += planListDayRowHtml(cursor, eventsByDate);
+    cursor = addDays(cursor, 1);
+  }
+
+  // Die bisher oberste Zeile trägt ihre eigene (erzwungene) Monats-Überschrift
+  // direkt vor sich. Endet unser neuer, älterer Block im selben Monat, würde
+  // diese sonst doppelt auftauchen — also entfernen, unser Block bringt die
+  // Überschrift für diesen Monat ja schon selbst mit.
+  const oldFirstEl = container.firstElementChild;
+  const oldEarliestMonthKey = `${oldEarliestDate.getFullYear()}-${oldEarliestDate.getMonth()}`;
+  if (oldFirstEl && oldFirstEl.classList.contains("plan-list-month-heading") && lastMonthKeyInChunk === oldEarliestMonthKey) {
+    oldFirstEl.remove();
+  }
+
+  // Ohne Korrektur würde appShellEl beim Einfügen oberhalb der aktuellen
+  // Scroll-Position sichtbar nach unten "springen" — Delta der Höhenänderung
+  // gleich mit ausgleichen, damit der bisher sichtbare Inhalt an Ort und Stelle bleibt.
+  const prevScrollHeight = appShellEl ? appShellEl.scrollHeight : 0;
+  container.insertAdjacentHTML("afterbegin", html);
+  if (appShellEl) appShellEl.scrollTop += appShellEl.scrollHeight - prevScrollHeight;
+
+  planListEarliestDate = chunkStart;
+  planListPastDaysRendered += daysToLoad;
+  updatePlanListLoadPastBtn();
+}
+
 // loadPlanList() ruft renderCalendar() auch bei jedem 5s-Poll auf (neue/
 // geänderte Termine) — ein kompletter Neuaufbau würde dabei jedes Mal die
 // Scroll-Position und schon geladenen Tage verwerfen. Ist die Liste schon
@@ -2095,12 +2171,21 @@ function renderPlanListView() {
     return;
   }
 
-  calendarContainerEl.innerHTML = `<div class="plan-list"></div>`;
+  calendarContainerEl.innerHTML = `
+    <button type="button" id="planListLoadPastBtn" class="plan-list-load-past">↑ Vorherige Termine anzeigen</button>
+    <div class="plan-list"></div>
+  `;
   planListNextDate = new Date();
   planListNextDate.setHours(0, 0, 0, 0);
+  planListEarliestDate = new Date(planListNextDate);
   planListMonthKey = null;
   planListDaysRendered = 0;
+  planListPastDaysRendered = 0;
   appendPlanListChunk(PLAN_LIST_CHUNK_DAYS);
+  updatePlanListLoadPastBtn();
+
+  const loadPastBtn = document.getElementById("planListLoadPastBtn");
+  if (loadPastBtn) loadPastBtn.addEventListener("click", () => prependPlanListChunk(PLAN_LIST_CHUNK_DAYS));
 }
 
 // Eine delegierte, dauerhafte Klick-Erkennung statt pro Chip — Chips kommen
@@ -2135,6 +2220,7 @@ if (appShellEl) {
     if (calendarView !== "list") return;
     const nearBottom = appShellEl.scrollTop + appShellEl.clientHeight > appShellEl.scrollHeight - 600;
     if (nearBottom) appendPlanListChunk(PLAN_LIST_CHUNK_DAYS);
+    if (appShellEl.scrollTop < 400) prependPlanListChunk(PLAN_LIST_CHUNK_DAYS);
   });
 }
 
@@ -2736,8 +2822,9 @@ function planModalBodyHtml(prefill = {}, projects = [], tags = []) {
   return `
     <div class="form-stack">
       <div class="form-row-2col">
-        <label>Bezeichnung
-          <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" required>
+        <label class="plan-bezeichnung-wrap">Bezeichnung
+          <input type="text" id="planBezeichnungInput" maxlength="60" value="${escapeHtml(prefill.bezeichnung || "")}" required autocomplete="off">
+          <div id="planTemplateSuggestions" class="template-suggest-list hidden"></div>
         </label>
         <label>Location (Adresse)
           <input type="text" id="planLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
@@ -2809,6 +2896,11 @@ function planModalBodyHtml(prefill = {}, projects = [], tags = []) {
         <div class="eyebrow">Tags</div>
         <div id="planTagsPicker">${tagPickerFieldHtml(tags, (prefill.tags || []).map((t) => t.id))}</div>
       </div>
+      ${
+        prefill.id
+          ? `<button type="button" id="planSaveAsTemplateBtn" class="link-button">⭐ Als Vorlage speichern</button>`
+          : ""
+      }
       <p class="error-text hidden plan-modal-error"></p>
       ${
         prefill.id && (calendarIsAdmin || (cachedMe && prefill.created_by === cachedMe.username))
@@ -2956,9 +3048,136 @@ function wirePlanEndTimeAutoAdjust() {
   });
 }
 
+// Vorlagen-Vorschlag beim Anlegen: sobald die Bezeichnung mit den Buchstaben
+// einer gespeicherten Vorlage beginnt, wird sie unter dem Feld vorgeschlagen
+// (siehe EventTemplate in database.py). Nur beim NEUEN Termin verdrahtet
+// (siehe openAddPlanModal) — beim Bearbeiten stünden schon eigene Werte drin,
+// die ein Klick sonst überschreiben würde.
+function templateSuggestItemHtml(t) {
+  const timeLabel = t.uhrzeit ? `${t.uhrzeit}${t.uhrzeit_ende ? `–${t.uhrzeit_ende}` : ""}` : "";
+  return `
+    <button type="button" class="template-suggest-item" data-template-id="${t.id}">
+      <span>⭐ ${escapeHtml(t.bezeichnung)}${timeLabel ? ` <span class="muted">(${timeLabel})</span>` : ""}</span>
+      <span class="template-suggest-delete" data-delete-template-id="${t.id}" aria-label="Vorlage löschen" title="Vorlage löschen">${TRASH_ICON_SVG}</span>
+    </button>
+  `;
+}
+
+// Übernimmt alle in der Vorlage gespeicherten Felder ins offene Formular —
+// Uhrzeiten, Location, Beschreibung, Sichtbarkeit, Tags. Das Datum bleibt
+// unangetastet, eine Vorlage hat bewusst kein eigenes.
+function applyEventTemplate(template) {
+  const bezInput = document.getElementById("planBezeichnungInput");
+  const locInput = document.getElementById("planLocationInput");
+  const startTimeInput = document.getElementById("planUhrzeitInput");
+  const endTimeInput = document.getElementById("planUhrzeitEndeInput");
+  const beschInput = document.getElementById("planBeschreibungInput");
+  const projectSelect = document.getElementById("planProjectSelect");
+  if (bezInput) bezInput.value = template.bezeichnung;
+  if (locInput) locInput.value = template.location || "";
+  if (startTimeInput && template.uhrzeit) startTimeInput.value = template.uhrzeit;
+  if (endTimeInput) endTimeInput.value = template.uhrzeit_ende || "";
+  if (beschInput) beschInput.value = template.beschreibung || "";
+  if (projectSelect) {
+    projectSelect.value = template.is_public ? "__public__" : template.shared_project_id ? String(template.shared_project_id) : "";
+  }
+  const picker = document.getElementById("planTagsPicker");
+  if (picker) {
+    const templateTagIds = new Set((template.tags || []).map((t) => t.id));
+    picker.querySelectorAll(".tag-picker-checkbox").forEach((cb) => {
+      const checked = templateTagIds.has(parseInt(cb.value, 10));
+      cb.checked = checked;
+      const chip = cb.closest(".tag-picker-chip");
+      if (chip) chip.classList.toggle("checked", checked);
+    });
+  }
+}
+
+function wirePlanTemplateAutocomplete(templates) {
+  const input = document.getElementById("planBezeichnungInput");
+  const list = document.getElementById("planTemplateSuggestions");
+  if (!input || !list || !templates.length) return;
+
+  function render() {
+    const text = input.value.trim().toLowerCase();
+    const matches = text ? templates.filter((t) => t.bezeichnung.toLowerCase().startsWith(text)) : [];
+    list.innerHTML = matches.map(templateSuggestItemHtml).join("");
+    list.classList.toggle("hidden", !matches.length);
+  }
+
+  input.addEventListener("input", render);
+  input.addEventListener("focus", render);
+  // Verzögert statt sofort, damit ein Klick auf einen Vorschlag (siehe unten)
+  // noch ankommt, bevor blur die Liste ausblendet.
+  input.addEventListener("blur", () => setTimeout(() => list.classList.add("hidden"), 150));
+
+  list.addEventListener("click", async (e) => {
+    const delBtn = e.target.closest("[data-delete-template-id]");
+    if (delBtn) {
+      e.stopPropagation();
+      const id = parseInt(delBtn.dataset.deleteTemplateId, 10);
+      await fetch(`/api/event-templates/${id}`, { method: "DELETE" });
+      cachedEventTemplates = (cachedEventTemplates || []).filter((t) => t.id !== id);
+      const idx = templates.findIndex((t) => t.id === id);
+      if (idx !== -1) templates.splice(idx, 1);
+      render();
+      return;
+    }
+    const item = e.target.closest(".template-suggest-item");
+    if (!item) return;
+    const template = templates.find((t) => t.id === parseInt(item.dataset.templateId, 10));
+    if (template) applyEventTemplate(template);
+    list.classList.add("hidden");
+  });
+}
+
+// Speichert die aktuell im Formular stehenden Werte als neue Vorlage (siehe
+// planSaveAsTemplateBtn in planModalBodyHtml, nur im Bearbeiten-Fenster).
+async function saveCurrentPlanAsTemplate() {
+  const btn = document.getElementById("planSaveAsTemplateBtn");
+  const bezeichnung = document.getElementById("planBezeichnungInput").value.trim();
+  if (!bezeichnung) return;
+  const uhrzeit = document.getElementById("planUhrzeitInput").value;
+  const uhrzeitEnde = document.getElementById("planUhrzeitEndeInput").value;
+  const location = document.getElementById("planLocationInput").value.trim();
+  const beschreibung = document.getElementById("planBeschreibungInput").value.trim();
+  const projectSelect = document.getElementById("planProjectSelect");
+  const isPublic = projectSelect && projectSelect.value === "__public__";
+  const sharedProjectId = projectSelect && projectSelect.value && !isPublic ? parseInt(projectSelect.value, 10) : null;
+  const tagIds = Array.from(document.querySelectorAll("#planTagsPicker .tag-picker-checkbox:checked")).map((el) =>
+    parseInt(el.value, 10)
+  );
+
+  const res = await fetch("/api/event-templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bezeichnung,
+      uhrzeit: uhrzeit || null,
+      uhrzeit_ende: uhrzeitEnde || null,
+      location,
+      beschreibung,
+      shared_project_id: sharedProjectId,
+      is_public: isPublic,
+      tag_ids: tagIds,
+    }),
+  });
+  if (res.ok && btn) {
+    cachedEventTemplates = null;
+    const original = btn.textContent;
+    btn.textContent = "✓ Als Vorlage gespeichert";
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.disabled = false;
+    }, 1800);
+  }
+}
+
 async function openAddPlanModal(prefill = {}) {
   const projects = await fetchProjects();
   const tags = await fetchTags();
+  const templates = await fetchEventTemplates();
   openModal({
     eyebrow: "Kalender",
     title: "Termin hinzufügen",
@@ -2968,6 +3187,7 @@ async function openAddPlanModal(prefill = {}) {
   wirePlanEndTimeAutoAdjust();
   wirePlanRecurrenceUI();
   wireTagPicker("planTagsPicker");
+  wirePlanTemplateAutocomplete(templates);
 }
 
 async function openEditPlanModal(event) {
@@ -2987,6 +3207,8 @@ async function openEditPlanModal(event) {
   if (deleteBtn) deleteBtn.addEventListener("click", () => deletePlanEvent(event.id));
   const deleteSeriesBtn = document.getElementById("planDeleteSeriesBtn");
   if (deleteSeriesBtn) deleteSeriesBtn.addEventListener("click", () => deletePlanSeries(event.recurrence_group));
+  const saveTemplateBtn = document.getElementById("planSaveAsTemplateBtn");
+  if (saveTemplateBtn) saveTemplateBtn.addEventListener("click", saveCurrentPlanAsTemplate);
 }
 
 const addPlanButton = document.getElementById("addPlanButton");
