@@ -263,6 +263,15 @@ input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13
 .beneficiary-chip{position:relative;display:inline-flex;align-items:center;gap:6px;padding:9px 15px;border-radius:999px;font-weight:800;cursor:pointer;background:var(--chip-pale,var(--surface2));border:1px solid var(--chip-pale,var(--line));color:var(--text);transition:background .15s,border-color .15s,color .15s}
 .beneficiary-chip input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
 .beneficiary-chip.checked,.beneficiary-chip:has(input:checked){background:var(--chip-color,var(--yellow));border-color:var(--chip-color,var(--yellow));color:#111}
+/* Band-Picker (Headliner/Vorband, Concerts): Löschen-Icon als eigenes
+   Geschwister-Element statt im <label> selbst — ein Klick darauf soll NICHT
+   auch die Checkbox mit-togglen (siehe bandChipHtml in app.js). */
+.band-picker-chip-wrap{display:inline-flex;align-items:center;gap:2px}
+.band-picker-delete{background:none;border:none;color:var(--muted);padding:4px;display:flex;flex:none}
+.band-picker-delete:active{color:var(--red)}
+.band-picker-add-row{display:flex;gap:8px;margin-top:8px}
+.band-picker-add-row input{flex:1}
+.band-picker-add-row button{flex:none}
 /* "Für wen?": jede Person bekommt eine feste Spalte mit Namens-Chip UND direkt
    darunter ihrem Betragsfeld — Grid statt flex-wrap, damit alle Spalten exakt
    die gleiche Breite haben und Chip+Feld exakt übereinander stehen. Das

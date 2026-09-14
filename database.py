@@ -258,6 +258,11 @@ class Concert(Base):
     # spart eine DB-seitige Enum-Migration falls mal eine dritte Art dazukommt.
     art = Column(String(20), nullable=False, default="konzert")
     datum = Column(Date, nullable=False, index=True)
+    # Land/Ort/Location bewusst drei getrennte Felder (statt einem Freitext-
+    # Ort) — ermöglicht später z. B. "wie oft in welchem Land" auszuwerten,
+    # ohne einen Freitext parsen zu müssen.
+    land = Column(String(60), nullable=True)
+    ort = Column(String(80), nullable=True)
     location = Column(String(120), nullable=True)
     beschreibung = Column(Text, nullable=True)
     created_by = Column(String, nullable=False, index=True)
@@ -269,6 +274,30 @@ class ConcertCompanion(Base):
     id = Column(Integer, primary_key=True, index=True)
     concert_id = Column(Integer, ForeignKey("concerts.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+
+# Persönliche Band-Datenbank (analog zu Tags): frei von der Person selbst
+# gepflegt, u. a. direkt in der Konzert-Eingabemaske anlegbar (siehe
+# wireBandPickers in app.js), damit man beim Erfassen nicht erst in ein
+# separates Verwaltungs-Fenster wechseln muss.
+class Band(Base):
+    __tablename__ = "bands"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(80), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Lineup-Zuordnung: eine Band kann bei EINEM Konzert entweder Headliner oder
+# Vorband sein (nie beides gleichzeitig, siehe _validate_concert_payload in
+# main.py), bei verschiedenen Konzerten aber unterschiedliche Rollen haben —
+# daher role auf der Verknüpfung statt auf der Band selbst.
+class ConcertBand(Base):
+    __tablename__ = "concert_bands"
+    id = Column(Integer, primary_key=True, index=True)
+    concert_id = Column(Integer, ForeignKey("concerts.id"), nullable=False, index=True)
+    band_id = Column(Integer, ForeignKey("bands.id"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)  # "headliner" | "vorband"
 
 
 # Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
@@ -352,6 +381,8 @@ _ensure_column("plan_events", "datum_ende", "DATE")
 _ensure_column("plan_events", "is_public", "BOOLEAN", "DEFAULT 0")
 _ensure_column("plan_events", "recurrence_group", "TEXT")
 _ensure_column("private_tasks", "is_public", "BOOLEAN", "DEFAULT 0")
+_ensure_column("concerts", "land", "TEXT")
+_ensure_column("concerts", "ort", "TEXT")
 
 
 # Analoge Selbst-Migration für Indizes: index=True auf einer Column wirkt nur bei

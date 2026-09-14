@@ -1423,6 +1423,22 @@ function formatConcertDate(iso) {
   return new Date(`${iso}T00:00:00`).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+// Persönliche Band-Datenbank (siehe Band-Modell in database.py) — für die
+// beiden Lineup-Picker (Headliner/Vorband) im Konzert-Formular. Analog zu
+// cachedTags: einmal geladen, nach jeder Änderung (Anlegen/Löschen im
+// Picker) invalidiert.
+let cachedBands = null;
+async function fetchBands(forceRefresh) {
+  if (cachedBands && !forceRefresh) return cachedBands;
+  const res = await fetch("/api/bands");
+  cachedBands = res.ok ? await res.json() : [];
+  return cachedBands;
+}
+
+function concertLocationLine(concert) {
+  return [concert.location, concert.ort, concert.land].filter(Boolean).join(", ");
+}
+
 // "Bei wem war ich wie oft" — zählt für jede Begleitperson, in wie vielen
 // Konzerten/Festivals sie mit dabei war, absteigend sortiert.
 function concertCompanionCounts(items) {
@@ -1493,14 +1509,24 @@ function renderConcertItem(concert) {
   card.dataset.id = concert.id;
 
   const metaParts = [`📅 ${formatConcertDate(concert.datum)}`];
-  if (concert.location) metaParts.push(escapeHtml(concert.location));
+  const locationLine = concertLocationLine(concert);
+  if (locationLine) metaParts.push(escapeHtml(locationLine));
   const companionsHtml = (concert.companions || []).map((p) => nameTag(p.username)).join(" ");
+
+  const lineupParts = [];
+  if (concert.headliner_bands && concert.headliner_bands.length) {
+    lineupParts.push(`🎤 ${concert.headliner_bands.map((b) => escapeHtml(b.name)).join(", ")}`);
+  }
+  if (concert.support_bands && concert.support_bands.length) {
+    lineupParts.push(`Vorband: ${concert.support_bands.map((b) => escapeHtml(b.name)).join(", ")}`);
+  }
 
   card.innerHTML = `
     <div class="list-card-content">
       <div class="list-card-text">
         <p class="list-card-title">${CONCERT_ART_LABELS[concert.art] || ""} ${escapeHtml(concert.bezeichnung)}</p>
         <p class="list-card-meta">${metaParts.join(" · ")}</p>
+        ${lineupParts.length ? `<p class="list-card-meta">${lineupParts.join(" · ")}</p>` : ""}
         ${companionsHtml ? `<p class="list-card-meta">${companionsHtml}</p>` : ""}
       </div>
     </div>
@@ -1542,18 +1568,46 @@ function renderConcertList() {
 // Begleitung: gleiche Chip-Optik wie "Verantwortlich" bei Tasks bzw. "Für
 // wen?" bei Ausgaben — die anlegende Person selbst taucht nicht mit auf, sie
 // war ja immer dabei (das IST ihr eigener Eintrag).
-function concertModalBodyHtml(prefill = {}, users = []) {
-  const today = isoDateLocal(new Date());
-  const currentCompanionIds = new Set((prefill.companions || []).map((p) => p.id));
-  const companionOptions = users
+function concertCompanionPickerHtml(users, selectedIds) {
+  const selected = new Set(selectedIds || []);
+  return users
     .filter((u) => !cachedMe || u.id !== cachedMe.id)
     .map((u) => {
-      const checked = currentCompanionIds.has(u.id);
+      const checked = selected.has(u.id);
       const color = USER_COLORS[u.username] || "#ffd400";
       const pale = hexToRgba(color, 0.16);
       return `<label class="beneficiary-chip${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}><span>${escapeHtml(u.username)}</span></label>`;
     })
     .join("");
+}
+
+// Band-Chip: eigener Wrapper statt Löschen-Button INNERHALB des <label>
+// (anders als beim Tag-Picker) — ein Klick auf einen Nachfahren eines
+// <label> würde sonst dessen Checkbox mit-togglen, das Löschen-Icon müsste
+// das erst per preventDefault/stopPropagation abfangen. Als Geschwister
+// nebenan ist die Checkbox davon unberührt.
+function bandChipHtml(band, checked) {
+  return `
+    <span class="band-picker-chip-wrap">
+      <label class="beneficiary-chip${checked ? " checked" : ""}">
+        <input type="checkbox" class="band-picker-checkbox" value="${band.id}"${checked ? " checked" : ""}>
+        <span>${escapeHtml(band.name)}</span>
+      </label>
+      <button type="button" class="band-picker-delete" data-band-id="${band.id}" aria-label="Band löschen" title="Band löschen">${TRASH_ICON_SVG}</button>
+    </span>
+  `;
+}
+
+function bandPickerChipsHtml(bands, selectedIds) {
+  const selected = new Set(selectedIds || []);
+  return bands.map((b) => bandChipHtml(b, selected.has(b.id))).join("");
+}
+
+function concertModalBodyHtml(prefill = {}, users = [], bands = []) {
+  const today = isoDateLocal(new Date());
+  const companionOptions = concertCompanionPickerHtml(users, (prefill.companions || []).map((p) => p.id));
+  const headlinerIds = (prefill.headliner_bands || []).map((b) => b.id);
+  const supportIds = (prefill.support_bands || []).map((b) => b.id);
 
   return `
     <div class="form-stack">
@@ -1572,12 +1626,39 @@ function concertModalBodyHtml(prefill = {}, users = []) {
         <label>Datum
           <input type="date" id="concertDatumInput" value="${prefill.datum || today}" required>
         </label>
+        <label>Land (optional)
+          <input type="text" id="concertLandInput" maxlength="60" value="${escapeHtml(prefill.land || "")}">
+        </label>
+      </div>
+      <div class="form-row-2col">
+        <label>Ort (optional)
+          <input type="text" id="concertOrtInput" maxlength="80" value="${escapeHtml(prefill.ort || "")}">
+        </label>
         <label>Location (optional)
           <input type="text" id="concertLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
         </label>
       </div>
+      <div id="concertBandPickers">
+        <div class="checkbox-group">
+          <div class="eyebrow">Headliner</div>
+          <div class="chip-row band-picker-chips" data-role="headliner">${bandPickerChipsHtml(bands, headlinerIds)}</div>
+          <div class="band-picker-add-row">
+            <input type="text" class="band-picker-new-name" maxlength="80" placeholder="Neue Band …">
+            <button type="button" class="secondary compact band-picker-add-btn" data-role="headliner">+ Band</button>
+          </div>
+        </div>
+        <div class="checkbox-group">
+          <div class="eyebrow">Vorband</div>
+          <div class="chip-row band-picker-chips" data-role="vorband">${bandPickerChipsHtml(bands, supportIds)}</div>
+          <div class="band-picker-add-row">
+            <input type="text" class="band-picker-new-name" maxlength="80" placeholder="Neue Band …">
+            <button type="button" class="secondary compact band-picker-add-btn" data-role="vorband">+ Band</button>
+          </div>
+        </div>
+        <p class="error-text hidden band-picker-error"></p>
+      </div>
       <label>Beschreibung (optional)
-        <textarea id="concertBeschreibungInput" placeholder="Line-up, Erinnerungen …">${escapeHtml(prefill.beschreibung || "")}</textarea>
+        <textarea id="concertBeschreibungInput" placeholder="Falls was Besonderes war …">${escapeHtml(prefill.beschreibung || "")}</textarea>
       </label>
       <div class="checkbox-group">
         <div class="eyebrow">Begleitung</div>
@@ -1603,14 +1684,109 @@ function wireConcertCompanionChips() {
   });
 }
 
+// Headliner/Vorband: zwei unabhängige Multiselects auf derselben persönlichen
+// Band-Liste — mit gegenseitigem Ausschluss (eine Band kann nicht gleichzeitig
+// beides sein, siehe _validate_concert_payload in main.py) und Inline-Anlegen/
+// Löschen direkt hier, ohne eigenes "Bands verwalten"-Fenster.
+function wireBandPickers(bands) {
+  const container = document.getElementById("concertBandPickers");
+  if (!container) return;
+  const errEl = container.querySelector(".band-picker-error");
+  const headlinerRow = container.querySelector('.band-picker-chips[data-role="headliner"]');
+  const vorbandRow = container.querySelector('.band-picker-chips[data-role="vorband"]');
+
+  function showError(msg) {
+    errEl.textContent = msg;
+    errEl.classList.remove("hidden");
+  }
+  function clearError() {
+    errEl.classList.add("hidden");
+  }
+
+  container.addEventListener("change", (e) => {
+    const cb = e.target.closest(".band-picker-checkbox");
+    if (!cb) return;
+    const chip = cb.closest(".beneficiary-chip");
+    if (chip) chip.classList.toggle("checked", cb.checked);
+    if (!cb.checked) return;
+    const row = cb.closest(".band-picker-chips");
+    const otherRow = row === headlinerRow ? vorbandRow : headlinerRow;
+    const otherCb = otherRow && otherRow.querySelector(`.band-picker-checkbox[value="${cb.value}"]`);
+    if (otherCb && otherCb.checked) {
+      otherCb.checked = false;
+      const otherChip = otherCb.closest(".beneficiary-chip");
+      if (otherChip) otherChip.classList.remove("checked");
+    }
+  });
+
+  container.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !e.target.classList.contains("band-picker-new-name")) return;
+    e.preventDefault();
+    e.target.closest(".band-picker-add-row").querySelector(".band-picker-add-btn").click();
+  });
+
+  container.addEventListener("click", async (e) => {
+    const delBtn = e.target.closest(".band-picker-delete");
+    if (delBtn) {
+      if (!(await showConfirm("Diese Band wird aus allen Konzerten entfernt.", "Ja, löschen"))) return;
+      const bandId = delBtn.dataset.bandId;
+      const res = await fetch(`/api/bands/${bandId}`, { method: "DELETE" });
+      cachedBands = null;
+      if (res.ok) {
+        container.querySelectorAll(`[data-band-id="${bandId}"]`).forEach((el) => {
+          const wrap = el.closest(".band-picker-chip-wrap");
+          if (wrap) wrap.remove();
+        });
+      }
+      return;
+    }
+
+    const addBtn = e.target.closest(".band-picker-add-btn");
+    if (addBtn) {
+      const role = addBtn.dataset.role;
+      const nameInput = addBtn.closest(".band-picker-add-row").querySelector(".band-picker-new-name");
+      const name = nameInput.value.trim();
+      if (!name) return;
+      clearError();
+      const res = await fetch("/api/bands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      cachedBands = null;
+      if (res.ok) {
+        const created = await res.json();
+        bands.push(created);
+        // Neue Band sofort in BEIDEN Pickern verfügbar — in dem, aus dem
+        // heraus sie angelegt wurde, gleich angehakt.
+        [headlinerRow, vorbandRow].forEach((row) => {
+          if (row) row.insertAdjacentHTML("beforeend", bandChipHtml(created, row.dataset.role === role));
+        });
+        nameInput.value = "";
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showError(data.error || "Konnte nicht angelegt werden.");
+      }
+    }
+  });
+}
+
 async function submitConcertForm(url, method) {
   const bezeichnung = document.getElementById("concertBezeichnungInput").value.trim();
   const art = document.getElementById("concertArtSelect").value;
   const datum = document.getElementById("concertDatumInput").value;
+  const land = document.getElementById("concertLandInput").value.trim();
+  const ort = document.getElementById("concertOrtInput").value.trim();
   const location = document.getElementById("concertLocationInput").value.trim();
   const beschreibung = document.getElementById("concertBeschreibungInput").value.trim();
   const companion_ids = Array.from(
     document.querySelectorAll("#concertCompanionsPicker .beneficiary-checkbox:checked")
+  ).map((el) => parseInt(el.value, 10));
+  const headliner_band_ids = Array.from(
+    document.querySelectorAll('.band-picker-chips[data-role="headliner"] .band-picker-checkbox:checked')
+  ).map((el) => parseInt(el.value, 10));
+  const support_band_ids = Array.from(
+    document.querySelectorAll('.band-picker-chips[data-role="vorband"] .band-picker-checkbox:checked')
   ).map((el) => parseInt(el.value, 10));
 
   if (!bezeichnung || !datum) return;
@@ -1618,7 +1794,18 @@ async function submitConcertForm(url, method) {
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bezeichnung, art, datum, location, beschreibung, companion_ids }),
+    body: JSON.stringify({
+      bezeichnung,
+      art,
+      datum,
+      land,
+      ort,
+      location,
+      beschreibung,
+      companion_ids,
+      headliner_band_ids,
+      support_band_ids,
+    }),
   });
 
   if (res.ok) {
@@ -1636,25 +1823,29 @@ async function submitConcertForm(url, method) {
 
 async function openAddConcertModal() {
   const { users } = await fetchUsersAndMe();
+  const bands = await fetchBands();
   openModal({
     eyebrow: "Concerts",
     title: "Konzert/Festival erfassen",
-    bodyHtml: concertModalBodyHtml({}, users),
+    bodyHtml: concertModalBodyHtml({}, users, bands),
     onSubmit: () => submitConcertForm("/api/concerts", "POST"),
   });
   wireConcertCompanionChips();
+  wireBandPickers(bands);
 }
 
 async function openEditConcertModal(concert) {
   const { users } = await fetchUsersAndMe();
+  const bands = await fetchBands();
   openModal({
     eyebrow: "Concerts",
     title: "Eintrag bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: concertModalBodyHtml(concert, users),
+    bodyHtml: concertModalBodyHtml(concert, users, bands),
     onSubmit: () => submitConcertForm(`/api/concerts/${concert.id}`, "PATCH"),
   });
   wireConcertCompanionChips();
+  wireBandPickers(bands);
   const deleteBtn = document.getElementById("concertDeleteBtn");
   if (deleteBtn) {
     deleteBtn.addEventListener("click", async () => {
