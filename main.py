@@ -25,6 +25,8 @@ from database import (
     PrivateTaskTag,
     EventTemplate,
     EventTemplateTag,
+    Concert,
+    ConcertCompanion,
     Project,
     ProjectAccess,
     PrivateTask,
@@ -198,6 +200,15 @@ class EventTemplateCreate(BaseModel):
     shared_project_id: int | None = None
     is_public: bool = False
     tag_ids: list[int] = []
+
+
+class ConcertCreate(BaseModel):
+    bezeichnung: str
+    art: str = "konzert"  # "konzert" | "festival"
+    datum: str
+    location: str | None = None
+    beschreibung: str | None = None
+    companion_ids: list[int] = []
 
 
 class PrivateTaskSubitemCreate(BaseModel):
@@ -581,6 +592,170 @@ def delete_event_template(template_id: int, request: Request, db: Session = Depe
             return JSONResponse(status_code=403, content={"error": "Nur eigene Vorlagen löschbar"})
         db.query(EventTemplateTag).filter(EventTemplateTag.event_template_id == template.id).delete(synchronize_session=False)
         db.delete(template)
+        db.commit()
+    return {"ok": True}
+
+
+# --- Concerts: persönliches Konzert-/Festival-Tagebuch, nur über den
+# "Concerts"-Tab für Admins erreichbar (siehe app.js) — rein persönlich
+# (created_by), analog zu Tags/EventTemplate: "bei wem war ICH wie oft" ist
+# eine Ich-Perspektive, kein geteilter Team-Kalender. Begleitung sind
+# App-Nutzer:innen (kein Freitext), damit die Statistik ohne Fuzzy-Matching
+# auf Namen auskommt.
+CONCERT_ARTEN = {"konzert", "festival"}
+
+
+def _validate_concert_payload(payload: ConcertCreate, db: Session):
+    bezeichnung = payload.bezeichnung.strip()
+    if not bezeichnung:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
+    if len(bezeichnung) > 80:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 80 Zeichen haben"})
+
+    art = (payload.art or "").strip().lower()
+    if art not in CONCERT_ARTEN:
+        return JSONResponse(status_code=400, content={"error": "Art muss 'konzert' oder 'festival' sein"})
+
+    if not payload.datum:
+        return JSONResponse(status_code=400, content={"error": "Datum darf nicht leer sein"})
+    try:
+        concert_date = date.fromisoformat(payload.datum)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
+
+    location = (payload.location or "").strip() or None
+    if location and len(location) > 120:
+        return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
+
+    beschreibung = (payload.beschreibung or "").strip() or None
+
+    companion_ids = sorted(set(payload.companion_ids))
+    if companion_ids:
+        valid_ids = {u.id for u in db.query(User).filter(User.id.in_(companion_ids)).all()}
+        if not set(companion_ids).issubset(valid_ids):
+            return JSONResponse(status_code=400, content={"error": "Unbekannte Person ausgewählt"})
+
+    return bezeichnung, art, concert_date, location, beschreibung, companion_ids
+
+
+def _serialize_concert(c: Concert, companions: list[dict]) -> dict:
+    return {
+        "id": c.id,
+        "bezeichnung": c.bezeichnung,
+        "art": c.art,
+        "datum": c.datum.isoformat(),
+        "location": c.location,
+        "beschreibung": c.beschreibung,
+        "companions": companions,
+    }
+
+
+def _concert_companions_payload(db: Session, companion_ids: list[int]) -> list[dict]:
+    if not companion_ids:
+        return []
+    usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(companion_ids)).all()}
+    return [{"id": uid, "username": usernames.get(uid, "?")} for uid in companion_ids]
+
+
+@app.get("/api/concerts")
+def list_concerts(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+
+    concerts = (
+        db.query(Concert)
+        .filter(Concert.created_by == username)
+        .order_by(Concert.datum.desc(), Concert.id.desc())
+        .all()
+    )
+    concert_ids = [c.id for c in concerts]
+    companions_by_concert: dict[int, list[dict]] = {}
+    if concert_ids:
+        usernames = {u.id: u.username for u in db.query(User).all()}
+        for link in db.query(ConcertCompanion).filter(ConcertCompanion.concert_id.in_(concert_ids)).all():
+            companions_by_concert.setdefault(link.concert_id, []).append(
+                {"id": link.user_id, "username": usernames.get(link.user_id, "?")}
+            )
+
+    return [_serialize_concert(c, companions_by_concert.get(c.id, [])) for c in concerts]
+
+
+@app.post("/api/concerts")
+def create_concert(request: Request, payload: ConcertCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+
+    validated = _validate_concert_payload(payload, db)
+    if isinstance(validated, JSONResponse):
+        return validated
+    bezeichnung, art, concert_date, location, beschreibung, companion_ids = validated
+
+    concert = Concert(
+        bezeichnung=bezeichnung,
+        art=art,
+        datum=concert_date,
+        location=location,
+        beschreibung=beschreibung,
+        created_by=username,
+    )
+    db.add(concert)
+    db.flush()
+    for uid in companion_ids:
+        db.add(ConcertCompanion(concert_id=concert.id, user_id=uid))
+    db.commit()
+
+    return _serialize_concert(concert, _concert_companions_payload(db, companion_ids))
+
+
+@app.patch("/api/concerts/{concert_id}")
+def update_concert(concert_id: int, request: Request, payload: ConcertCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+
+    existing = db.query(Concert).filter(Concert.id == concert_id).first()
+    if not existing:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    if existing.created_by != username:
+        return JSONResponse(status_code=403, content={"error": "Nur eigene Einträge bearbeitbar"})
+
+    validated = _validate_concert_payload(payload, db)
+    if isinstance(validated, JSONResponse):
+        return validated
+    bezeichnung, art, concert_date, location, beschreibung, companion_ids = validated
+
+    existing.bezeichnung = bezeichnung
+    existing.art = art
+    existing.datum = concert_date
+    existing.location = location
+    existing.beschreibung = beschreibung
+
+    db.query(ConcertCompanion).filter(ConcertCompanion.concert_id == existing.id).delete(synchronize_session=False)
+    for uid in companion_ids:
+        db.add(ConcertCompanion(concert_id=existing.id, user_id=uid))
+    db.commit()
+
+    return _serialize_concert(existing, _concert_companions_payload(db, companion_ids))
+
+
+@app.delete("/api/concerts/{concert_id}")
+def delete_concert(concert_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+
+    concert = db.query(Concert).filter(Concert.id == concert_id).first()
+    if concert:
+        if concert.created_by != username:
+            return JSONResponse(status_code=403, content={"error": "Nur eigene Einträge löschbar"})
+        db.query(ConcertCompanion).filter(ConcertCompanion.concert_id == concert.id).delete(synchronize_session=False)
+        db.delete(concert)
         db.commit()
     return {"ok": True}
 

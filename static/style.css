@@ -142,9 +142,23 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    sonst ändert sich beim Umschalten (fett vs. normal) die Textbreite und der
    Button "springt" sichtbar in der Größe statt nur die Farbe zu wechseln. */
 .task-search-row{margin-bottom:10px}
+.concert-stat-tiles{display:flex;gap:8px;margin-bottom:16px}
+.concert-stat-tile{flex:1;background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:12px 8px;text-align:center}
+.concert-stat-tile-value{font-size:22px;font-weight:900;line-height:1.1}
+.concert-stat-tile-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800;margin-top:2px}
+.concert-companion-stats{margin-bottom:18px}
+.concert-bar-row{display:grid;grid-template-columns:minmax(0,112px) 1fr 22px;align-items:center;gap:10px;padding:5px 0}
+.concert-bar-row-label{min-width:0;overflow:hidden}
+.concert-bar-row-label .name-with-avatar{max-width:100%}
+.concert-bar-track{height:10px;border-radius:6px;background:var(--surface2);border:1px solid var(--line);overflow:hidden}
+.concert-bar-fill{height:100%;border-radius:6px;min-width:3px}
+.concert-bar-row-count{text-align:right;font-size:12px;font-weight:900;color:var(--text)}
 .filter-row{display:flex;gap:8px;overflow:auto;padding-bottom:10px}.filter{white-space:nowrap;border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:8px 11px;border-radius:999px;font-weight:900}.filter.active{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow));color:#111}
 .filter-row.two-row{flex-wrap:wrap;overflow:visible}
 .bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(760px,100%);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:rgba(16,16,20,.94);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:8px 5px calc(8px + env(safe-area-inset-bottom));z-index:20}
+/* Vierte Spalte nur für Admins (Concerts-Tab, siehe app.js) — für alle
+   anderen bleibt es bei den ursprünglichen 3 Spalten. */
+.bottom-nav.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
 .compact-hero{padding:14px 16px}.compact-hero .eyebrow{margin-bottom:1px}.compact-hero .countdown{font-size:22px;margin:4px 0 2px}.compact-hero .muted{font-size:12px}
 .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--red);color:#fff;font-size:10px;font-weight:900;line-height:1;margin-left:6px;vertical-align:middle}
 .bottom-nav button{position:relative}

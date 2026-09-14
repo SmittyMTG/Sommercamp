@@ -1395,6 +1395,294 @@ fetchUsersAndMe().then(async ({ me }) => {
   setInterval(loadPrivateTasks, 5000);
 });
 
+/* ---------- Concerts: persönliches Konzert-/Festival-Tagebuch, NUR für
+   Admins (Tab bleibt für alle anderen versteckt, siehe Init unten) — Zugriff
+   ist serverseitig zusätzlich über _require_admin abgesichert (main.py), das
+   Ausblenden hier ist also nur UI-Bequemlichkeit, kein Sicherheitsmechanismus.
+   Anders als Termine/Tasks kein Hintergrund-Polling: die Daten ändert nur die
+   eine eingeloggte Person selbst, ein Neuladen nach jeder eigenen Aktion reicht. ---------- */
+const concertListEl = document.getElementById("concertList");
+const concertStatsEl = document.getElementById("concertStats");
+const CONCERT_ART_LABELS = { konzert: "🎤 Konzert", festival: "🎪 Festival" };
+let lastConcertItems = [];
+
+async function loadConcerts() {
+  if (!concertListEl) return;
+  try {
+    const res = await fetch("/api/concerts");
+    if (!res.ok) throw new Error("Fehler beim Laden");
+    lastConcertItems = await res.json();
+    renderConcertStats();
+    renderConcertList();
+  } catch (err) {
+    concertListEl.innerHTML = `<div class="empty-state"><p>Konnte nicht geladen werden.</p></div>`;
+  }
+}
+
+function formatConcertDate(iso) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+// "Bei wem war ich wie oft" — zählt für jede Begleitperson, in wie vielen
+// Konzerten/Festivals sie mit dabei war, absteigend sortiert.
+function concertCompanionCounts(items) {
+  const counts = new Map();
+  items.forEach((c) => {
+    (c.companions || []).forEach((p) => {
+      const entry = counts.get(p.id) || { username: p.username, count: 0 };
+      entry.count += 1;
+      counts.set(p.id, entry);
+    });
+  });
+  return Array.from(counts.values()).sort((a, b) => b.count - a.count);
+}
+
+function renderConcertStats() {
+  if (!concertStatsEl) return;
+  if (lastConcertItems.length === 0) {
+    concertStatsEl.innerHTML = "";
+    return;
+  }
+
+  const festivalCount = lastConcertItems.filter((c) => c.art === "festival").length;
+  const konzertCount = lastConcertItems.length - festivalCount;
+  const companionCounts = concertCompanionCounts(lastConcertItems);
+  const maxCount = companionCounts.length ? companionCounts[0].count : 0;
+
+  const barsHtml = companionCounts.length
+    ? companionCounts
+        .map((p) => {
+          const color = USER_COLORS[p.username] || "#ffd400";
+          const pct = maxCount ? Math.round((p.count / maxCount) * 100) : 0;
+          return `
+            <div class="concert-bar-row">
+              <div class="concert-bar-row-label">${nameTag(p.username)}</div>
+              <div class="concert-bar-track"><div class="concert-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+              <div class="concert-bar-row-count">${p.count}</div>
+            </div>
+          `;
+        })
+        .join("")
+    : `<p class="muted">Noch niemanden als Begleitung erfasst.</p>`;
+
+  concertStatsEl.innerHTML = `
+    <div class="concert-stat-tiles">
+      <div class="concert-stat-tile">
+        <div class="concert-stat-tile-value">${lastConcertItems.length}</div>
+        <div class="concert-stat-tile-label">Gesamt</div>
+      </div>
+      <div class="concert-stat-tile">
+        <div class="concert-stat-tile-value">${konzertCount}</div>
+        <div class="concert-stat-tile-label">Konzerte</div>
+      </div>
+      <div class="concert-stat-tile">
+        <div class="concert-stat-tile-value">${festivalCount}</div>
+        <div class="concert-stat-tile-label">Festivals</div>
+      </div>
+    </div>
+    <div class="checkbox-group concert-companion-stats">
+      <div class="eyebrow">Bei wem warst du wie oft?</div>
+      ${barsHtml}
+    </div>
+  `;
+}
+
+function renderConcertItem(concert) {
+  const card = document.createElement("div");
+  card.className = "list-card clickable";
+  card.dataset.id = concert.id;
+
+  const metaParts = [`📅 ${formatConcertDate(concert.datum)}`];
+  if (concert.location) metaParts.push(escapeHtml(concert.location));
+  const companionsHtml = (concert.companions || []).map((p) => nameTag(p.username)).join(" ");
+
+  card.innerHTML = `
+    <div class="list-card-content">
+      <div class="list-card-text">
+        <p class="list-card-title">${CONCERT_ART_LABELS[concert.art] || ""} ${escapeHtml(concert.bezeichnung)}</p>
+        <p class="list-card-meta">${metaParts.join(" · ")}</p>
+        ${companionsHtml ? `<p class="list-card-meta">${companionsHtml}</p>` : ""}
+      </div>
+    </div>
+    <div class="list-card-actions">
+      <button type="button" class="delete-btn" aria-label="Löschen">${TRASH_ICON_SVG}</button>
+    </div>
+  `;
+
+  card.addEventListener("click", () => openEditConcertModal(concert));
+  card.querySelector(".delete-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    openModal({
+      eyebrow: "Concerts",
+      title: `„${concert.bezeichnung}" löschen?`,
+      bodyHtml: `<p class="muted warning-text">Das lässt sich nicht rückgängig machen.</p>`,
+      submitLabel: "Löschen",
+      danger: true,
+      onSubmit: async () => {
+        const res = await fetch(`/api/concerts/${concert.id}`, { method: "DELETE" });
+        if (res.ok) loadConcerts();
+        closeModal();
+      },
+    });
+  });
+
+  return card;
+}
+
+function renderConcertList() {
+  if (!concertListEl) return;
+  concertListEl.innerHTML = "";
+  if (lastConcertItems.length === 0) {
+    concertListEl.innerHTML = `<div class="empty-state"><p>Noch keine Konzerte oder Festivals erfasst.</p></div>`;
+  } else {
+    lastConcertItems.forEach((c) => concertListEl.appendChild(renderConcertItem(c)));
+  }
+}
+
+// Begleitung: gleiche Chip-Optik wie "Verantwortlich" bei Tasks bzw. "Für
+// wen?" bei Ausgaben — die anlegende Person selbst taucht nicht mit auf, sie
+// war ja immer dabei (das IST ihr eigener Eintrag).
+function concertModalBodyHtml(prefill = {}, users = []) {
+  const today = isoDateLocal(new Date());
+  const currentCompanionIds = new Set((prefill.companions || []).map((p) => p.id));
+  const companionOptions = users
+    .filter((u) => !cachedMe || u.id !== cachedMe.id)
+    .map((u) => {
+      const checked = currentCompanionIds.has(u.id);
+      const color = USER_COLORS[u.username] || "#ffd400";
+      const pale = hexToRgba(color, 0.16);
+      return `<label class="beneficiary-chip${checked ? " checked" : ""}" style="--chip-color:${color};--chip-pale:${pale}"><input type="checkbox" class="beneficiary-checkbox" value="${u.id}"${checked ? " checked" : ""}><span>${escapeHtml(u.username)}</span></label>`;
+    })
+    .join("");
+
+  return `
+    <div class="form-stack">
+      <div class="form-row-2col">
+        <label>Bezeichnung
+          <input type="text" id="concertBezeichnungInput" maxlength="80" value="${escapeHtml(prefill.bezeichnung || "")}" required>
+        </label>
+        <label>Art
+          <select id="concertArtSelect">
+            <option value="konzert"${prefill.art !== "festival" ? " selected" : ""}>Konzert</option>
+            <option value="festival"${prefill.art === "festival" ? " selected" : ""}>Festival</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-row-2col">
+        <label>Datum
+          <input type="date" id="concertDatumInput" value="${prefill.datum || today}" required>
+        </label>
+        <label>Location (optional)
+          <input type="text" id="concertLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
+        </label>
+      </div>
+      <label>Beschreibung (optional)
+        <textarea id="concertBeschreibungInput" placeholder="Line-up, Erinnerungen …">${escapeHtml(prefill.beschreibung || "")}</textarea>
+      </label>
+      <div class="checkbox-group">
+        <div class="eyebrow">Begleitung</div>
+        <div id="concertCompanionsPicker" class="chip-row">${companionOptions}</div>
+      </div>
+      <p class="error-text hidden concert-modal-error"></p>
+      ${
+        prefill.id
+          ? `<button type="button" id="concertDeleteBtn" class="link-button danger">🗑 Eintrag löschen</button>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function wireConcertCompanionChips() {
+  const container = document.getElementById("concertCompanionsPicker");
+  if (!container) return;
+  container.querySelectorAll(".beneficiary-chip").forEach((chip) => {
+    const cb = chip.querySelector(".beneficiary-checkbox");
+    if (!cb) return;
+    cb.addEventListener("change", () => chip.classList.toggle("checked", cb.checked));
+  });
+}
+
+async function submitConcertForm(url, method) {
+  const bezeichnung = document.getElementById("concertBezeichnungInput").value.trim();
+  const art = document.getElementById("concertArtSelect").value;
+  const datum = document.getElementById("concertDatumInput").value;
+  const location = document.getElementById("concertLocationInput").value.trim();
+  const beschreibung = document.getElementById("concertBeschreibungInput").value.trim();
+  const companion_ids = Array.from(
+    document.querySelectorAll("#concertCompanionsPicker .beneficiary-checkbox:checked")
+  ).map((el) => parseInt(el.value, 10));
+
+  if (!bezeichnung || !datum) return;
+
+  const res = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bezeichnung, art, datum, location, beschreibung, companion_ids }),
+  });
+
+  if (res.ok) {
+    closeModal();
+    loadConcerts();
+  } else {
+    const data = await res.json().catch(() => ({}));
+    const errEl = document.querySelector(".concert-modal-error");
+    if (errEl) {
+      errEl.textContent = data.error || "Konnte nicht gespeichert werden.";
+      errEl.classList.remove("hidden");
+    }
+  }
+}
+
+async function openAddConcertModal() {
+  const { users } = await fetchUsersAndMe();
+  openModal({
+    eyebrow: "Concerts",
+    title: "Konzert/Festival erfassen",
+    bodyHtml: concertModalBodyHtml({}, users),
+    onSubmit: () => submitConcertForm("/api/concerts", "POST"),
+  });
+  wireConcertCompanionChips();
+}
+
+async function openEditConcertModal(concert) {
+  const { users } = await fetchUsersAndMe();
+  openModal({
+    eyebrow: "Concerts",
+    title: "Eintrag bearbeiten",
+    submitLabel: "Speichern",
+    bodyHtml: concertModalBodyHtml(concert, users),
+    onSubmit: () => submitConcertForm(`/api/concerts/${concert.id}`, "PATCH"),
+  });
+  wireConcertCompanionChips();
+  const deleteBtn = document.getElementById("concertDeleteBtn");
+  if (deleteBtn) {
+    deleteBtn.addEventListener("click", async () => {
+      if (!(await showConfirm("Dieser Eintrag wird endgültig gelöscht.", "Ja, löschen"))) return;
+      const res = await fetch(`/api/concerts/${concert.id}`, { method: "DELETE" });
+      if (res.ok) {
+        closeModal();
+        loadConcerts();
+      }
+    });
+  }
+}
+
+const addConcertButton = document.getElementById("addConcertButton");
+if (addConcertButton) addConcertButton.addEventListener("click", openAddConcertModal);
+
+// Tab bleibt für alle außer Admins verborgen — Server lehnt /api/concerts für
+// Nicht-Admins ohnehin mit 403 ab (siehe list_concerts in main.py), das
+// Ausblenden hier erspart nur den nutzlosen Blick auf einen leeren Tab.
+fetchUsersAndMe().then(({ me }) => {
+  if (!me || !isAdminRole(me.role)) return;
+  const concertsNavButton = document.querySelector('.bottom-nav [data-screen="concerts"]');
+  if (concertsNavButton) concertsNavButton.classList.remove("hidden");
+  const bottomNavEl = document.getElementById("bottomNav");
+  if (bottomNavEl) bottomNavEl.classList.add("cols-4");
+  loadConcerts();
+});
+
 /* ---------- Profil (Passwort ändern, Profilbild) ---------- */
 
 function applyAvatarToButton(avatarPath, color) {

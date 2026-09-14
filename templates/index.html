@@ -154,6 +154,19 @@
           <div class="empty-state"><p>Noch keine Tasks.</p></div>
         </div>
       </section>
+
+      <!-- ============ CONCERTS (nur Admins: persönliches Konzert-/Festival-Tagebuch) ============ -->
+      <section id="screen-concerts" class="screen">
+        <div class="section-heading">
+          <div><h2>Concerts</h2></div>
+        </div>
+
+        <div id="concertStats"></div>
+
+        <div id="concertList" class="stack compact-list">
+          <div class="empty-state"><p>Noch keine Konzerte oder Festivals erfasst.</p></div>
+        </div>
+      </section>
     </section>
   </main>
 
@@ -165,11 +178,13 @@
   <button id="addExpenseButton" class="primary compact fab-button" data-fab-for="costs">＋ Ausgabe</button>
   <button id="addPlanButton" class="primary compact fab-button hidden" data-fab-for="plan">＋ Eintrag</button>
   <button id="addPrivateTaskButton" class="primary compact fab-button hidden" data-fab-for="tasks">＋ Task</button>
+  <button id="addConcertButton" class="primary compact fab-button hidden" data-fab-for="concerts">＋ Konzert</button>
 
   <nav id="bottomNav" class="bottom-nav hidden">
     <button class="nav-item" data-screen="plan"><span>▣</span>Kalender</button>
     <button class="nav-item active" data-screen="costs"><span>€</span>Kosten<span id="costsNavBadge" class="nav-badge hidden">0</span></button>
     <button class="nav-item hidden" data-screen="tasks"><span>✦</span>Tasks</button>
+    <button class="nav-item hidden" data-screen="concerts"><span>🎵</span>Concerts</button>
   </nav>
 
   <dialog id="modal">

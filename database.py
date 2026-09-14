@@ -244,6 +244,33 @@ class EventTemplate(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+# Persönliches Konzert-/Festival-Tagebuch, nur über den "Concerts"-Tab für
+# Admins erreichbar (siehe /api/concerts in main.py) — rein persönlich
+# (created_by), analog zu Tags/EventTemplate: es geht um "wo war ICH", nicht
+# um einen geteilten Kalender. Begleitung (ConcertCompanion) sind App-Nutzer:
+# innen, keine Freitext-Namen, damit die "bei wem war ich wie oft"-Statistik
+# ohne Fuzzy-Matching auskommt.
+class Concert(Base):
+    __tablename__ = "concerts"
+    id = Column(Integer, primary_key=True, index=True)
+    bezeichnung = Column(String(80), nullable=False)
+    # "konzert" | "festival" — freier String statt Enum, analog zu Ausgabe.status,
+    # spart eine DB-seitige Enum-Migration falls mal eine dritte Art dazukommt.
+    art = Column(String(20), nullable=False, default="konzert")
+    datum = Column(Date, nullable=False, index=True)
+    location = Column(String(120), nullable=True)
+    beschreibung = Column(Text, nullable=True)
+    created_by = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ConcertCompanion(Base):
+    __tablename__ = "concert_companions"
+    id = Column(Integer, primary_key=True, index=True)
+    concert_id = Column(Integer, ForeignKey("concerts.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+
 # Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
 # (schuldner_id == glaubiger_id ist erlaubt: Eintrag für sich selbst, z. B. eigener
 # Snackkauf ohne Beteiligte — ist aber keine echte Schuld.)
