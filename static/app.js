@@ -1473,18 +1473,27 @@ function concertLocationLine(concert) {
   return detail && detail !== bezeichnung ? `${bezeichnung} (${detail})` : bezeichnung;
 }
 
-// "Bei wem war ich wie oft" — zählt für jede Begleitperson, in wie vielen
-// Konzerten/Festivals sie mit dabei war, absteigend sortiert.
+// "Mit wem, wie oft?" — zählt für jede Begleitperson, in wie vielen
+// Konzerten/Festivals sie mit dabei war, absteigend sortiert. Konzerte ohne
+// jede Begleitung fließen als eigener "Alleine"-Eintrag mit ein, statt
+// stillschweigend aus der Statistik zu verschwinden.
 function concertCompanionCounts(items) {
   const counts = new Map();
+  let aloneCount = 0;
   items.forEach((c) => {
-    (c.companions || []).forEach((p) => {
+    if (!c.companions || c.companions.length === 0) {
+      aloneCount += 1;
+      return;
+    }
+    c.companions.forEach((p) => {
       const entry = counts.get(p.id) || { username: p.username, count: 0 };
       entry.count += 1;
       counts.set(p.id, entry);
     });
   });
-  return Array.from(counts.values()).sort((a, b) => b.count - a.count);
+  const result = Array.from(counts.values());
+  if (aloneCount > 0) result.push({ username: null, alone: true, count: aloneCount });
+  return result.sort((a, b) => b.count - a.count);
 }
 
 function renderConcertStats() {
@@ -1502,18 +1511,19 @@ function renderConcertStats() {
   const barsHtml = companionCounts.length
     ? companionCounts
         .map((p) => {
-          const color = USER_COLORS[p.username] || "#ffd400";
+          const label = p.alone ? `🧍 Alleine` : nameTag(p.username);
+          const color = p.alone ? "var(--muted)" : USER_COLORS[p.username] || "#ffd400";
           const pct = maxCount ? Math.round((p.count / maxCount) * 100) : 0;
           return `
             <div class="concert-bar-row">
-              <div class="concert-bar-row-label">${nameTag(p.username)}</div>
+              <div class="concert-bar-row-label">${label}</div>
               <div class="concert-bar-track"><div class="concert-bar-fill" style="width:${pct}%;background:${color}"></div></div>
               <div class="concert-bar-row-count">${p.count}</div>
             </div>
           `;
         })
         .join("")
-    : `<p class="muted">Noch niemanden als Begleitung erfasst.</p>`;
+    : `<p class="muted">Noch keine Konzerte erfasst.</p>`;
 
   concertStatsEl.innerHTML = `
     <div class="concert-stat-tiles">
@@ -1531,7 +1541,7 @@ function renderConcertStats() {
       </div>
     </div>
     <div class="checkbox-group concert-companion-stats">
-      <div class="eyebrow">Bei wem warst du wie oft?</div>
+      <div class="eyebrow">Mit wem, wie oft?</div>
       ${barsHtml}
     </div>
   `;
@@ -1653,7 +1663,7 @@ function concertBandPickerBlockHtml(role, label, bands, selectedIds, excludedIds
 // neuen Eintrag direkt aus und klappt das Mini-Formular wieder ein.
 function simpleSelectOptionsHtml(items, selectedId, newLabel) {
   return `
-    <option value="">Kein Eintrag</option>
+    <option value=""${selectedId ? "" : " selected"} disabled>Bitte wählen …</option>
     <option value="__new__">${newLabel}</option>
     ${items.map((i) => `<option value="${i.id}"${String(i.id) === String(selectedId) ? " selected" : ""}>${escapeHtml(i.name)}</option>`).join("")}
   `;
@@ -1741,7 +1751,7 @@ function concertModalBodyHtml(prefill = {}, users = [], bands = [], locations = 
           <label>Bezeichnung
             <input type="text" id="newConcertVenueBezeichnung" maxlength="80" placeholder="z. B. Zitadelle Berlin">
           </label>
-          <label>Land (optional)
+          <label>Land
             <select id="newConcertVenueCountrySelect">${simpleSelectOptionsHtml(countries, "", "+ Land anlegen…")}</select>
           </label>
         </div>
@@ -1750,10 +1760,10 @@ function concertModalBodyHtml(prefill = {}, users = [], bands = [], locations = 
           <button type="button" id="newConcertVenueCountryCreateBtn" class="secondary compact">Anlegen</button>
         </div>
         <div class="form-row-2col">
-          <label>Ort (optional)
+          <label>Ort
             <select id="newConcertVenueCitySelect">${simpleSelectOptionsHtml(cities, "", "+ Ort anlegen…")}</select>
           </label>
-          <label>Location (optional)
+          <label>Location
             <input type="text" id="newConcertVenueLocation" maxlength="120">
           </label>
         </div>
@@ -1843,8 +1853,26 @@ function wireConcertVenuePicker(countries, cities) {
     const errEl = document.querySelector(".new-concert-venue-error");
     errEl.classList.add("hidden");
 
+    // Bezeichnung/Land/Ort/Location sind alle Pflicht (Server lehnt sonst
+    // ohnehin mit 400 ab, siehe _validate_location_payload in main.py) —
+    // hier vorab geprüft, damit man nicht erst den Roundtrip abwarten muss.
     if (!bezeichnung) {
       errEl.textContent = "Bitte eine Bezeichnung eingeben.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+    if (!country_id) {
+      errEl.textContent = "Bitte ein Land auswählen.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+    if (!city_id) {
+      errEl.textContent = "Bitte einen Ort auswählen.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+    if (!location) {
+      errEl.textContent = "Bitte eine Location eingeben.";
       errEl.classList.remove("hidden");
       return;
     }

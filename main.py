@@ -792,6 +792,12 @@ def delete_city(city_id: int, request: Request, db: Session = Depends(get_db)):
 # wiederverwendet (siehe wireConcertVenuePicker in app.js), statt bei jedem
 # Konzert an diesem Ort alle Felder erneut einzutippen.
 def _validate_location_payload(payload: LocationCreate, me: User, db: Session):
+    """Alle vier Felder sind Pflicht (seit der Nutzer-Vorgabe "alle Attribute
+    dieser DB sind ab sofort Pflicht") — vorher waren Land/Ort/Location
+    optional, was zu unvollständigen Alt-Einträgen führte (siehe gelöschte
+    "Zenith München"/"Club Vaudeville Lindau", die noch ohne Land/Ort
+    angelegt worden waren). Nur neue/bearbeitete Einträge betroffen, an
+    bereits bestehenden unvollständigen Zeilen ändert das nichts."""
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
@@ -799,19 +805,23 @@ def _validate_location_payload(payload: LocationCreate, me: User, db: Session):
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 80 Zeichen haben"})
 
     country_id = payload.country_id
-    if country_id is not None:
-        country = db.query(Country).filter(Country.id == country_id).first()
-        if not country or country.user_id != me.id:
-            return JSONResponse(status_code=400, content={"error": "Unbekanntes Land ausgewählt"})
+    if not country_id:
+        return JSONResponse(status_code=400, content={"error": "Land darf nicht leer sein"})
+    country = db.query(Country).filter(Country.id == country_id).first()
+    if not country or country.user_id != me.id:
+        return JSONResponse(status_code=400, content={"error": "Unbekanntes Land ausgewählt"})
 
     city_id = payload.city_id
-    if city_id is not None:
-        city = db.query(City).filter(City.id == city_id).first()
-        if not city or city.user_id != me.id:
-            return JSONResponse(status_code=400, content={"error": "Unbekannter Ort ausgewählt"})
+    if not city_id:
+        return JSONResponse(status_code=400, content={"error": "Ort darf nicht leer sein"})
+    city = db.query(City).filter(City.id == city_id).first()
+    if not city or city.user_id != me.id:
+        return JSONResponse(status_code=400, content={"error": "Unbekannter Ort ausgewählt"})
 
-    location = (payload.location or "").strip() or None
-    if location and len(location) > 120:
+    location = (payload.location or "").strip()
+    if not location:
+        return JSONResponse(status_code=400, content={"error": "Location darf nicht leer sein"})
+    if len(location) > 120:
         return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
 
     return bezeichnung, country_id, city_id, location
