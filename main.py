@@ -30,6 +30,8 @@ from database import (
     Band,
     ConcertBand,
     Location,
+    Country,
+    City,
     Project,
     ProjectAccess,
     PrivateTask,
@@ -220,10 +222,18 @@ class BandCreate(BaseModel):
     name: str
 
 
+class CountryCreate(BaseModel):
+    name: str
+
+
+class CityCreate(BaseModel):
+    name: str
+
+
 class LocationCreate(BaseModel):
     bezeichnung: str
-    land: str | None = None
-    ort: str | None = None
+    country_id: int | None = None
+    city_id: int | None = None
     location: str | None = None
 
 
@@ -673,41 +683,154 @@ def delete_band(band_id: int, request: Request, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# --- Countries/Cities: persönliche Namenslisten (analog zu Band) — im "neuer
+# Ort"-Formular per Dropdown+"+ neu anlegen" wiederverwendet (siehe
+# wireSimpleCreateSelect in app.js), damit "Deutschland"/"Berlin" nicht bei
+# jedem neuen Ort erneut eingetippt werden müssen.
+def _validate_named_payload(name: str, max_len: int):
+    name = name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "Name darf nicht leer sein"})
+    if len(name) > max_len:
+        return JSONResponse(status_code=400, content={"error": f"Name darf maximal {max_len} Zeichen haben"})
+    return name
+
+
+@app.get("/api/countries")
+def list_countries(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+    countries = db.query(Country).filter(Country.user_id == me.id).order_by(Country.name.asc()).all()
+    return [{"id": c.id, "name": c.name} for c in countries]
+
+
+@app.post("/api/countries")
+def create_country(request: Request, payload: CountryCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+    validated = _validate_named_payload(payload.name, 60)
+    if isinstance(validated, JSONResponse):
+        return validated
+    name = validated
+    if db.query(Country).filter(Country.user_id == me.id, Country.name == name).first():
+        return JSONResponse(status_code=400, content={"error": "Dieses Land hast du schon"})
+    country = Country(user_id=me.id, name=name)
+    db.add(country)
+    db.commit()
+    db.refresh(country)
+    return {"id": country.id, "name": country.name}
+
+
+@app.delete("/api/countries/{country_id}")
+def delete_country(country_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+    country = db.query(Country).filter(Country.id == country_id).first()
+    if country:
+        if country.user_id != me.id:
+            return JSONResponse(status_code=403, content={"error": "Nur eigene Länder löschbar"})
+        db.query(Location).filter(Location.country_id == country.id).update({"country_id": None})
+        db.delete(country)
+        db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/cities")
+def list_cities(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+    cities = db.query(City).filter(City.user_id == me.id).order_by(City.name.asc()).all()
+    return [{"id": c.id, "name": c.name} for c in cities]
+
+
+@app.post("/api/cities")
+def create_city(request: Request, payload: CityCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+    validated = _validate_named_payload(payload.name, 80)
+    if isinstance(validated, JSONResponse):
+        return validated
+    name = validated
+    if db.query(City).filter(City.user_id == me.id, City.name == name).first():
+        return JSONResponse(status_code=400, content={"error": "Diesen Ort hast du schon"})
+    city = City(user_id=me.id, name=name)
+    db.add(city)
+    db.commit()
+    db.refresh(city)
+    return {"id": city.id, "name": city.name}
+
+
+@app.delete("/api/cities/{city_id}")
+def delete_city(city_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+    city = db.query(City).filter(City.id == city_id).first()
+    if city:
+        if city.user_id != me.id:
+            return JSONResponse(status_code=403, content={"error": "Nur eigene Orte löschbar"})
+        db.query(Location).filter(Location.city_id == city.id).update({"city_id": None})
+        db.delete(city)
+        db.commit()
+    return {"ok": True}
+
+
 # --- Locations: persönliche Orte-Datenbank (analog zu Bands) — ein Ort wird
-# EINMAL mit Bezeichnung + Land/Ort/Location-Detail angelegt und danach im
-# Konzert-Formular per Dropdown wiederverwendet (siehe wireConcertVenuePicker
-# in app.js), statt bei jedem Konzert an diesem Ort alle drei Felder erneut
-# einzutippen.
-def _validate_location_payload(payload: LocationCreate):
+# EINMAL mit Bezeichnung + Land/Ort (Referenzen auf die Listen oben) +
+# Location-Detail angelegt und danach im Konzert-Formular per Dropdown
+# wiederverwendet (siehe wireConcertVenuePicker in app.js), statt bei jedem
+# Konzert an diesem Ort alle Felder erneut einzutippen.
+def _validate_location_payload(payload: LocationCreate, me: User, db: Session):
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
     if len(bezeichnung) > 80:
         return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 80 Zeichen haben"})
 
-    land = (payload.land or "").strip() or None
-    if land and len(land) > 60:
-        return JSONResponse(status_code=400, content={"error": "Land darf maximal 60 Zeichen haben"})
+    country_id = payload.country_id
+    if country_id is not None:
+        country = db.query(Country).filter(Country.id == country_id).first()
+        if not country or country.user_id != me.id:
+            return JSONResponse(status_code=400, content={"error": "Unbekanntes Land ausgewählt"})
 
-    ort = (payload.ort or "").strip() or None
-    if ort and len(ort) > 80:
-        return JSONResponse(status_code=400, content={"error": "Ort darf maximal 80 Zeichen haben"})
+    city_id = payload.city_id
+    if city_id is not None:
+        city = db.query(City).filter(City.id == city_id).first()
+        if not city or city.user_id != me.id:
+            return JSONResponse(status_code=400, content={"error": "Unbekannter Ort ausgewählt"})
 
     location = (payload.location or "").strip() or None
     if location and len(location) > 120:
         return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
 
-    return bezeichnung, land, ort, location
+    return bezeichnung, country_id, city_id, location
 
 
-def _serialize_location(loc: Location) -> dict:
+def _serialize_location(loc: Location, country: Country | None = None, city: City | None = None) -> dict:
     return {
         "id": loc.id,
         "bezeichnung": loc.bezeichnung,
-        "land": loc.land,
-        "ort": loc.ort,
+        "country": {"id": country.id, "name": country.name} if country else None,
+        "city": {"id": city.id, "name": city.name} if city else None,
         "location": loc.location,
     }
+
+
+def _load_location_refs(db: Session, loc: Location) -> tuple[Country | None, City | None]:
+    country = db.query(Country).filter(Country.id == loc.country_id).first() if loc.country_id else None
+    city = db.query(City).filter(City.id == loc.city_id).first() if loc.city_id else None
+    return country, city
 
 
 @app.get("/api/locations")
@@ -717,7 +840,12 @@ def list_locations(request: Request, db: Session = Depends(get_db)):
     if not me:
         return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
     locations = db.query(Location).filter(Location.user_id == me.id).order_by(Location.bezeichnung.asc()).all()
-    return [_serialize_location(loc) for loc in locations]
+    countries = {c.id: c for c in db.query(Country).filter(Country.user_id == me.id).all()}
+    cities = {c.id: c for c in db.query(City).filter(City.user_id == me.id).all()}
+    return [
+        _serialize_location(loc, countries.get(loc.country_id), cities.get(loc.city_id))
+        for loc in locations
+    ]
 
 
 @app.post("/api/locations")
@@ -727,19 +855,20 @@ def create_location(request: Request, payload: LocationCreate, db: Session = Dep
     if not me:
         return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
 
-    validated = _validate_location_payload(payload)
+    validated = _validate_location_payload(payload, me, db)
     if isinstance(validated, JSONResponse):
         return validated
-    bezeichnung, land, ort, location = validated
+    bezeichnung, country_id, city_id, location = validated
 
     if db.query(Location).filter(Location.user_id == me.id, Location.bezeichnung == bezeichnung).first():
         return JSONResponse(status_code=400, content={"error": "Diesen Ort hast du schon"})
 
-    loc = Location(user_id=me.id, bezeichnung=bezeichnung, land=land, ort=ort, location=location)
+    loc = Location(user_id=me.id, bezeichnung=bezeichnung, country_id=country_id, city_id=city_id, location=location)
     db.add(loc)
     db.commit()
     db.refresh(loc)
-    return _serialize_location(loc)
+    country, city = _load_location_refs(db, loc)
+    return _serialize_location(loc, country, city)
 
 
 @app.patch("/api/locations/{location_id}")
@@ -753,20 +882,21 @@ def update_location(location_id: int, request: Request, payload: LocationCreate,
     if not loc or loc.user_id != me.id:
         return JSONResponse(status_code=404, content={"error": "not found"})
 
-    validated = _validate_location_payload(payload)
+    validated = _validate_location_payload(payload, me, db)
     if isinstance(validated, JSONResponse):
         return validated
-    bezeichnung, land, ort, location = validated
+    bezeichnung, country_id, city_id, location = validated
 
     if db.query(Location).filter(Location.user_id == me.id, Location.bezeichnung == bezeichnung, Location.id != loc.id).first():
         return JSONResponse(status_code=400, content={"error": "Diesen Ort hast du schon"})
 
     loc.bezeichnung = bezeichnung
-    loc.land = land
-    loc.ort = ort
+    loc.country_id = country_id
+    loc.city_id = city_id
     loc.location = location
     db.commit()
-    return _serialize_location(loc)
+    country, city = _load_location_refs(db, loc)
+    return _serialize_location(loc, country, city)
 
 
 @app.delete("/api/locations/{location_id}")
@@ -867,7 +997,10 @@ def _concert_venue_payload(db: Session, location_id: int | None) -> dict | None:
     if not location_id:
         return None
     loc = db.query(Location).filter(Location.id == location_id).first()
-    return _serialize_location(loc) if loc else None
+    if not loc:
+        return None
+    country, city = _load_location_refs(db, loc)
+    return _serialize_location(loc, country, city)
 
 
 def _concert_companions_payload(db: Session, companion_ids: list[int]) -> list[dict]:
@@ -921,8 +1054,10 @@ def list_concerts(request: Request, db: Session = Depends(get_db)):
             entry = {"id": link.band_id, "name": band_names.get(link.band_id, "?")}
             target = headliner_by_concert if link.role == "headliner" else support_by_concert
             target.setdefault(link.concert_id, []).append(entry)
+        countries = {c.id: c for c in db.query(Country).filter(Country.user_id == me.id).all()}
+        cities = {c.id: c for c in db.query(City).filter(City.user_id == me.id).all()}
         for loc in db.query(Location).filter(Location.user_id == me.id).all():
-            venues_by_id[loc.id] = _serialize_location(loc)
+            venues_by_id[loc.id] = _serialize_location(loc, countries.get(loc.country_id), cities.get(loc.city_id))
 
     return [
         _serialize_concert(

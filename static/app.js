@@ -1447,10 +1447,29 @@ async function fetchLocations(forceRefresh) {
   return cachedLocations;
 }
 
+// Länder/Orte: eigene kleine Namenslisten (siehe Country/City in
+// database.py), nur für das "neuer Ort"-Unterformular gebraucht (siehe
+// wireSimpleCreateSelect) — analog zu cachedBands zwischengespeichert.
+let cachedCountries = null;
+async function fetchCountries(forceRefresh) {
+  if (cachedCountries && !forceRefresh) return cachedCountries;
+  const res = await fetch("/api/countries");
+  cachedCountries = res.ok ? await res.json() : [];
+  return cachedCountries;
+}
+
+let cachedCities = null;
+async function fetchCities(forceRefresh) {
+  if (cachedCities && !forceRefresh) return cachedCities;
+  const res = await fetch("/api/cities");
+  cachedCities = res.ok ? await res.json() : [];
+  return cachedCities;
+}
+
 function concertLocationLine(concert) {
   if (!concert.venue) return "";
-  const { bezeichnung, location, ort, land } = concert.venue;
-  const detail = [location, ort, land].filter(Boolean).join(", ");
+  const { bezeichnung, location, city, country } = concert.venue;
+  const detail = [location, city && city.name, country && country.name].filter(Boolean).join(", ");
   return detail && detail !== bezeichnung ? `${bezeichnung} (${detail})` : bezeichnung;
 }
 
@@ -1596,26 +1615,83 @@ function concertCompanionPickerHtml(users, selectedIds) {
     .join("");
 }
 
-// Band-Chip: eigener Wrapper statt Löschen-Button INNERHALB des <label>
-// (anders als beim Tag-Picker) — ein Klick auf einen Nachfahren eines
-// <label> würde sonst dessen Checkbox mit-togglen, das Löschen-Icon müsste
-// das erst per preventDefault/stopPropagation abfangen. Als Geschwister
-// nebenan ist die Checkbox davon unberührt.
-function bandChipHtml(band, checked) {
+// Headliner/Vorband: Dropdown statt Chips zum Anklicken (spart Platz) — eine
+// Auswahl fügt die Band als kleinen entfernbaren Chip UNTER dem Dropdown
+// hinzu und setzt das Dropdown zurück, statt eine Checkbox anzuhaken. "+ Neue
+// Band …" steht bewusst ganz oben in der Liste (direkt aufrufbar, ohne erst
+// durch die ganze Bandliste scrollen zu müssen).
+function bandSelectedChipHtml(band) {
+  return `<span class="band-selected-chip" data-band-id="${band.id}">${escapeHtml(band.name)}<button type="button" class="band-selected-remove" data-band-id="${band.id}" aria-label="Entfernen">✕</button></span>`;
+}
+
+function bandSelectOptionsHtml(availableBands) {
   return `
-    <span class="band-picker-chip-wrap">
-      <label class="beneficiary-chip${checked ? " checked" : ""}">
-        <input type="checkbox" class="band-picker-checkbox" value="${band.id}"${checked ? " checked" : ""}>
-        <span>${escapeHtml(band.name)}</span>
-      </label>
-      <button type="button" class="band-picker-delete" data-band-id="${band.id}" aria-label="Band löschen" title="Band löschen">${TRASH_ICON_SVG}</button>
-    </span>
+    <option value="" selected disabled>Band wählen …</option>
+    <option value="__new__">+ Neue Band …</option>
+    ${availableBands.map((b) => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join("")}
   `;
 }
 
-function bandPickerChipsHtml(bands, selectedIds) {
-  const selected = new Set(selectedIds || []);
-  return bands.map((b) => bandChipHtml(b, selected.has(b.id))).join("");
+// Eine Band, die schon als Headliner ODER Vorband gewählt ist, fällt aus
+// BEIDEN Dropdowns raus (excludedIds) — verhindert die widersinnige
+// Doppelrolle serverseitig UND schon hier in der Auswahl selbst.
+function concertBandPickerBlockHtml(role, label, bands, selectedIds, excludedIds) {
+  const selectedBands = bands.filter((b) => selectedIds.includes(b.id));
+  const availableBands = bands.filter((b) => !selectedIds.includes(b.id) && !excludedIds.includes(b.id));
+  return `
+    <div class="checkbox-group">
+      <div class="eyebrow">${label}</div>
+      <div class="chip-row band-picker-selected" data-role="${role}">${selectedBands.map(bandSelectedChipHtml).join("")}</div>
+      <select class="band-picker-select" data-role="${role}">${bandSelectOptionsHtml(availableBands)}</select>
+    </div>
+  `;
+}
+
+// Generischer "Dropdown + '+ neu anlegen'"-Picker für simple Namenslisten
+// (Land/Ort im "neuer Ort"-Unterformular) — "+ neu anlegen" steht ganz oben,
+// eine Auswahl legt bei Bedarf sofort per POST an apiPath an, wählt den
+// neuen Eintrag direkt aus und klappt das Mini-Formular wieder ein.
+function simpleSelectOptionsHtml(items, selectedId, newLabel) {
+  return `
+    <option value="">Kein Eintrag</option>
+    <option value="__new__">${newLabel}</option>
+    ${items.map((i) => `<option value="${i.id}"${String(i.id) === String(selectedId) ? " selected" : ""}>${escapeHtml(i.name)}</option>`).join("")}
+  `;
+}
+
+function wireSimpleCreateSelect({ selectEl, newRowEl, newInputEl, createBtnEl, apiPath, items, newLabel }) {
+  if (!selectEl || !newRowEl || !createBtnEl) return;
+
+  function renderOptions(selectedId) {
+    selectEl.innerHTML = simpleSelectOptionsHtml(items, selectedId, newLabel);
+  }
+
+  selectEl.addEventListener("change", () => {
+    if (selectEl.value === "__new__") {
+      newRowEl.classList.remove("hidden");
+      newInputEl.focus();
+      renderOptions("");
+    } else {
+      newRowEl.classList.add("hidden");
+    }
+  });
+
+  createBtnEl.addEventListener("click", async () => {
+    const name = newInputEl.value.trim();
+    if (!name) return;
+    const res = await fetch(apiPath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (res.ok) {
+      const created = await res.json();
+      items.push(created);
+      renderOptions(created.id);
+      newRowEl.classList.add("hidden");
+      newInputEl.value = "";
+    }
+  });
 }
 
 // Orts-Auswahl: gleiches "+ neuer Eintrag…"-Prinzip wie die Projekt-Auswahl
@@ -1628,7 +1704,7 @@ function venueOptionsHtml(locations, selectedId) {
     .join("");
 }
 
-function concertModalBodyHtml(prefill = {}, users = [], bands = [], locations = []) {
+function concertModalBodyHtml(prefill = {}, users = [], bands = [], locations = [], countries = [], cities = []) {
   const today = isoDateLocal(new Date());
   const companionOptions = concertCompanionPickerHtml(users, (prefill.companions || []).map((p) => p.id));
   const headlinerIds = (prefill.headliner_bands || []).map((b) => b.id);
@@ -1655,8 +1731,8 @@ function concertModalBodyHtml(prefill = {}, users = [], bands = [], locations = 
         <label>Ort
           <select id="concertVenueSelect">
             <option value=""${currentVenueId ? "" : " selected"}>Kein Ort ausgewählt</option>
-            ${venueOptionsHtml(locations, currentVenueId)}
             <option value="__new__">+ neuer Eintrag…</option>
+            ${venueOptionsHtml(locations, currentVenueId)}
           </select>
         </label>
       </div>
@@ -1666,36 +1742,34 @@ function concertModalBodyHtml(prefill = {}, users = [], bands = [], locations = 
             <input type="text" id="newConcertVenueBezeichnung" maxlength="80" placeholder="z. B. Zitadelle Berlin">
           </label>
           <label>Land (optional)
-            <input type="text" id="newConcertVenueLand" maxlength="60">
+            <select id="newConcertVenueCountrySelect">${simpleSelectOptionsHtml(countries, "", "+ Land anlegen…")}</select>
           </label>
+        </div>
+        <div id="newConcertVenueCountryNewRow" class="band-picker-add-row hidden">
+          <input type="text" id="newConcertVenueCountryNewName" maxlength="60" placeholder="Neues Land …">
+          <button type="button" id="newConcertVenueCountryCreateBtn" class="secondary compact">Anlegen</button>
         </div>
         <div class="form-row-2col">
           <label>Ort (optional)
-            <input type="text" id="newConcertVenueOrt" maxlength="80">
+            <select id="newConcertVenueCitySelect">${simpleSelectOptionsHtml(cities, "", "+ Ort anlegen…")}</select>
           </label>
           <label>Location (optional)
             <input type="text" id="newConcertVenueLocation" maxlength="120">
           </label>
         </div>
+        <div id="newConcertVenueCityNewRow" class="band-picker-add-row hidden">
+          <input type="text" id="newConcertVenueCityNewName" maxlength="80" placeholder="Neuer Ort …">
+          <button type="button" id="newConcertVenueCityCreateBtn" class="secondary compact">Anlegen</button>
+        </div>
         <button type="button" id="createConcertVenueBtn" class="secondary compact">Ort anlegen</button>
         <p class="error-text hidden new-concert-venue-error"></p>
       </div>
       <div id="concertBandPickers">
-        <div class="checkbox-group">
-          <div class="eyebrow">Headliner</div>
-          <div class="chip-row band-picker-chips" data-role="headliner">${bandPickerChipsHtml(bands, headlinerIds)}</div>
-          <div class="band-picker-add-row">
-            <input type="text" class="band-picker-new-name" maxlength="80" placeholder="Neue Band …">
-            <button type="button" class="secondary compact band-picker-add-btn" data-role="headliner">+ Band</button>
-          </div>
-        </div>
-        <div class="checkbox-group">
-          <div class="eyebrow">Vorband</div>
-          <div class="chip-row band-picker-chips" data-role="vorband">${bandPickerChipsHtml(bands, supportIds)}</div>
-          <div class="band-picker-add-row">
-            <input type="text" class="band-picker-new-name" maxlength="80" placeholder="Neue Band …">
-            <button type="button" class="secondary compact band-picker-add-btn" data-role="vorband">+ Band</button>
-          </div>
+        ${concertBandPickerBlockHtml("headliner", "Headliner", bands, headlinerIds, supportIds)}
+        ${concertBandPickerBlockHtml("vorband", "Vorband", bands, supportIds, headlinerIds)}
+        <div id="newBandFields" class="band-picker-add-row hidden">
+          <input type="text" id="newBandNameInput" maxlength="80" placeholder="Neue Band …">
+          <button type="button" id="createBandBtn" class="secondary compact">Anlegen</button>
         </div>
         <p class="error-text hidden band-picker-error"></p>
       </div>
@@ -1729,7 +1803,7 @@ function wireConcertCompanionChips() {
 // Gleiches Prinzip wie wirePrivateTaskProjectPicker: "+ neuer Eintrag…"
 // blendet die Anlegen-Felder ein, ein eigener Button legt SOFORT an (statt
 // erst beim Formular-Absenden) und wählt den neuen Ort direkt aus.
-function wireConcertVenuePicker() {
+function wireConcertVenuePicker(countries, cities) {
   const select = document.getElementById("concertVenueSelect");
   const newFields = document.getElementById("newConcertVenueFields");
   if (!select || !newFields) return;
@@ -1738,12 +1812,33 @@ function wireConcertVenuePicker() {
     newFields.classList.toggle("hidden", select.value !== "__new__");
   });
 
+  wireSimpleCreateSelect({
+    selectEl: document.getElementById("newConcertVenueCountrySelect"),
+    newRowEl: document.getElementById("newConcertVenueCountryNewRow"),
+    newInputEl: document.getElementById("newConcertVenueCountryNewName"),
+    createBtnEl: document.getElementById("newConcertVenueCountryCreateBtn"),
+    apiPath: "/api/countries",
+    items: countries,
+    newLabel: "+ Land anlegen…",
+  });
+  wireSimpleCreateSelect({
+    selectEl: document.getElementById("newConcertVenueCitySelect"),
+    newRowEl: document.getElementById("newConcertVenueCityNewRow"),
+    newInputEl: document.getElementById("newConcertVenueCityNewName"),
+    createBtnEl: document.getElementById("newConcertVenueCityCreateBtn"),
+    apiPath: "/api/cities",
+    items: cities,
+    newLabel: "+ Ort anlegen…",
+  });
+
   const createBtn = document.getElementById("createConcertVenueBtn");
   if (!createBtn) return;
   createBtn.addEventListener("click", async () => {
     const bezeichnung = document.getElementById("newConcertVenueBezeichnung").value.trim();
-    const land = document.getElementById("newConcertVenueLand").value.trim();
-    const ort = document.getElementById("newConcertVenueOrt").value.trim();
+    const countrySelect = document.getElementById("newConcertVenueCountrySelect");
+    const citySelect = document.getElementById("newConcertVenueCitySelect");
+    const country_id = countrySelect.value && countrySelect.value !== "__new__" ? parseInt(countrySelect.value, 10) : null;
+    const city_id = citySelect.value && citySelect.value !== "__new__" ? parseInt(citySelect.value, 10) : null;
     const location = document.getElementById("newConcertVenueLocation").value.trim();
     const errEl = document.querySelector(".new-concert-venue-error");
     errEl.classList.add("hidden");
@@ -1757,7 +1852,7 @@ function wireConcertVenuePicker() {
     const res = await fetch("/api/locations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bezeichnung, land, ort, location }),
+      body: JSON.stringify({ bezeichnung, country_id, city_id, location }),
     });
 
     if (res.ok) {
@@ -1765,8 +1860,8 @@ function wireConcertVenuePicker() {
       const locations = await fetchLocations(true);
       select.innerHTML = `
         <option value="">Kein Ort ausgewählt</option>
-        ${venueOptionsHtml(locations, created.id)}
         <option value="__new__">+ neuer Eintrag…</option>
+        ${venueOptionsHtml(locations, created.id)}
       `;
       newFields.classList.add("hidden");
     } else {
@@ -1777,16 +1872,33 @@ function wireConcertVenuePicker() {
   });
 }
 
-// Headliner/Vorband: zwei unabhängige Multiselects auf derselben persönlichen
-// Band-Liste — mit gegenseitigem Ausschluss (eine Band kann nicht gleichzeitig
-// beides sein, siehe _validate_concert_payload in main.py) und Inline-Anlegen/
-// Löschen direkt hier, ohne eigenes "Bands verwalten"-Fenster.
+// Headliner/Vorband: zwei unabhängige Dropdown-Picker auf derselben
+// persönlichen Band-Liste. Zustand (welche Bands je Rolle gewählt sind) lebt
+// hier in JS statt im DOM (Checkboxen gibt's nicht mehr) — jede Änderung
+// rendert Chip-Zeile UND Dropdown-Optionen BEIDER Rollen neu, damit der
+// gegenseitige Ausschluss (eine Band kann nicht gleichzeitig Headliner UND
+// Vorband sein, siehe _validate_concert_payload in main.py) immer sofort
+// sichtbar ist. Inline-Anlegen direkt hier, ohne eigenes "Bands verwalten"-Fenster.
 function wireBandPickers(bands) {
   const container = document.getElementById("concertBandPickers");
   if (!container) return;
   const errEl = container.querySelector(".band-picker-error");
-  const headlinerRow = container.querySelector('.band-picker-chips[data-role="headliner"]');
-  const vorbandRow = container.querySelector('.band-picker-chips[data-role="vorband"]');
+  const newFields = document.getElementById("newBandFields");
+  const newNameInput = document.getElementById("newBandNameInput");
+  const createBtn = document.getElementById("createBandBtn");
+  let activeNewRole = null;
+
+  // Startzustand aus dem bereits gerenderten Markup übernehmen (siehe
+  // concertBandPickerBlockHtml) — keine zweite Quelle für "was ist schon
+  // ausgewählt" nötig.
+  const selected = {
+    headliner: Array.from(
+      container.querySelectorAll('.band-picker-selected[data-role="headliner"] .band-selected-chip')
+    ).map((el) => parseInt(el.dataset.bandId, 10)),
+    vorband: Array.from(
+      container.querySelectorAll('.band-picker-selected[data-role="vorband"] .band-selected-chip')
+    ).map((el) => parseInt(el.dataset.bandId, 10)),
+  };
 
   function showError(msg) {
     errEl.textContent = msg;
@@ -1796,70 +1908,76 @@ function wireBandPickers(bands) {
     errEl.classList.add("hidden");
   }
 
+  function renderRole(role) {
+    const otherRole = role === "headliner" ? "vorband" : "headliner";
+    const chipRow = container.querySelector(`.band-picker-selected[data-role="${role}"]`);
+    const select = container.querySelector(`.band-picker-select[data-role="${role}"]`);
+    const selectedBands = bands.filter((b) => selected[role].includes(b.id));
+    const availableBands = bands.filter((b) => !selected[role].includes(b.id) && !selected[otherRole].includes(b.id));
+    chipRow.innerHTML = selectedBands.map(bandSelectedChipHtml).join("");
+    select.innerHTML = bandSelectOptionsHtml(availableBands);
+  }
+
+  function renderBoth() {
+    renderRole("headliner");
+    renderRole("vorband");
+  }
+
   container.addEventListener("change", (e) => {
-    const cb = e.target.closest(".band-picker-checkbox");
-    if (!cb) return;
-    const chip = cb.closest(".beneficiary-chip");
-    if (chip) chip.classList.toggle("checked", cb.checked);
-    if (!cb.checked) return;
-    const row = cb.closest(".band-picker-chips");
-    const otherRow = row === headlinerRow ? vorbandRow : headlinerRow;
-    const otherCb = otherRow && otherRow.querySelector(`.band-picker-checkbox[value="${cb.value}"]`);
-    if (otherCb && otherCb.checked) {
-      otherCb.checked = false;
-      const otherChip = otherCb.closest(".beneficiary-chip");
-      if (otherChip) otherChip.classList.remove("checked");
+    const select = e.target.closest(".band-picker-select");
+    if (!select) return;
+    const role = select.dataset.role;
+    if (select.value === "__new__") {
+      activeNewRole = role;
+      clearError();
+      newFields.classList.remove("hidden");
+      newNameInput.focus();
+      renderRole(role);
+      return;
     }
+    if (!select.value) return;
+    const bandId = parseInt(select.value, 10);
+    if (!selected[role].includes(bandId)) selected[role].push(bandId);
+    renderBoth();
+  });
+
+  container.addEventListener("click", (e) => {
+    const removeBtn = e.target.closest(".band-selected-remove");
+    if (!removeBtn) return;
+    const role = removeBtn.closest(".band-picker-selected").dataset.role;
+    const bandId = parseInt(removeBtn.dataset.bandId, 10);
+    selected[role] = selected[role].filter((id) => id !== bandId);
+    renderBoth();
   });
 
   container.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || !e.target.classList.contains("band-picker-new-name")) return;
-    e.preventDefault();
-    e.target.closest(".band-picker-add-row").querySelector(".band-picker-add-btn").click();
+    if (e.key === "Enter" && e.target === newNameInput) {
+      e.preventDefault();
+      createBtn.click();
+    }
   });
 
-  container.addEventListener("click", async (e) => {
-    const delBtn = e.target.closest(".band-picker-delete");
-    if (delBtn) {
-      if (!(await showConfirm("Diese Band wird aus allen Konzerten entfernt.", "Ja, löschen"))) return;
-      const bandId = delBtn.dataset.bandId;
-      const res = await fetch(`/api/bands/${bandId}`, { method: "DELETE" });
-      cachedBands = null;
-      if (res.ok) {
-        container.querySelectorAll(`[data-band-id="${bandId}"]`).forEach((el) => {
-          const wrap = el.closest(".band-picker-chip-wrap");
-          if (wrap) wrap.remove();
-        });
-      }
-      return;
-    }
-
-    const addBtn = e.target.closest(".band-picker-add-btn");
-    if (addBtn) {
-      const role = addBtn.dataset.role;
-      const nameInput = addBtn.closest(".band-picker-add-row").querySelector(".band-picker-new-name");
-      const name = nameInput.value.trim();
-      if (!name) return;
-      clearError();
-      const res = await fetch("/api/bands", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      cachedBands = null;
-      if (res.ok) {
-        const created = await res.json();
-        bands.push(created);
-        // Neue Band sofort in BEIDEN Pickern verfügbar — in dem, aus dem
-        // heraus sie angelegt wurde, gleich angehakt.
-        [headlinerRow, vorbandRow].forEach((row) => {
-          if (row) row.insertAdjacentHTML("beforeend", bandChipHtml(created, row.dataset.role === role));
-        });
-        nameInput.value = "";
-      } else {
-        const data = await res.json().catch(() => ({}));
-        showError(data.error || "Konnte nicht angelegt werden.");
-      }
+  createBtn.addEventListener("click", async () => {
+    const name = newNameInput.value.trim();
+    if (!name) return;
+    clearError();
+    const res = await fetch("/api/bands", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    cachedBands = null;
+    if (res.ok) {
+      const created = await res.json();
+      bands.push(created);
+      if (activeNewRole) selected[activeNewRole].push(created.id);
+      newNameInput.value = "";
+      newFields.classList.add("hidden");
+      activeNewRole = null;
+      renderBoth();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      showError(data.error || "Konnte nicht angelegt werden.");
     }
   });
 }
@@ -1875,11 +1993,11 @@ async function submitConcertForm(url, method) {
     document.querySelectorAll("#concertCompanionsPicker .beneficiary-checkbox:checked")
   ).map((el) => parseInt(el.value, 10));
   const headliner_band_ids = Array.from(
-    document.querySelectorAll('.band-picker-chips[data-role="headliner"] .band-picker-checkbox:checked')
-  ).map((el) => parseInt(el.value, 10));
+    document.querySelectorAll('.band-picker-selected[data-role="headliner"] .band-selected-chip')
+  ).map((el) => parseInt(el.dataset.bandId, 10));
   const support_band_ids = Array.from(
-    document.querySelectorAll('.band-picker-chips[data-role="vorband"] .band-picker-checkbox:checked')
-  ).map((el) => parseInt(el.value, 10));
+    document.querySelectorAll('.band-picker-selected[data-role="vorband"] .band-selected-chip')
+  ).map((el) => parseInt(el.dataset.bandId, 10));
 
   if (!bezeichnung || !datum) return;
 
@@ -1915,14 +2033,16 @@ async function openAddConcertModal() {
   const { users } = await fetchUsersAndMe();
   const bands = await fetchBands();
   const locations = await fetchLocations();
+  const countries = await fetchCountries();
+  const cities = await fetchCities();
   openModal({
     eyebrow: "Concerts",
     title: "Konzert/Festival erfassen",
-    bodyHtml: concertModalBodyHtml({}, users, bands, locations),
+    bodyHtml: concertModalBodyHtml({}, users, bands, locations, countries, cities),
     onSubmit: () => submitConcertForm("/api/concerts", "POST"),
   });
   wireConcertCompanionChips();
-  wireConcertVenuePicker();
+  wireConcertVenuePicker(countries, cities);
   wireBandPickers(bands);
 }
 
@@ -1930,15 +2050,17 @@ async function openEditConcertModal(concert) {
   const { users } = await fetchUsersAndMe();
   const bands = await fetchBands();
   const locations = await fetchLocations();
+  const countries = await fetchCountries();
+  const cities = await fetchCities();
   openModal({
     eyebrow: "Concerts",
     title: "Eintrag bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: concertModalBodyHtml(concert, users, bands, locations),
+    bodyHtml: concertModalBodyHtml(concert, users, bands, locations, countries, cities),
     onSubmit: () => submitConcertForm(`/api/concerts/${concert.id}`, "PATCH"),
   });
   wireConcertCompanionChips();
-  wireConcertVenuePicker();
+  wireConcertVenuePicker(countries, cities);
   wireBandPickers(bands);
   const deleteBtn = document.getElementById("concertDeleteBtn");
   if (deleteBtn) {

@@ -279,18 +279,41 @@ class ConcertCompanion(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
 
+# Persönliche Länder-/Orte-Datenbanken (analog zu Band): jeweils eine simple
+# Namensliste, direkt im "neuer Ort"-Formular per Dropdown+"+ neu anlegen"
+# anlegbar (siehe wireSimpleCreateSelect in app.js) — genau wie bei Bands soll
+# "Deutschland"/"Berlin" nicht bei jedem neuen Ort erneut eingetippt werden.
+class Country(Base):
+    __tablename__ = "countries"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(60), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class City(Base):
+    __tablename__ = "cities"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(80), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # Persönliche Orte-Datenbank (analog zu Tags/Band): ein Ort wird EINMAL mit
-# Bezeichnung ("Zitadelle Berlin") + Land/Ort/Location-Detail angelegt und
-# danach im Konzert-Formular per Dropdown wiederverwendet (siehe
-# wireConcertVenuePicker in app.js), statt bei jedem Konzert an diesem Ort
-# alle drei Felder erneut einzutippen.
+# Bezeichnung ("Zitadelle Berlin") + Land/Ort (je eine Referenz auf die
+# Länder-/Orte-Listen oben) + Location-Detail angelegt und danach im
+# Konzert-Formular per Dropdown wiederverwendet (siehe wireConcertVenuePicker
+# in app.js), statt bei jedem Konzert an diesem Ort alle Felder erneut
+# einzutippen. land/ort waren zunächst Freitext-Spalten hier direkt — bleiben
+# unangetastet in der DB stehen (ungemappt) statt per DROP entfernt zu
+# werden, analog zum Umbau bei Concert weiter oben.
 class Location(Base):
     __tablename__ = "locations"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     bezeichnung = Column(String(80), nullable=False)
-    land = Column(String(60), nullable=True)
-    ort = Column(String(80), nullable=True)
+    country_id = Column(Integer, ForeignKey("countries.id"), nullable=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
     location = Column(String(120), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -403,6 +426,8 @@ _ensure_column("private_tasks", "is_public", "BOOLEAN", "DEFAULT 0")
 _ensure_column("concerts", "land", "TEXT")
 _ensure_column("concerts", "ort", "TEXT")
 _ensure_column("concerts", "location_id", "INTEGER")
+_ensure_column("locations", "country_id", "INTEGER")
+_ensure_column("locations", "city_id", "INTEGER")
 
 
 # Analoge Selbst-Migration für Indizes: index=True auf einer Column wirkt nur bei
