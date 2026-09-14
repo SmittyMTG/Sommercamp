@@ -29,6 +29,7 @@ from database import (
     ConcertCompanion,
     Band,
     ConcertBand,
+    Location,
     Project,
     ProjectAccess,
     PrivateTask,
@@ -208,9 +209,7 @@ class ConcertCreate(BaseModel):
     bezeichnung: str
     art: str = "konzert"  # "konzert" | "festival"
     datum: str
-    land: str | None = None
-    ort: str | None = None
-    location: str | None = None
+    location_id: int | None = None
     beschreibung: str | None = None
     companion_ids: list[int] = []
     headliner_band_ids: list[int] = []
@@ -219,6 +218,13 @@ class ConcertCreate(BaseModel):
 
 class BandCreate(BaseModel):
     name: str
+
+
+class LocationCreate(BaseModel):
+    bezeichnung: str
+    land: str | None = None
+    ort: str | None = None
+    location: str | None = None
 
 
 class PrivateTaskSubitemCreate(BaseModel):
@@ -667,13 +673,129 @@ def delete_band(band_id: int, request: Request, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# --- Locations: persönliche Orte-Datenbank (analog zu Bands) — ein Ort wird
+# EINMAL mit Bezeichnung + Land/Ort/Location-Detail angelegt und danach im
+# Konzert-Formular per Dropdown wiederverwendet (siehe wireConcertVenuePicker
+# in app.js), statt bei jedem Konzert an diesem Ort alle drei Felder erneut
+# einzutippen.
+def _validate_location_payload(payload: LocationCreate):
+    bezeichnung = payload.bezeichnung.strip()
+    if not bezeichnung:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf nicht leer sein"})
+    if len(bezeichnung) > 80:
+        return JSONResponse(status_code=400, content={"error": "Bezeichnung darf maximal 80 Zeichen haben"})
+
+    land = (payload.land or "").strip() or None
+    if land and len(land) > 60:
+        return JSONResponse(status_code=400, content={"error": "Land darf maximal 60 Zeichen haben"})
+
+    ort = (payload.ort or "").strip() or None
+    if ort and len(ort) > 80:
+        return JSONResponse(status_code=400, content={"error": "Ort darf maximal 80 Zeichen haben"})
+
+    location = (payload.location or "").strip() or None
+    if location and len(location) > 120:
+        return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
+
+    return bezeichnung, land, ort, location
+
+
+def _serialize_location(loc: Location) -> dict:
+    return {
+        "id": loc.id,
+        "bezeichnung": loc.bezeichnung,
+        "land": loc.land,
+        "ort": loc.ort,
+        "location": loc.location,
+    }
+
+
+@app.get("/api/locations")
+def list_locations(request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+    locations = db.query(Location).filter(Location.user_id == me.id).order_by(Location.bezeichnung.asc()).all()
+    return [_serialize_location(loc) for loc in locations]
+
+
+@app.post("/api/locations")
+def create_location(request: Request, payload: LocationCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+
+    validated = _validate_location_payload(payload)
+    if isinstance(validated, JSONResponse):
+        return validated
+    bezeichnung, land, ort, location = validated
+
+    if db.query(Location).filter(Location.user_id == me.id, Location.bezeichnung == bezeichnung).first():
+        return JSONResponse(status_code=400, content={"error": "Diesen Ort hast du schon"})
+
+    loc = Location(user_id=me.id, bezeichnung=bezeichnung, land=land, ort=ort, location=location)
+    db.add(loc)
+    db.commit()
+    db.refresh(loc)
+    return _serialize_location(loc)
+
+
+@app.patch("/api/locations/{location_id}")
+def update_location(location_id: int, request: Request, payload: LocationCreate, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+
+    loc = db.query(Location).filter(Location.id == location_id).first()
+    if not loc or loc.user_id != me.id:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    validated = _validate_location_payload(payload)
+    if isinstance(validated, JSONResponse):
+        return validated
+    bezeichnung, land, ort, location = validated
+
+    if db.query(Location).filter(Location.user_id == me.id, Location.bezeichnung == bezeichnung, Location.id != loc.id).first():
+        return JSONResponse(status_code=400, content={"error": "Diesen Ort hast du schon"})
+
+    loc.bezeichnung = bezeichnung
+    loc.land = land
+    loc.ort = ort
+    loc.location = location
+    db.commit()
+    return _serialize_location(loc)
+
+
+@app.delete("/api/locations/{location_id}")
+def delete_location(location_id: int, request: Request, db: Session = Depends(get_db)):
+    username = get_current_user(request)
+    me = _require_admin(db, username) if username else None
+    if not me:
+        return JSONResponse(status_code=403, content={"error": "Nur für Admins"})
+
+    loc = db.query(Location).filter(Location.id == location_id).first()
+    if loc:
+        if loc.user_id != me.id:
+            return JSONResponse(status_code=403, content={"error": "Nur eigene Orte löschbar"})
+        # Konzerte an diesem Ort bleiben erhalten, verlieren nur die Zuordnung
+        # (kein Kaskaden-Löschen von Konzerten wegen eines aufgeräumten Orts).
+        db.query(Concert).filter(Concert.location_id == loc.id).update({"location_id": None})
+        db.delete(loc)
+        db.commit()
+    return {"ok": True}
+
+
 # --- Concerts: persönliches Konzert-/Festival-Tagebuch, nur über den
 # "Concerts"-Tab für Admins erreichbar (siehe app.js) — rein persönlich
 # (created_by), analog zu Tags/EventTemplate: "bei wem war ICH wie oft" ist
 # eine Ich-Perspektive, kein geteilter Team-Kalender. Begleitung sind
 # App-Nutzer:innen (kein Freitext), damit die Statistik ohne Fuzzy-Matching
 # auf Namen auskommt. Lineup (Headliner/Vorband) referenziert die persönliche
-# Band-Datenbank oben statt Freitext, aus demselben Grund.
+# Band-Datenbank oben statt Freitext, aus demselben Grund, und der Ort die
+# Location-Datenbank oben statt drei Freitextfeldern.
 CONCERT_ARTEN = {"konzert", "festival"}
 
 
@@ -695,17 +817,11 @@ def _validate_concert_payload(payload: ConcertCreate, db: Session, me: User):
     except ValueError:
         return JSONResponse(status_code=400, content={"error": "Ungültiges Datum"})
 
-    land = (payload.land or "").strip() or None
-    if land and len(land) > 60:
-        return JSONResponse(status_code=400, content={"error": "Land darf maximal 60 Zeichen haben"})
-
-    ort = (payload.ort or "").strip() or None
-    if ort and len(ort) > 80:
-        return JSONResponse(status_code=400, content={"error": "Ort darf maximal 80 Zeichen haben"})
-
-    location = (payload.location or "").strip() or None
-    if location and len(location) > 120:
-        return JSONResponse(status_code=400, content={"error": "Location darf maximal 120 Zeichen haben"})
+    location_id = payload.location_id
+    if location_id is not None:
+        loc = db.query(Location).filter(Location.id == location_id).first()
+        if not loc or loc.user_id != me.id:
+            return JSONResponse(status_code=400, content={"error": "Unbekannter Ort ausgewählt"})
 
     beschreibung = (payload.beschreibung or "").strip() or None
 
@@ -724,23 +840,34 @@ def _validate_concert_payload(payload: ConcertCreate, db: Session, me: User):
         if not (set(headliner_ids) | set(support_ids)).issubset(my_band_ids):
             return JSONResponse(status_code=400, content={"error": "Unbekannte Band ausgewählt"})
 
-    return bezeichnung, art, concert_date, land, ort, location, beschreibung, companion_ids, headliner_ids, support_ids
+    return bezeichnung, art, concert_date, location_id, beschreibung, companion_ids, headliner_ids, support_ids
 
 
-def _serialize_concert(c: Concert, companions: list[dict], headliner_bands: list[dict], support_bands: list[dict]) -> dict:
+def _serialize_concert(
+    c: Concert,
+    venue: dict | None,
+    companions: list[dict],
+    headliner_bands: list[dict],
+    support_bands: list[dict],
+) -> dict:
     return {
         "id": c.id,
         "bezeichnung": c.bezeichnung,
         "art": c.art,
         "datum": c.datum.isoformat(),
-        "land": c.land,
-        "ort": c.ort,
-        "location": c.location,
+        "venue": venue,
         "beschreibung": c.beschreibung,
         "companions": companions,
         "headliner_bands": headliner_bands,
         "support_bands": support_bands,
     }
+
+
+def _concert_venue_payload(db: Session, location_id: int | None) -> dict | None:
+    if not location_id:
+        return None
+    loc = db.query(Location).filter(Location.id == location_id).first()
+    return _serialize_location(loc) if loc else None
 
 
 def _concert_companions_payload(db: Session, companion_ids: list[int]) -> list[dict]:
@@ -782,6 +909,7 @@ def list_concerts(request: Request, db: Session = Depends(get_db)):
     companions_by_concert: dict[int, list[dict]] = {}
     headliner_by_concert: dict[int, list[dict]] = {}
     support_by_concert: dict[int, list[dict]] = {}
+    venues_by_id: dict[int, dict] = {}
     if concert_ids:
         usernames = {u.id: u.username for u in db.query(User).all()}
         for link in db.query(ConcertCompanion).filter(ConcertCompanion.concert_id.in_(concert_ids)).all():
@@ -793,10 +921,13 @@ def list_concerts(request: Request, db: Session = Depends(get_db)):
             entry = {"id": link.band_id, "name": band_names.get(link.band_id, "?")}
             target = headliner_by_concert if link.role == "headliner" else support_by_concert
             target.setdefault(link.concert_id, []).append(entry)
+        for loc in db.query(Location).filter(Location.user_id == me.id).all():
+            venues_by_id[loc.id] = _serialize_location(loc)
 
     return [
         _serialize_concert(
             c,
+            venues_by_id.get(c.location_id),
             companions_by_concert.get(c.id, []),
             headliner_by_concert.get(c.id, []),
             support_by_concert.get(c.id, []),
@@ -815,15 +946,13 @@ def create_concert(request: Request, payload: ConcertCreate, db: Session = Depen
     validated = _validate_concert_payload(payload, db, me)
     if isinstance(validated, JSONResponse):
         return validated
-    bezeichnung, art, concert_date, land, ort, location, beschreibung, companion_ids, headliner_ids, support_ids = validated
+    bezeichnung, art, concert_date, location_id, beschreibung, companion_ids, headliner_ids, support_ids = validated
 
     concert = Concert(
         bezeichnung=bezeichnung,
         art=art,
         datum=concert_date,
-        land=land,
-        ort=ort,
-        location=location,
+        location_id=location_id,
         beschreibung=beschreibung,
         created_by=username,
     )
@@ -836,6 +965,7 @@ def create_concert(request: Request, payload: ConcertCreate, db: Session = Depen
 
     return _serialize_concert(
         concert,
+        _concert_venue_payload(db, location_id),
         _concert_companions_payload(db, companion_ids),
         _concert_bands_payload(db, headliner_ids),
         _concert_bands_payload(db, support_ids),
@@ -858,14 +988,12 @@ def update_concert(concert_id: int, request: Request, payload: ConcertCreate, db
     validated = _validate_concert_payload(payload, db, me)
     if isinstance(validated, JSONResponse):
         return validated
-    bezeichnung, art, concert_date, land, ort, location, beschreibung, companion_ids, headliner_ids, support_ids = validated
+    bezeichnung, art, concert_date, location_id, beschreibung, companion_ids, headliner_ids, support_ids = validated
 
     existing.bezeichnung = bezeichnung
     existing.art = art
     existing.datum = concert_date
-    existing.land = land
-    existing.ort = ort
-    existing.location = location
+    existing.location_id = location_id
     existing.beschreibung = beschreibung
 
     db.query(ConcertCompanion).filter(ConcertCompanion.concert_id == existing.id).delete(synchronize_session=False)
@@ -876,6 +1004,7 @@ def update_concert(concert_id: int, request: Request, payload: ConcertCreate, db
 
     return _serialize_concert(
         existing,
+        _concert_venue_payload(db, location_id),
         _concert_companions_payload(db, companion_ids),
         _concert_bands_payload(db, headliner_ids),
         _concert_bands_payload(db, support_ids),

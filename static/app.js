@@ -1435,8 +1435,23 @@ async function fetchBands(forceRefresh) {
   return cachedBands;
 }
 
+// Persönliche Orte-Datenbank (siehe Location-Modell in database.py) — ein
+// Ort wird einmal mit Bezeichnung + Land/Ort/Location-Detail angelegt und im
+// Konzert-Formular per Dropdown wiederverwendet (siehe
+// wireConcertVenuePicker). Analog zu cachedTags/cachedBands zwischengespeichert.
+let cachedLocations = null;
+async function fetchLocations(forceRefresh) {
+  if (cachedLocations && !forceRefresh) return cachedLocations;
+  const res = await fetch("/api/locations");
+  cachedLocations = res.ok ? await res.json() : [];
+  return cachedLocations;
+}
+
 function concertLocationLine(concert) {
-  return [concert.location, concert.ort, concert.land].filter(Boolean).join(", ");
+  if (!concert.venue) return "";
+  const { bezeichnung, location, ort, land } = concert.venue;
+  const detail = [location, ort, land].filter(Boolean).join(", ");
+  return detail && detail !== bezeichnung ? `${bezeichnung} (${detail})` : bezeichnung;
 }
 
 // "Bei wem war ich wie oft" — zählt für jede Begleitperson, in wie vielen
@@ -1603,11 +1618,22 @@ function bandPickerChipsHtml(bands, selectedIds) {
   return bands.map((b) => bandChipHtml(b, selected.has(b.id))).join("");
 }
 
-function concertModalBodyHtml(prefill = {}, users = [], bands = []) {
+// Orts-Auswahl: gleiches "+ neuer Eintrag…"-Prinzip wie die Projekt-Auswahl
+// bei Tasks (siehe privTaskProjectSelect/newPrivTaskProjectFields) — ein Ort
+// wird einmal mit Bezeichnung+Land+Ort+Location angelegt und danach per
+// Dropdown wiederverwendet, statt bei jedem Konzert alle Felder neu einzutippen.
+function venueOptionsHtml(locations, selectedId) {
+  return locations
+    .map((loc) => `<option value="${loc.id}"${String(loc.id) === String(selectedId) ? " selected" : ""}>${escapeHtml(loc.bezeichnung)}</option>`)
+    .join("");
+}
+
+function concertModalBodyHtml(prefill = {}, users = [], bands = [], locations = []) {
   const today = isoDateLocal(new Date());
   const companionOptions = concertCompanionPickerHtml(users, (prefill.companions || []).map((p) => p.id));
   const headlinerIds = (prefill.headliner_bands || []).map((b) => b.id);
   const supportIds = (prefill.support_bands || []).map((b) => b.id);
+  const currentVenueId = prefill.venue ? prefill.venue.id : "";
 
   return `
     <div class="form-stack">
@@ -1626,17 +1652,33 @@ function concertModalBodyHtml(prefill = {}, users = [], bands = []) {
         <label>Datum
           <input type="date" id="concertDatumInput" value="${prefill.datum || today}" required>
         </label>
-        <label>Land (optional)
-          <input type="text" id="concertLandInput" maxlength="60" value="${escapeHtml(prefill.land || "")}">
+        <label>Ort
+          <select id="concertVenueSelect">
+            <option value=""${currentVenueId ? "" : " selected"}>Kein Ort ausgewählt</option>
+            ${venueOptionsHtml(locations, currentVenueId)}
+            <option value="__new__">+ neuer Eintrag…</option>
+          </select>
         </label>
       </div>
-      <div class="form-row-2col">
-        <label>Ort (optional)
-          <input type="text" id="concertOrtInput" maxlength="80" value="${escapeHtml(prefill.ort || "")}">
-        </label>
-        <label>Location (optional)
-          <input type="text" id="concertLocationInput" maxlength="120" value="${escapeHtml(prefill.location || "")}">
-        </label>
+      <div id="newConcertVenueFields" class="form-stack hidden">
+        <div class="form-row-2col">
+          <label>Bezeichnung
+            <input type="text" id="newConcertVenueBezeichnung" maxlength="80" placeholder="z. B. Zitadelle Berlin">
+          </label>
+          <label>Land (optional)
+            <input type="text" id="newConcertVenueLand" maxlength="60">
+          </label>
+        </div>
+        <div class="form-row-2col">
+          <label>Ort (optional)
+            <input type="text" id="newConcertVenueOrt" maxlength="80">
+          </label>
+          <label>Location (optional)
+            <input type="text" id="newConcertVenueLocation" maxlength="120">
+          </label>
+        </div>
+        <button type="button" id="createConcertVenueBtn" class="secondary compact">Ort anlegen</button>
+        <p class="error-text hidden new-concert-venue-error"></p>
       </div>
       <div id="concertBandPickers">
         <div class="checkbox-group">
@@ -1681,6 +1723,57 @@ function wireConcertCompanionChips() {
     const cb = chip.querySelector(".beneficiary-checkbox");
     if (!cb) return;
     cb.addEventListener("change", () => chip.classList.toggle("checked", cb.checked));
+  });
+}
+
+// Gleiches Prinzip wie wirePrivateTaskProjectPicker: "+ neuer Eintrag…"
+// blendet die Anlegen-Felder ein, ein eigener Button legt SOFORT an (statt
+// erst beim Formular-Absenden) und wählt den neuen Ort direkt aus.
+function wireConcertVenuePicker() {
+  const select = document.getElementById("concertVenueSelect");
+  const newFields = document.getElementById("newConcertVenueFields");
+  if (!select || !newFields) return;
+
+  select.addEventListener("change", () => {
+    newFields.classList.toggle("hidden", select.value !== "__new__");
+  });
+
+  const createBtn = document.getElementById("createConcertVenueBtn");
+  if (!createBtn) return;
+  createBtn.addEventListener("click", async () => {
+    const bezeichnung = document.getElementById("newConcertVenueBezeichnung").value.trim();
+    const land = document.getElementById("newConcertVenueLand").value.trim();
+    const ort = document.getElementById("newConcertVenueOrt").value.trim();
+    const location = document.getElementById("newConcertVenueLocation").value.trim();
+    const errEl = document.querySelector(".new-concert-venue-error");
+    errEl.classList.add("hidden");
+
+    if (!bezeichnung) {
+      errEl.textContent = "Bitte eine Bezeichnung eingeben.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const res = await fetch("/api/locations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bezeichnung, land, ort, location }),
+    });
+
+    if (res.ok) {
+      const created = await res.json();
+      const locations = await fetchLocations(true);
+      select.innerHTML = `
+        <option value="">Kein Ort ausgewählt</option>
+        ${venueOptionsHtml(locations, created.id)}
+        <option value="__new__">+ neuer Eintrag…</option>
+      `;
+      newFields.classList.add("hidden");
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errEl.textContent = data.error || "Konnte nicht angelegt werden.";
+      errEl.classList.remove("hidden");
+    }
   });
 }
 
@@ -1775,9 +1868,8 @@ async function submitConcertForm(url, method) {
   const bezeichnung = document.getElementById("concertBezeichnungInput").value.trim();
   const art = document.getElementById("concertArtSelect").value;
   const datum = document.getElementById("concertDatumInput").value;
-  const land = document.getElementById("concertLandInput").value.trim();
-  const ort = document.getElementById("concertOrtInput").value.trim();
-  const location = document.getElementById("concertLocationInput").value.trim();
+  const venueSelect = document.getElementById("concertVenueSelect");
+  const location_id = venueSelect && venueSelect.value && venueSelect.value !== "__new__" ? parseInt(venueSelect.value, 10) : null;
   const beschreibung = document.getElementById("concertBeschreibungInput").value.trim();
   const companion_ids = Array.from(
     document.querySelectorAll("#concertCompanionsPicker .beneficiary-checkbox:checked")
@@ -1798,9 +1890,7 @@ async function submitConcertForm(url, method) {
       bezeichnung,
       art,
       datum,
-      land,
-      ort,
-      location,
+      location_id,
       beschreibung,
       companion_ids,
       headliner_band_ids,
@@ -1824,27 +1914,31 @@ async function submitConcertForm(url, method) {
 async function openAddConcertModal() {
   const { users } = await fetchUsersAndMe();
   const bands = await fetchBands();
+  const locations = await fetchLocations();
   openModal({
     eyebrow: "Concerts",
     title: "Konzert/Festival erfassen",
-    bodyHtml: concertModalBodyHtml({}, users, bands),
+    bodyHtml: concertModalBodyHtml({}, users, bands, locations),
     onSubmit: () => submitConcertForm("/api/concerts", "POST"),
   });
   wireConcertCompanionChips();
+  wireConcertVenuePicker();
   wireBandPickers(bands);
 }
 
 async function openEditConcertModal(concert) {
   const { users } = await fetchUsersAndMe();
   const bands = await fetchBands();
+  const locations = await fetchLocations();
   openModal({
     eyebrow: "Concerts",
     title: "Eintrag bearbeiten",
     submitLabel: "Speichern",
-    bodyHtml: concertModalBodyHtml(concert, users, bands),
+    bodyHtml: concertModalBodyHtml(concert, users, bands, locations),
     onSubmit: () => submitConcertForm(`/api/concerts/${concert.id}`, "PATCH"),
   });
   wireConcertCompanionChips();
+  wireConcertVenuePicker();
   wireBandPickers(bands);
   const deleteBtn = document.getElementById("concertDeleteBtn");
   if (deleteBtn) {

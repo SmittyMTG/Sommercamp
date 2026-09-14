@@ -258,12 +258,15 @@ class Concert(Base):
     # spart eine DB-seitige Enum-Migration falls mal eine dritte Art dazukommt.
     art = Column(String(20), nullable=False, default="konzert")
     datum = Column(Date, nullable=False, index=True)
-    # Land/Ort/Location bewusst drei getrennte Felder (statt einem Freitext-
-    # Ort) — ermöglicht später z. B. "wie oft in welchem Land" auszuwerten,
-    # ohne einen Freitext parsen zu müssen.
-    land = Column(String(60), nullable=True)
-    ort = Column(String(80), nullable=True)
-    location = Column(String(120), nullable=True)
+    # Land/Ort/Location waren zunächst drei Freitextfelder direkt hier auf dem
+    # Konzert — durch eine wiederverwendbare Location-Datenbank ersetzt (siehe
+    # Location-Modell unten), damit z. B. "Zitadelle Berlin" nicht bei jedem
+    # dortigen Konzert neu eingetippt werden muss. Die alten Spalten bleiben
+    # unangetastet in der DB stehen (ungemappt) statt sie per DROP zu
+    # entfernen — analog zum Kategorien->Tags-Wechsel bei PrivateTask, ein
+    # DROP auf der Live-DB wäre unnötiges Risiko für etwas, das ohnehin
+    # nirgends mehr gelesen wird.
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)
     beschreibung = Column(Text, nullable=True)
     created_by = Column(String, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -274,6 +277,22 @@ class ConcertCompanion(Base):
     id = Column(Integer, primary_key=True, index=True)
     concert_id = Column(Integer, ForeignKey("concerts.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+
+# Persönliche Orte-Datenbank (analog zu Tags/Band): ein Ort wird EINMAL mit
+# Bezeichnung ("Zitadelle Berlin") + Land/Ort/Location-Detail angelegt und
+# danach im Konzert-Formular per Dropdown wiederverwendet (siehe
+# wireConcertVenuePicker in app.js), statt bei jedem Konzert an diesem Ort
+# alle drei Felder erneut einzutippen.
+class Location(Base):
+    __tablename__ = "locations"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    bezeichnung = Column(String(80), nullable=False)
+    land = Column(String(60), nullable=True)
+    ort = Column(String(80), nullable=True)
+    location = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 # Persönliche Band-Datenbank (analog zu Tags): frei von der Person selbst
@@ -383,6 +402,7 @@ _ensure_column("plan_events", "recurrence_group", "TEXT")
 _ensure_column("private_tasks", "is_public", "BOOLEAN", "DEFAULT 0")
 _ensure_column("concerts", "land", "TEXT")
 _ensure_column("concerts", "ort", "TEXT")
+_ensure_column("concerts", "location_id", "INTEGER")
 
 
 # Analoge Selbst-Migration für Indizes: index=True auf einer Column wirkt nur bei
