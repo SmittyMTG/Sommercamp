@@ -22,7 +22,6 @@ from database import (
     PlanEvent,
     Tag,
     PlanEventTag,
-    PrivateTaskTag,
     EventTemplate,
     EventTemplateTag,
     Band,
@@ -31,9 +30,6 @@ from database import (
     City,
     Project,
     ProjectAccess,
-    PrivateTask,
-    PrivateTaskAssignee,
-    PrivateTaskSubitem,
     Ausgabe,
     ActivityLog,
     pwd_context,
@@ -125,8 +121,8 @@ def _purge_old_plan_events(db: Session):
 
 
 # Aktivitäts-Log: absichtlich sehr eng gehalten (nur die Aktionen, bei denen
-# eine ANDERE Person konkret betroffen ist — neue Aufgabe, Aufgabe erledigt,
-# Ausgabe erfasst, Zahlung gemeldet/bestätigt), nicht jeder Klick in der App.
+# eine ANDERE Person konkret betroffen ist — Ausgabe erfasst/bearbeitet,
+# Zahlung gemeldet/bestätigt), nicht jeder Klick in der App.
 def log_action(db: Session, actor: str, affected: str | None, action: str, message: str):
     if affected == actor:
         affected = None
@@ -177,16 +173,6 @@ class ConfirmReceivedRequest(BaseModel):
     amount: float
 
 
-class PrivateTaskCreate(BaseModel):
-    titel: str
-    beschreibung: str | None = None
-    deadline: str | None = None
-    project_id: int | None = None
-    assignee_ids: list[int] = []
-    is_public: bool = False
-    tag_ids: list[int] = []
-
-
 class TagCreate(BaseModel):
     bezeichnung: str
     farbe: str
@@ -220,10 +206,6 @@ class LocationCreate(BaseModel):
     country_id: int | None = None
     city_id: int | None = None
     location: str | None = None
-
-
-class PrivateTaskSubitemCreate(BaseModel):
-    titel: str
 
 
 class ProjectCreate(BaseModel):
@@ -294,8 +276,8 @@ def get_app_version():
 
 
 # --- Tags: persönliche, pro Person selbst verwaltete Mehrfach-Markierung für
-# Termine und Tasks (siehe Tag-Modell in database.py). Ersetzt die früheren,
-# globalen Aufgaben-Kategorien (/api/task-categories, entfernt). ---
+# Termine (siehe Tag-Modell in database.py). Ersetzt die früheren, globalen
+# Aufgaben-Kategorien (/api/task-categories, entfernt). ---
 def _validate_tag_payload(payload: TagCreate):
     bezeichnung = payload.bezeichnung.strip()
     if not bezeichnung:
@@ -379,7 +361,6 @@ def delete_tag(tag_id: int, request: Request, db: Session = Depends(get_db)):
         if tag.user_id != me.id:
             return JSONResponse(status_code=403, content={"error": "Nur eigene Tags löschbar"})
         db.query(PlanEventTag).filter(PlanEventTag.tag_id == tag.id).delete(synchronize_session=False)
-        db.query(PrivateTaskTag).filter(PrivateTaskTag.tag_id == tag.id).delete(synchronize_session=False)
         db.query(EventTemplateTag).filter(EventTemplateTag.tag_id == tag.id).delete(synchronize_session=False)
         db.delete(tag)
         db.commit()
@@ -387,7 +368,7 @@ def delete_tag(tag_id: int, request: Request, db: Session = Depends(get_db)):
 
 
 def _sync_personal_tags(db: Session, me: User, link_model, item_fk_name: str, item_id: int, tag_ids: list[int]):
-    """Ersetzt die Tag-Zuordnungen DIESER Person für ein Item (Termin/Task)
+    """Ersetzt die Tag-Zuordnungen DIESER Person für ein Item (Termin)
     durch tag_ids. Tags anderer Personen an demselben (ggf. geteilten) Item
     bleiben unangetastet, da Tags rein persönlich sind (siehe Tag-Modell) —
     daher wird hier gezielt nur unter den eigenen Tags aufgeräumt, nicht per
@@ -832,11 +813,6 @@ def delete_location(location_id: int, request: Request, db: Session = Depends(ge
     return {"ok": True}
 
 
-# --- "Tasks"-Seite (privat/projekt-getaggt, aktuell nur für Felix erreichbar
-# über die Nav, siehe app.js) — Sichtbarkeit läuft über created_by ("privat")
-# bzw. ProjectAccess (geteiltes Projekt), nicht über eine feste Zuweisungsliste
-# wie bei den geteilten Aufgaben oben.
-
 def _user_by_username(db: Session, username: str) -> User | None:
     return db.query(User).filter(User.username == username).first()
 
@@ -849,303 +825,10 @@ def _user_project_ids(db: Session, user_id: int) -> set[int]:
     return {a.project_id for a in db.query(ProjectAccess).filter(ProjectAccess.user_id == user_id).all()}
 
 
-def _can_access_private_task(db: Session, user: User, task: PrivateTask) -> bool:
-    if task.created_by == user.username or task.is_public or _is_admin_user(user):
-        return True
-    return bool(task.project_id and task.project_id in _user_project_ids(db, user.id))
-
-
 def _can_use_private_project(db: Session, user: User, project_id: int | None) -> bool:
     if project_id is None or _is_admin_user(user):
         return True
     return project_id in _user_project_ids(db, user.id)
-
-
-def _validate_private_task_payload(payload: PrivateTaskCreate, db: Session):
-    titel = payload.titel.strip()
-    if not titel:
-        return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
-    if len(titel) > 80:
-        return JSONResponse(status_code=400, content={"error": "Titel darf maximal 80 Zeichen haben"})
-
-    beschreibung = (payload.beschreibung or "").strip() or None
-
-    deadline = None
-    if payload.deadline:
-        try:
-            deadline = dt.fromisoformat(payload.deadline)
-        except ValueError:
-            return JSONResponse(status_code=400, content={"error": "Ungültige Deadline"})
-
-    project_id = payload.project_id
-    if project_id is not None and not db.query(Project).filter(Project.id == project_id).first():
-        return JSONResponse(status_code=400, content={"error": "Unbekanntes Projekt"})
-
-    # Mehrere Personen können gemeinsam verantwortlich sein, oder niemand.
-    assignee_ids = sorted(set(payload.assignee_ids))
-    if assignee_ids:
-        valid_ids = {u.id for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
-        if not set(assignee_ids).issubset(valid_ids):
-            return JSONResponse(status_code=400, content={"error": "Unbekannte Person ausgewählt"})
-
-    return titel, beschreibung, deadline, project_id, assignee_ids, payload.is_public
-
-
-def _serialize_private_task(
-    task: PrivateTask,
-    assignee_ids: list[int],
-    usernames: dict[int, str],
-    projects: dict[int, Project],
-    subitems: list[PrivateTaskSubitem] | None = None,
-    tags: list[Tag] | None = None,
-) -> dict:
-    project = projects.get(task.project_id) if task.project_id else None
-    return {
-        "id": task.id,
-        "titel": task.titel,
-        "beschreibung": task.beschreibung,
-        "done": task.done,
-        "deadline": task.deadline.isoformat() if task.deadline else None,
-        "created_by": task.created_by,
-        "is_public": task.is_public,
-        "assignees": [
-            {"id": uid, "username": usernames.get(uid, "?")} for uid in assignee_ids
-        ],
-        "project": ({"id": project.id, "name": project.name} if project else None),
-        "subitems": [{"id": s.id, "titel": s.titel, "done": s.done} for s in (subitems or [])],
-        "tags": _serialize_tags(tags),
-    }
-
-
-@app.get("/api/private-tasks")
-def list_private_tasks(request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    tasks = db.query(PrivateTask).order_by(PrivateTask.created_at.desc()).all()
-    visible = [t for t in tasks if _can_access_private_task(db, me, t)]
-
-    usernames = {u.id: u.username for u in db.query(User).all()}
-    projects = {p.id: p for p in db.query(Project).all()}
-    assignees_by_task: dict[int, list[int]] = {}
-    for a in db.query(PrivateTaskAssignee).all():
-        assignees_by_task.setdefault(a.task_id, []).append(a.user_id)
-    subitems_by_task: dict[int, list[PrivateTaskSubitem]] = {}
-    for s in db.query(PrivateTaskSubitem).order_by(PrivateTaskSubitem.created_at.asc()).all():
-        subitems_by_task.setdefault(s.task_id, []).append(s)
-
-    # Nur MEINE eigenen Tags anhängen — siehe list_plan_events für die
-    # gleiche Logik/Begründung.
-    my_tags = _my_tags_by_id(db, me)
-    tags_by_task: dict[int, list[Tag]] = {}
-    if my_tags:
-        for link in db.query(PrivateTaskTag).filter(PrivateTaskTag.tag_id.in_(my_tags.keys())).all():
-            tags_by_task.setdefault(link.private_task_id, []).append(my_tags[link.tag_id])
-
-    return [
-        _serialize_private_task(
-            t,
-            assignees_by_task.get(t.id, []),
-            usernames,
-            projects,
-            subitems_by_task.get(t.id, []),
-            tags_by_task.get(t.id),
-        )
-        for t in visible
-    ]
-
-
-@app.post("/api/private-tasks")
-def create_private_task(request: Request, payload: PrivateTaskCreate, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    validated = _validate_private_task_payload(payload, db)
-    if isinstance(validated, JSONResponse):
-        return validated
-    titel, beschreibung, deadline, project_id, assignee_ids, is_public = validated
-
-    if not _can_use_private_project(db, me, project_id):
-        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
-
-    task = PrivateTask(
-        titel=titel,
-        beschreibung=beschreibung,
-        deadline=deadline,
-        created_by=username,
-        project_id=project_id,
-        is_public=is_public,
-    )
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-
-    for uid in assignee_ids:
-        db.add(PrivateTaskAssignee(task_id=task.id, user_id=uid))
-    _sync_personal_tags(db, me, PrivateTaskTag, "private_task_id", task.id, payload.tag_ids)
-    db.commit()
-
-    usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
-    projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
-    my_tags = _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids)
-    return _serialize_private_task(task, assignee_ids, usernames, projects, [], my_tags)
-
-
-@app.patch("/api/private-tasks/{task_id}")
-def update_private_task(task_id: int, request: Request, payload: PrivateTaskCreate, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
-    if not task:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-    if not _can_access_private_task(db, me, task):
-        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
-
-    validated = _validate_private_task_payload(payload, db)
-    if isinstance(validated, JSONResponse):
-        return validated
-    titel, beschreibung, deadline, project_id, assignee_ids, is_public = validated
-
-    if project_id != task.project_id and not _can_use_private_project(db, me, project_id):
-        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf dieses Projekt"})
-
-    task.titel = titel
-    task.beschreibung = beschreibung
-    task.deadline = deadline
-    task.project_id = project_id
-    task.is_public = is_public
-    db.query(PrivateTaskAssignee).filter(PrivateTaskAssignee.task_id == task.id).delete(synchronize_session=False)
-    for uid in assignee_ids:
-        db.add(PrivateTaskAssignee(task_id=task.id, user_id=uid))
-    _sync_personal_tags(db, me, PrivateTaskTag, "private_task_id", task.id, payload.tag_ids)
-    db.commit()
-
-    usernames = {u.id: u.username for u in db.query(User).filter(User.id.in_(assignee_ids)).all()}
-    projects = {p.id: p for p in db.query(Project).filter(Project.id == task.project_id).all()}
-    subitems = (
-        db.query(PrivateTaskSubitem)
-        .filter(PrivateTaskSubitem.task_id == task.id)
-        .order_by(PrivateTaskSubitem.created_at.asc())
-        .all()
-    )
-    my_tags = _tags_for_ids(_my_tags_by_id(db, me), payload.tag_ids)
-    return _serialize_private_task(task, assignee_ids, usernames, projects, subitems, my_tags)
-
-
-@app.patch("/api/private-tasks/{task_id}/toggle")
-def toggle_private_task(task_id: int, request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
-    if not task:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-    if not _can_access_private_task(db, me, task):
-        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
-
-    task.done = not task.done
-    db.commit()
-    return {"id": task.id, "done": task.done}
-
-
-@app.delete("/api/private-tasks/{task_id}")
-def delete_private_task(task_id: int, request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
-    if task:
-        if not _can_access_private_task(db, me, task):
-            return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
-        db.query(PrivateTaskSubitem).filter(PrivateTaskSubitem.task_id == task.id).delete(synchronize_session=False)
-        db.query(PrivateTaskAssignee).filter(PrivateTaskAssignee.task_id == task.id).delete(synchronize_session=False)
-        db.query(PrivateTaskTag).filter(PrivateTaskTag.private_task_id == task.id).delete(synchronize_session=False)
-        db.delete(task)
-        db.commit()
-    return {"ok": True}
-
-
-# --- Teilaufgaben der privaten Tasks ---
-
-@app.post("/api/private-tasks/{task_id}/subitems")
-def create_private_task_subitem(
-    task_id: int, request: Request, payload: PrivateTaskSubitemCreate, db: Session = Depends(get_db)
-):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
-    if not task:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-    if not _can_access_private_task(db, me, task):
-        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
-
-    titel = payload.titel.strip()
-    if not titel:
-        return JSONResponse(status_code=400, content={"error": "Titel darf nicht leer sein"})
-    if len(titel) > 120:
-        return JSONResponse(status_code=400, content={"error": "Titel darf maximal 120 Zeichen haben"})
-
-    sub = PrivateTaskSubitem(task_id=task_id, titel=titel)
-    db.add(sub)
-    db.commit()
-    db.refresh(sub)
-    return {"id": sub.id, "titel": sub.titel, "done": sub.done}
-
-
-@app.patch("/api/private-tasks/{task_id}/subitems/{sub_id}/toggle")
-def toggle_private_task_subitem(task_id: int, sub_id: int, request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
-    if not task or not _can_access_private_task(db, me, task):
-        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
-
-    sub = (
-        db.query(PrivateTaskSubitem)
-        .filter(PrivateTaskSubitem.id == sub_id, PrivateTaskSubitem.task_id == task_id)
-        .first()
-    )
-    if not sub:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-
-    sub.done = not sub.done
-    db.commit()
-    return {"id": sub.id, "done": sub.done}
-
-
-@app.delete("/api/private-tasks/{task_id}/subitems/{sub_id}")
-def delete_private_task_subitem(task_id: int, sub_id: int, request: Request, db: Session = Depends(get_db)):
-    username = get_current_user(request)
-    me = _user_by_username(db, username) if username else None
-    if not me:
-        return JSONResponse(status_code=401, content={"error": "unauthorized"})
-
-    task = db.query(PrivateTask).filter(PrivateTask.id == task_id).first()
-    if not task or not _can_access_private_task(db, me, task):
-        return JSONResponse(status_code=403, content={"error": "Kein Zugriff auf diese Aufgabe"})
-
-    db.query(PrivateTaskSubitem).filter(
-        PrivateTaskSubitem.id == sub_id, PrivateTaskSubitem.task_id == task_id
-    ).delete(synchronize_session=False)
-    db.commit()
-    return {"ok": True}
 
 
 # --- Camp-Plan (Termine, nur Admins legen an) ---
@@ -1157,8 +840,9 @@ def _require_admin(db: Session, username: str) -> User | None:
     return user
 
 
-# --- Projekte (Admin-verwaltet: steuert, wer Zugriff auf projekt-getaggte
-# Tasks auf der "Tasks"-Seite hat, siehe oben) ---
+# --- Projekte (Admin-verwaltet: geteilte Sichtbarkeits-Gruppen, steuern über
+# PlanEvent.shared_project_id / EventTemplate.shared_project_id, wer projekt-
+# freigegebene Termine/Vorlagen sieht) ---
 
 @app.get("/api/projects")
 def list_projects(request: Request, db: Session = Depends(get_db)):
@@ -1271,9 +955,6 @@ def delete_project(project_id: int, request: Request, db: Session = Depends(get_
     project = db.query(Project).filter(Project.id == project_id).first()
     if project:
         db.query(ProjectAccess).filter(ProjectAccess.project_id == project.id).delete(synchronize_session=False)
-        db.query(PrivateTask).filter(PrivateTask.project_id == project.id).update(
-            {PrivateTask.project_id: None}, synchronize_session=False
-        )
         db.delete(project)
         db.commit()
     return {"ok": True}
@@ -1492,7 +1173,7 @@ def _can_access_plan_event(db: Session, user: User, event: PlanEvent) -> bool:
     """Ein Termin ist standardmäßig nur für die anlegende Person sichtbar —
     erst eine Freigabe für ein Projekt (shared_project_id) oder als öffentlich
     markiert (is_public) zeigt ihn auch anderen. Admins sehen wie überall
-    alles, analog zu _can_access_private_task."""
+    alles."""
     if event.created_by == user.username or event.is_public or _is_admin_user(user):
         return True
     return bool(event.shared_project_id and event.shared_project_id in _user_project_ids(db, user.id))
@@ -1842,7 +1523,6 @@ def update_username(user_id: int, request: Request, payload: UsernameUpdate, db:
     # ohnehin schon fest eingebettet haben.
     db.query(UserSession).filter(UserSession.username == old_username).update({"username": new_username})
     db.query(Project).filter(Project.created_by == old_username).update({"created_by": new_username})
-    db.query(PrivateTask).filter(PrivateTask.created_by == old_username).update({"created_by": new_username})
     db.query(PlanEvent).filter(PlanEvent.created_by == old_username).update({"created_by": new_username})
     db.query(Ausgabe).filter(Ausgabe.created_by == old_username).update({"created_by": new_username})
     db.commit()
@@ -1870,7 +1550,7 @@ def get_ui_state(request: Request, db: Session = Depends(get_db)):
 
 
 # Pro User frei formbarer UI-Zustand (zuletzt offener Screen/Scroll, aktive
-# Filter/Sortierung auf Tasks & Kosten, …) — bewusst ein generischer
+# Filter/Sortierung auf den Kosten, …) — bewusst ein generischer
 # Merge-Patch statt einzelner Endpunkte pro Einstellung, damit das Frontend
 # neue Zustände speichern kann, ohne dass hier jedes Mal ein neuer Endpunkt
 # nötig wird. Eine grobe Größenbremse verhindert versehentlich endlos

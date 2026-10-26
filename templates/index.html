@@ -130,29 +130,6 @@
           <div id="expenseLogPager" class="pager"></div>
         </div>
       </section>
-
-      <!-- ============ TASKS (privat/projekt/öffentlich) ============ -->
-      <section id="screen-tasks" class="screen">
-        <div class="section-heading">
-          <div><h2>Tasks</h2></div>
-        </div>
-
-        <div class="task-search-row">
-          <input type="search" id="privateTaskSearchInput" placeholder="🔍 Suchen …" autocomplete="off">
-        </div>
-        <div class="filter-row" id="privateTaskFilterRow">
-          <button type="button" class="filter active" data-filter="alle">Alle</button>
-          <button type="button" class="filter" data-filter="meine">Meine</button>
-          <button type="button" class="filter" data-filter="privat">Privat</button>
-        </div>
-        <div class="action-row task-toolbar">
-          <button type="button" id="privateTaskFilterBtn" class="secondary compact task-toolbar-btn">🔍 Filtern</button>
-          <button type="button" id="privateTaskSortBtn" class="secondary compact task-toolbar-btn">↕️ Sortieren</button>
-        </div>
-        <div id="privateTaskList" class="stack compact-list">
-          <div class="empty-state"><p>Noch keine Tasks.</p></div>
-        </div>
-      </section>
     </section>
   </main>
 
@@ -163,12 +140,10 @@
        app.js über data-fab-for gesteuert. -->
   <button id="addExpenseButton" class="primary compact fab-button" data-fab-for="costs">＋ Ausgabe</button>
   <button id="addPlanButton" class="primary compact fab-button hidden" data-fab-for="plan">＋ Eintrag</button>
-  <button id="addPrivateTaskButton" class="primary compact fab-button hidden" data-fab-for="tasks">＋ Task</button>
 
   <nav id="bottomNav" class="bottom-nav hidden">
     <button class="nav-item" data-screen="plan"><span>▣</span>Kalender</button>
     <button class="nav-item active" data-screen="costs"><span>€</span>Kosten<span id="costsNavBadge" class="nav-badge hidden">0</span></button>
-    <button class="nav-item hidden" data-screen="tasks"><span>✦</span>Tasks</button>
   </nav>
 
   <dialog id="modal">

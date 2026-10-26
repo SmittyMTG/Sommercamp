@@ -61,10 +61,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .empty{border:1px dashed var(--line);border-radius:18px;padding:25px;text-align:center;color:var(--muted)}
 .chevron{color:var(--muted);font-size:22px;line-height:1;font-weight:900;transition:transform .15s;display:inline-block}
 .primary,.secondary,.icon-button{border:none;border-radius:13px;padding:12px 14px;font-weight:900}.primary{background:var(--me-color,var(--yellow));color:#111}.secondary{background:var(--surface2);color:var(--text);border:1px solid var(--line)}.compact{padding:10px 12px}.icon-button{background:var(--surface2);color:var(--text);padding:8px 11px}
-/* Zeigt an, dass "Filtern"/"Sortieren" gerade von der Grundeinstellung
-   abweichen — gleiche Sprache wie die aktiven Filter-Pillen (eigene
-   Nutzerfarbe statt neutralem Grau). */
-.secondary.filter-btn-active{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow));color:#111}
 /* Schwebender "+"-Button unten rechts (leichter mit dem Daumen erreichbar) —
    eigene Nutzerfarbe statt festem Gelb, mit .primary.fab-button für höhere
    Spezifität als die .primary-Regel oben. */
@@ -96,11 +92,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    optisch in der ohnehin gleichfarbigen Kartenfläche). */
 .list-card.avatar-bg::before{content:"";position:absolute;inset:0;background-image:linear-gradient(to left,transparent,var(--surface) 80%),var(--avatar-url);background-size:cover,cover;background-position:center,center 30%;opacity:.22;z-index:0}
 .list-card.avatar-bg>*{position:relative;z-index:1}
-/* Tasks-Liste: spürbar kompaktere Kacheln (weniger Innenabstand, kleinerer
-   Haken, engerer Zeilenabstand zwischen den Karten) — hier stapeln sich
-   potenziell viele Einträge, die volle .list-card-Höhe nimmt zu viel Platz weg. */
-.compact-list{gap:6px}
-.compact-list .list-card{padding:9px 10px;min-height:auto;border-radius:13px}
 /* Seitennummerierung (Ausgaben & Log, siehe renderPager in app.js) — leer
    (:empty), solange alles auf eine Seite passt, dann auch kein Rand-Abstand. */
 .pager{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;margin:14px 0}
@@ -114,10 +105,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    eine zweite komplette Seitennummerierung oben zu brauchen. */
 .jump-top-btn{display:block;width:100%;text-align:center;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin-bottom:10px;font-size:12px;font-weight:800;color:var(--muted);cursor:pointer}
 .jump-top-btn:active{background:var(--surface)}
-.compact-list .list-card-content{gap:9px}
-.compact-list .list-card-checkbox{width:20px;height:20px}
-.compact-list .list-card-title{font-size:14px}
-.compact-list .list-card-meta{font-size:11px;margin-top:1px}
 .list-card.clickable{cursor:pointer}.list-card.clickable:active{background:var(--surface2)}
 .list-card-content{flex:1;display:flex;align-items:center;gap:13px;min-width:0}
 .list-card-checkbox{width:24px;height:24px;flex-shrink:0;border-radius:999px;border:2px solid var(--line);background:none;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}.list-card-checkbox:active{transform:scale(.9)}.list-card-checkbox.checked{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow))}.list-card-checkbox.checked::after{content:'✓';color:#111;font-weight:900;font-size:13px}
@@ -136,12 +123,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .urgent-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s,opacity .15s;opacity:.45}.urgent-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}.urgent-btn.active{opacity:1;color:var(--red);background:rgba(255,98,98,.15)}
 .meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:7px}.pill{background:var(--surface2);border:1px solid var(--line);border-radius:999px;padding:5px 8px;font-size:11px;color:var(--muted)}
 .action-row{display:flex;flex-wrap:wrap;gap:7px}.tiny{padding:8px 10px;border-radius:11px;border:none;background:var(--surface2);color:var(--text);font-weight:850;min-height:32px;display:flex;align-items:center;justify-content:center}
-.task-toolbar{margin-bottom:10px}
-.task-toolbar-btn{border-radius:9px}
 /* font-weight ist bei .filter UND .filter.active bewusst identisch (900) —
    sonst ändert sich beim Umschalten (fett vs. normal) die Textbreite und der
    Button "springt" sichtbar in der Größe statt nur die Farbe zu wechseln. */
-.task-search-row{margin-bottom:10px}
 .concert-stat-tiles{display:flex;gap:8px;margin-bottom:16px}
 .concert-stat-tile{flex:1;background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:12px 8px;text-align:center}
 .concert-stat-tile-value{font-size:22px;font-weight:900;line-height:1.1}
@@ -155,10 +139,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .concert-bar-row-count{text-align:right;font-size:12px;font-weight:900;color:var(--text)}
 .filter-row{display:flex;gap:8px;overflow:auto;padding-bottom:10px}.filter{white-space:nowrap;border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:8px 11px;border-radius:999px;font-weight:900}.filter.active{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow));color:#111}
 .filter-row.two-row{flex-wrap:wrap;overflow:visible}
-.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(760px,100%);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:rgba(16,16,20,.94);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:8px 5px calc(8px + env(safe-area-inset-bottom));z-index:20}
-/* Vierte Spalte nur für Admins (Concerts-Tab, siehe app.js) — für alle
-   anderen bleibt es bei den ursprünglichen 3 Spalten. */
-.bottom-nav.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(760px,100%);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));background:rgba(16,16,20,.94);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);border-top:1px solid var(--line);padding:8px 5px calc(8px + env(safe-area-inset-bottom));z-index:20}
 .compact-hero{padding:14px 16px}.compact-hero .eyebrow{margin-bottom:1px}.compact-hero .countdown{font-size:22px;margin:4px 0 2px}.compact-hero .muted{font-size:12px}
 .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--red);color:#fff;font-size:10px;font-weight:900;line-height:1;margin-left:6px;vertical-align:middle}
 .bottom-nav button{position:relative}
@@ -176,12 +157,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    normalen Checkbox aus. */
 label.plan-recurring-toggle{display:flex;align-items:center;gap:8px;color:var(--text);font-size:13px;font-weight:700}
 .plan-recurring-toggle input[type=checkbox]{width:18px;height:18px;flex:none;padding:0;border:none;background:none;border-radius:4px;accent-color:var(--me-color,var(--yellow))}
-/* Deadline bei Tasks: Datumsfeld so schmal wie möglich statt volle Breite,
-   daneben "Heute!"/"Morgen!" zum schnellen Setzen (siehe privateTaskModalBodyHtml). */
-.deadline-row{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
-.deadline-row label{flex:0 0 auto}
-.deadline-row input[type=date]{width:auto}
-.deadline-row button{flex-shrink:0}
 .sort-select{margin-bottom:16px}.costs-view{display:grid;gap:2px}
 /* h3/p behalten sonst ihre Browser-Standardmargins (~1em oben+unten) — macht
    zusammen mit dem grid-gap oben einen viel zu großen Abstand zwischen
@@ -204,9 +179,8 @@ label.plan-recurring-toggle{display:flex;align-items:center;gap:8px;color:var(--
 .balance-chip-value{font-size:10px;font-weight:900}
 .balance-chip-value.success{color:var(--green)}.balance-chip-value.danger{color:var(--red)}.balance-chip-value.muted{color:var(--muted)}
 .source-tag{display:inline-block;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;color:#111;margin-top:5px}
-/* Persönliche Tags (siehe Tag-Modell) — ersetzen die frühere Aufgaben-
-   Kategorie (fester Einzelwert), daher mehrere Chips nebeneinander statt
-   nur einem. */
+/* Persönliche Tags (siehe Tag-Modell) — Mehrfach-Markierung pro Termin,
+   daher mehrere Chips nebeneinander statt nur einem. */
 .tag-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--muted);margin-top:5px;margin-right:8px}
 .tag-chip-dot{width:7px;height:7px;border-radius:50%;flex:none}
 .name-tag{display:inline-block;padding:1px 7px;border-radius:999px;font-weight:800;color:#111}
@@ -218,16 +192,7 @@ label.plan-recurring-toggle{display:flex;align-items:center;gap:8px;color:var(--
 .name-with-avatar.name-pill{background:var(--tag-color);border-radius:999px;padding:1px 7px 1px 3px;color:#111;font-weight:800}
 .name-with-avatar.name-pill .name-avatar,.name-with-avatar.name-pill .name-avatar-fallback{box-shadow:0 0 0 1px rgba(0,0,0,.15)}
 .settle-btn{white-space:nowrap}
-.subitems-progress{font-weight:700}
-.subitems-list{display:grid;gap:6px;margin-top:6px}
-.subitem-row{display:flex;align-items:center;gap:8px;font-size:13px}
-.subitem-row input[type=checkbox]{width:auto;flex-shrink:0}
-.subitem-row.done span{color:var(--muted);text-decoration:line-through}
-.subitem-edit-row{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--surface2);border-radius:12px;padding:8px 10px}
-.subitem-edit-row label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);font-weight:400;flex:1;min-width:0}
-.subitem-edit-row label span{overflow-wrap:anywhere}
-.subitem-edit-row input[type=checkbox]{width:auto;flex-shrink:0}
-/* Tag-Picker (Termin-/Task-Modal): Zuweisen+Anlegen+Bearbeiten+Löschen direkt
+/* Tag-Picker (Termin-Modal): Zuweisen+Anlegen+Bearbeiten+Löschen direkt
    hier statt in einem eigenen "Tags verwalten"-Fenster. Gedrückt halten
    (statt eines Stift-Buttons) wechselt in die Inline-Bearbeitung, siehe
    wireTagPicker — daher user-select:none/touch-callout:none, damit ein
@@ -251,7 +216,6 @@ label.tag-picker-chip{position:relative;display:inline-flex;align-items:center;g
 .tag-picker-add-row{display:flex;align-items:center;gap:8px}
 .tag-picker-add-row input[type=color]{flex:none;width:36px;height:36px;padding:2px;border-radius:8px}
 .tag-picker-add-row input[type=text]{flex:1;min-width:0}
-#newSubitemInput{flex:1;min-width:0}
 input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13;color:var(--text);border-radius:13px;padding:13px;outline:none}textarea{min-height:90px;resize:vertical}input:focus,select:focus,textarea:focus{border-color:var(--me-color,var(--yellow))}
 .error-text{color:var(--red)!important;margin:0}.checkbox-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.check-card{display:flex!important;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px;overflow-wrap:anywhere;min-width:0}.check-card input{width:auto;flex-shrink:0}
 /* Farbige Chips statt Checkbox+Text (z. B. "Für wen?" bei Ausgaben) — blass

@@ -55,7 +55,7 @@ class User(Base):
     color = Column(String(7), nullable=True)
     # Frei formbarer JSON-Blob für UI-Zustand, der pro User über Geräte hinweg
     # erhalten bleiben soll (zuletzt offener Screen/Scroll, aktive Filter/
-    # Sortierung auf Tasks & Kosten, …) — siehe GET/PATCH /api/me/ui-state in
+    # Sortierung auf den Kosten, …) — siehe GET/PATCH /api/me/ui-state in
     # main.py. Bewusst ein einziges Blob-Feld statt einzelner Spalten pro
     # Einstellung, damit neue UI-Zustände ohne Migration dazukommen können.
     ui_state = Column(Text, nullable=True)
@@ -73,12 +73,11 @@ class UserSession(Base):
 
 
 # Persönlicher Tag (Bezeichnung+Farbe), von jeder Person selbst verwaltet
-# (siehe /api/tags in main.py) — anders als TaskCategory unten (global, ein
-# fester Wert pro Aufgabe) ist ein Tag eine private Mehrfach-Markierung:
-# JEDE Person markiert Termine/Aufgaben mit ihren EIGENEN Tags, unabhängig
-# davon, wer den Termin/die Aufgabe angelegt hat oder ob andere sie auch
-# sehen. Zwei Personen können denselben geteilten Termin unterschiedlich
-# taggen, ohne sich gegenseitig zu beeinflussen (siehe _sync_personal_tags).
+# (siehe /api/tags in main.py) — ein Tag ist eine private Mehrfach-Markierung:
+# JEDE Person markiert Termine mit ihren EIGENEN Tags, unabhängig davon, wer
+# den Termin angelegt hat oder ob andere ihn auch sehen. Zwei Personen können
+# denselben geteilten Termin unterschiedlich taggen, ohne sich gegenseitig zu
+# beeinflussen (siehe _sync_personal_tags).
 class Tag(Base):
     __tablename__ = "tags"
     id = Column(Integer, primary_key=True, index=True)
@@ -88,21 +87,14 @@ class Tag(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Verknüpfungstabellen Tag <-> Termin/Aufgabe (viele-zu-viele). Kein
-# ORM-Cascade konfiguriert — Aufräumen beim Löschen von Tag/Termin/Aufgabe
+# Verknüpfungstabellen Tag <-> Termin/Vorlage (viele-zu-viele). Kein
+# ORM-Cascade konfiguriert — Aufräumen beim Löschen von Tag/Termin/Vorlage
 # läuft wie überall in main.py per expliziter Query (siehe delete_tag,
-# delete_plan_event, delete_private_task).
+# delete_plan_event).
 class PlanEventTag(Base):
     __tablename__ = "plan_event_tags"
     id = Column(Integer, primary_key=True, index=True)
     plan_event_id = Column(Integer, ForeignKey("plan_events.id"), nullable=False, index=True)
-    tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
-
-
-class PrivateTaskTag(Base):
-    __tablename__ = "private_task_tags"
-    id = Column(Integer, primary_key=True, index=True)
-    private_task_id = Column(Integer, ForeignKey("private_tasks.id"), nullable=False, index=True)
     tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
 
 
@@ -113,9 +105,10 @@ class EventTemplateTag(Base):
     tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
 
 
-# Projekt-Tag für die private "Tasks"-Seite (main.py: /api/private-tasks): eine
-# Aufgabe ohne project_id gilt als "privat" (nur für created_by sichtbar), mit
-# project_id als geteilt mit allen Usern, die eine ProjectAccess-Zeile dafür
+# Projekt: geteilte Sichtbarkeits-Gruppe für Termine/Vorlagen (siehe
+# PlanEvent.shared_project_id bzw. EventTemplate.shared_project_id): ohne
+# Projekt gilt ein Eintrag als "privat" (nur für created_by sichtbar), mit
+# Projekt als geteilt mit allen Usern, die eine ProjectAccess-Zeile dafür
 # haben. Admin-verwaltbar (anlegen + Mitglieder pflegen), s. /api/projects.
 class Project(Base):
     __tablename__ = "projects"
@@ -132,48 +125,10 @@ class ProjectAccess(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
 
 
-# Private Tasks-Seite (main.py: /api/private-tasks): Sichtbarkeit läuft über
-# created_by ("privat") bzw. Projekt-Mitgliedschaft (project_id).
-class PrivateTask(Base):
-    __tablename__ = "private_tasks"
-    id = Column(Integer, primary_key=True, index=True)
-    titel = Column(String(80), nullable=False)
-    beschreibung = Column(Text, nullable=True)
-    done = Column(Boolean, nullable=False, default=False)
-    deadline = Column(DateTime, nullable=True)
-    # Kategorien wurden durch Tags ersetzt (siehe Tag-Modell oben) — die
-    # gleichnamige DB-Spalte/Tabelle bleibt unangetastet bestehen (nur nicht
-    # mehr gemappt), ein DROP auf der Live-DB wäre unnötiges Risiko für
-    # etwas, das ohnehin nirgends mehr gelesen wird.
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
-    # Gegenteil von "privat": für ALLE sichtbar, unabhängig von Projekt-
-    # Mitgliedschaft (siehe _can_access_private_task in main.py).
-    is_public = Column(Boolean, nullable=False, default=False)
-    created_by = Column(String, nullable=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-# Verantwortliche einer privaten Task — mehrere Personen möglich.
-class PrivateTaskAssignee(Base):
-    __tablename__ = "private_task_assignees"
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("private_tasks.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-
-class PrivateTaskSubitem(Base):
-    __tablename__ = "private_task_subitems"
-    id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("private_tasks.id"), nullable=False, index=True)
-    titel = Column(String(120), nullable=False)
-    done = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 # Camp-Plan-Termin: nur Admins legen Termine an. Standardmäßig nur für die
 # anlegende Person selbst sichtbar — erst durch Freigabe für ein Projekt
 # (shared_project_id) sehen auch dessen Mitglieder den Termin (siehe
-# _can_access_plan_event in main.py, analog zu _can_access_private_task).
+# _can_access_plan_event in main.py).
 class PlanEvent(Base):
     __tablename__ = "plan_events"
     id = Column(Integer, primary_key=True, index=True)
@@ -315,9 +270,9 @@ class Ausgabe(Base):
 
 
 # Aktivitäts-Log: EIN Eintrag pro Aktion, mit auslösendem UND betroffenem
-# Account getrennt (z. B. "Person B schließt eine Aufgabe von Person A" ->
+# Account getrennt (z. B. "Person B meldet eine Zahlung an Person A" ->
 # actor=B, affected=A). affected_username ist NULL, wenn niemand konkret
-# betroffen ist (z. B. eine Aufgabe ohne Zuweisung wird angelegt).
+# betroffen ist (z. B. eine Ausgabe, die nur den Zahler selbst betrifft).
 class ActivityLog(Base):
     __tablename__ = "activity_log"
     id = Column(Integer, primary_key=True, index=True)
@@ -356,7 +311,6 @@ _ensure_column("plan_events", "shared_project_id", "INTEGER")
 _ensure_column("plan_events", "datum_ende", "DATE")
 _ensure_column("plan_events", "is_public", "BOOLEAN", "DEFAULT 0")
 _ensure_column("plan_events", "recurrence_group", "TEXT")
-_ensure_column("private_tasks", "is_public", "BOOLEAN", "DEFAULT 0")
 _ensure_column("locations", "country_id", "INTEGER")
 _ensure_column("locations", "city_id", "INTEGER")
 
