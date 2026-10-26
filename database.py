@@ -72,21 +72,6 @@ class UserSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Web-Push-Abonnement eines Browsers/Geräts (siehe push.py). endpoint ist pro
-# Browser-Installation eindeutig (daher unique) — meldet sich dieselbe
-# Person erneut an (z. B. nach Cache-Reset), wird die Zeile aktualisiert
-# statt dupliziert. username ist rein informativ (wer hat's aktiviert),
-# /api/push/send schickt bewusst an ALLE gespeicherten Abos.
-class PushSubscription(Base):
-    __tablename__ = "push_subscriptions"
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, nullable=True, index=True)
-    endpoint = Column(Text, nullable=False, unique=True)
-    p256dh = Column(String, nullable=False)
-    auth = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 # Persönlicher Tag (Bezeichnung+Farbe), von jeder Person selbst verwaltet
 # (siehe /api/tags in main.py) — anders als TaskCategory unten (global, ein
 # fester Wert pro Aufgabe) ist ein Tag eine private Mehrfach-Markierung:
