@@ -229,41 +229,6 @@ class EventTemplate(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Persönliches Konzert-/Festival-Tagebuch, nur über den "Concerts"-Tab für
-# Admins erreichbar (siehe /api/concerts in main.py) — rein persönlich
-# (created_by), analog zu Tags/EventTemplate: es geht um "wo war ICH", nicht
-# um einen geteilten Kalender. Begleitung (ConcertCompanion) sind App-Nutzer:
-# innen, keine Freitext-Namen, damit die "bei wem war ich wie oft"-Statistik
-# ohne Fuzzy-Matching auskommt.
-class Concert(Base):
-    __tablename__ = "concerts"
-    id = Column(Integer, primary_key=True, index=True)
-    bezeichnung = Column(String(80), nullable=False)
-    # "konzert" | "festival" — freier String statt Enum, analog zu Ausgabe.status,
-    # spart eine DB-seitige Enum-Migration falls mal eine dritte Art dazukommt.
-    art = Column(String(20), nullable=False, default="konzert")
-    datum = Column(Date, nullable=False, index=True)
-    # Land/Ort/Location waren zunächst drei Freitextfelder direkt hier auf dem
-    # Konzert — durch eine wiederverwendbare Location-Datenbank ersetzt (siehe
-    # Location-Modell unten), damit z. B. "Zitadelle Berlin" nicht bei jedem
-    # dortigen Konzert neu eingetippt werden muss. Die alten Spalten bleiben
-    # unangetastet in der DB stehen (ungemappt) statt sie per DROP zu
-    # entfernen — analog zum Kategorien->Tags-Wechsel bei PrivateTask, ein
-    # DROP auf der Live-DB wäre unnötiges Risiko für etwas, das ohnehin
-    # nirgends mehr gelesen wird.
-    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)
-    beschreibung = Column(Text, nullable=True)
-    created_by = Column(String, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class ConcertCompanion(Base):
-    __tablename__ = "concert_companions"
-    id = Column(Integer, primary_key=True, index=True)
-    concert_id = Column(Integer, ForeignKey("concerts.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-
 # Persönliche Länder-/Orte-Datenbanken (analog zu Band): jeweils eine simple
 # Namensliste, direkt im "neuer Ort"-Formular per Dropdown+"+ neu anlegen"
 # anlegbar (siehe wireSimpleCreateSelect in app.js) — genau wie bei Bands soll
@@ -285,13 +250,9 @@ class City(Base):
 
 
 # Persönliche Orte-Datenbank (analog zu Tags/Band): ein Ort wird EINMAL mit
-# Bezeichnung ("Zitadelle Berlin") + Land/Ort (je eine Referenz auf die
-# Länder-/Orte-Listen oben) + Location-Detail angelegt und danach im
-# Konzert-Formular per Dropdown wiederverwendet (siehe wireConcertVenuePicker
-# in app.js), statt bei jedem Konzert an diesem Ort alle Felder erneut
-# einzutippen. land/ort waren zunächst Freitext-Spalten hier direkt — bleiben
-# unangetastet in der DB stehen (ungemappt) statt per DROP entfernt zu
-# werden, analog zum Umbau bei Concert weiter oben.
+# Bezeichnung + Land/Ort (je eine Referenz auf die Länder-/Orte-Listen) + Location-Detail
+# angelegt und danach im Formular per Dropdown wiederverwendet, statt bei jedem Ort
+# alle Felder erneut einzutippen.
 class Location(Base):
     __tablename__ = "locations"
     id = Column(Integer, primary_key=True, index=True)
@@ -313,18 +274,6 @@ class Band(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name = Column(String(80), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-
-# Lineup-Zuordnung: eine Band kann bei EINEM Konzert entweder Headliner oder
-# Vorband sein (nie beides gleichzeitig, siehe _validate_concert_payload in
-# main.py), bei verschiedenen Konzerten aber unterschiedliche Rollen haben —
-# daher role auf der Verknüpfung statt auf der Band selbst.
-class ConcertBand(Base):
-    __tablename__ = "concert_bands"
-    id = Column(Integer, primary_key=True, index=True)
-    concert_id = Column(Integer, ForeignKey("concerts.id"), nullable=False, index=True)
-    band_id = Column(Integer, ForeignKey("bands.id"), nullable=False, index=True)
-    role = Column(String(20), nullable=False)  # "headliner" | "vorband"
 
 
 # Ausgabe: ein Schulden-Eintrag "schuldner_id schuldet glaubiger_id cash Euro"
@@ -408,9 +357,6 @@ _ensure_column("plan_events", "datum_ende", "DATE")
 _ensure_column("plan_events", "is_public", "BOOLEAN", "DEFAULT 0")
 _ensure_column("plan_events", "recurrence_group", "TEXT")
 _ensure_column("private_tasks", "is_public", "BOOLEAN", "DEFAULT 0")
-_ensure_column("concerts", "land", "TEXT")
-_ensure_column("concerts", "ort", "TEXT")
-_ensure_column("concerts", "location_id", "INTEGER")
 _ensure_column("locations", "country_id", "INTEGER")
 _ensure_column("locations", "city_id", "INTEGER")
 
