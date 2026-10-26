@@ -2343,7 +2343,6 @@ if (addPlanButton) {
 
 /* ---------- Kosten & Schulden ---------- */
 const balanceHeroEl = document.getElementById("balanceHero");
-const myExpensesHeroEl = document.getElementById("myExpensesHero");
 const expenseListEl = document.getElementById("expenseList");
 
 async function fetchUsersAndMe() {
@@ -2621,8 +2620,6 @@ function renderExpenseList() {
     },
     scrollAnchor: "end",
   });
-
-  updateExpensesHeroCard();
 }
 
 let lastExpensesSignature = null;
@@ -2684,49 +2681,6 @@ async function loadBalance() {
   } catch (err) {
     balanceHeroEl.innerHTML = `<div class="muted">Saldo konnte nicht geladen werden.</div>`;
   }
-}
-
-// "Ausgaben"-Karte reagiert auf den Personen-Filter darunter — rein clientseitig
-// aus den bereits geladenen Ausgaben berechnet, gleiche Regel wie die Liste
-// (nur status "offen", keine Tilgungsbuchungen — die kommen aus /api/expenses
-// erst gar nicht mit).
-function computeFilteredExpenseTotal() {
-  if (expenseFilterUserId === null) {
-    return lastExpenses.reduce((sum, e) => sum + e.cash, 0);
-  }
-  if (expenseFilterMode === "von") {
-    // Eigenkäufe (X ist Zahler UND einziger Beteiligter) zählen bewusst NICHT
-    // mit — "Von X" soll zeigen, was X für ANDERE vorgestreckt hat, nicht was
-    // X insgesamt bezahlt hat (siehe Absprache).
-    return lastExpenses
-      .filter((e) => e.glaubiger_id === expenseFilterUserId && e.schuldner_id !== e.glaubiger_id)
-      .reduce((s, e) => s + e.cash, 0);
-  }
-  return lastExpenses.filter((e) => e.schuldner_id === expenseFilterUserId).reduce((s, e) => s + e.cash, 0);
-}
-
-function updateExpensesHeroCard() {
-  if (!myExpensesHeroEl) return;
-
-  let title = "Alle Ausgaben";
-  if (expenseFilterUserId !== null && cachedUsers) {
-    const person = cachedUsers.find((u) => u.id === expenseFilterUserId);
-    const isMe = person && cachedMe && person.id === cachedMe.id;
-    if (person) {
-      if (expenseFilterMode === "von") {
-        title = isMe ? "Deine Ausgaben" : `Von ${nameTag(person.username)} gezahlt`;
-      } else {
-        title = isMe ? "Für dich ausgegeben" : `Für ${nameTag(person.username)} ausgegeben`;
-      }
-    }
-  }
-
-  const total = computeFilteredExpenseTotal();
-
-  myExpensesHeroEl.innerHTML = `
-    <span class="balance-chip-label">${title}</span>
-    <span class="balance-chip-value">${formatEuro(total)}</span>
-  `;
 }
 
 function expenseModalBodyHtml(users, me, prefill = {}, readOnly = false) {
