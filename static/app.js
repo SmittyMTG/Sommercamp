@@ -2432,6 +2432,7 @@ function groupExpenses(expenses) {
         glaubigerId: e.glaubiger_id,
         beneficiaryIds: new Set(),
         createdBy: e.created_by,
+        status: e.status,
         total: 0,
         entries: [],
       });
@@ -2447,7 +2448,11 @@ function groupExpenses(expenses) {
 
 function renderExpenseGroup(group, isAdmin, myUsername) {
   const card = document.createElement("div");
-  card.className = "list-card clickable";
+  // Tilgungseinträge (status="getilgt") sind reine Buchhaltung: eigene Kachel
+  // mit "getilgt"-Pill, weder klickbar noch bearbeitbar/löschbar (kein batch_id,
+  // also greift canEdit ohnehin nicht).
+  const isTilgung = group.status === "getilgt";
+  card.className = "list-card" + (isTilgung ? "" : " clickable");
   // Ansehen darf jede:r, bearbeiten/löschen nur Admins oder wer die Ausgabe
   // selbst angelegt hat (siehe openEditExpenseModal für den Read-only-Modus).
   const canEdit = !!group.batchId && (isAdmin || (!!myUsername && group.createdBy === myUsername));
@@ -2465,6 +2470,17 @@ function renderExpenseGroup(group, isAdmin, myUsername) {
     card.style.setProperty("--avatar-url", `url('${payerAvatar}')`);
   }
   const payer = payerNames.map((n) => escapeHtml(n)).join(", ");
+
+  if (isTilgung) {
+    card.innerHTML = `
+      <div class="list-card-text no-wrap">
+        <p class="list-card-title">${escapeHtml(group.betreff)}</p>
+        <p class="list-card-meta">${formatDate(group.datum)} ${payer} ${formatEuro(group.total)}</p>
+      </div>
+      <div class="list-card-actions"><span class="pill">✓ getilgt</span></div>
+    `;
+    return card;
+  }
 
   // Statt aller Beteiligten mit Anteil nur EINE Person + Durchschnitt: im
   // "Für X"-Filter die gefilterte Person (das ist ja gerade der Fokus der
@@ -2996,7 +3012,6 @@ const costsViewRow = document.getElementById("costsViewRow");
 const costsViews = {
   entry: document.getElementById("costsViewEntry"),
   open: document.getElementById("costsViewOpen"),
-  received: document.getElementById("costsViewReceived"),
   log: document.getElementById("costsViewLog"),
 };
 
@@ -3010,7 +3025,6 @@ function switchCostsView(view, opts = {}) {
     });
   }
   if (view === "open") loadOpenSettlements();
-  if (view === "received") loadReceivedPayments();
   if (view === "log") loadExpenseLog();
   if (!opts.skipSave) saveUiState({ costsView: view });
 }
@@ -3283,13 +3297,11 @@ function buildMoneyFlowSvg(settlements) {
       const y0 = y0Map.get(s);
       const y1 = y1Map.get(s);
       const d = `M${leftXEnd},${y0.toFixed(1)} C${midX},${y0.toFixed(1)} ${midX},${y1.toFixed(1)} ${rightXStart},${y1.toFixed(1)} L${rightXStart},${(y1 + thickness).toFixed(1)} C${midX},${(y1 + thickness).toFixed(1)} ${midX},${(y0 + thickness).toFixed(1)} ${leftXEnd},${(y0 + thickness).toFixed(1)} Z`;
-      const opacity = s.pending ? 0.28 : 0.62;
-      ribbonsSvg += `<path d="${d}" fill="${colorOf[s.from_id]}" opacity="${opacity}"><title>${escapeHtml(s.from)} → ${escapeHtml(s.to)}: ${formatEuro(s.amount)}${s.pending ? " (wartet auf Bestätigung)" : ""}</title></path>`;
+      ribbonsSvg += `<path d="${d}" fill="${colorOf[s.from_id]}" opacity="0.62"><title>${escapeHtml(s.from)} → ${escapeHtml(s.to)}: ${formatEuro(s.amount)}</title></path>`;
 
-      const pendingSuffix = s.pending ? " ⏳" : "";
       labelEntries.push({
         y: y0 + thickness / 2 + 3,
-        text: `${formatEuro(s.amount)}${pendingSuffix}`,
+        text: `${formatEuro(s.amount)}`,
         color: colorOf[s.from_id],
       });
     });
@@ -3347,7 +3359,7 @@ function openConfirmSettleModal(s) {
       <label>Überwiesener Betrag
         <input type="number" step="0.01" min="0.01" max="${s.amount}" inputmode="decimal" id="settleAmountInput" value="${s.amount.toFixed(2)}" required>
       </label>
-      <p class="muted">${nameTag(s.to)} sieht das jetzt hier in der App und muss den Empfang bestätigen — sobald das passiert, siehst auch du es hier und der Betrag gilt als beglichen.</p>
+      <p class="muted">Der Tilgungseintrag erscheint direkt in „Ausgaben" — der Betrag gilt sofort als beglichen und die Schuld verschwindet aus „Offen".</p>
       <p id="settleModalError" class="error-text hidden"></p>
     `,
     onSubmit: async () => {
@@ -3383,9 +3395,7 @@ function renderSettlementItem(s, isMine) {
   const card = document.createElement("div");
   card.className = "list-card";
   let actionHtml = "";
-  if (isMine && s.pending) {
-    actionHtml = `<div class="list-card-actions"><span class="pill">Warten auf Bestätigung von ${nameTag(s.to)}</span></div>`;
-  } else if (isMine) {
+  if (isMine) {
     actionHtml = `<div class="list-card-actions"><button type="button" class="tiny settle-btn">Als bezahlt markieren</button></div>`;
   }
   card.innerHTML = `
@@ -3395,7 +3405,7 @@ function renderSettlementItem(s, isMine) {
     </div>
     ${actionHtml}
   `;
-  if (isMine && !s.pending) {
+  if (isMine) {
     card.querySelector(".settle-btn").addEventListener("click", () => openConfirmSettleModal(s));
   }
   return card;
@@ -3444,62 +3454,6 @@ async function loadOpenSettlements() {
     }
   } catch (err) {
     openSettlementsListEl.innerHTML = `<div class="empty"><p>Konnte nicht geladen werden.</p></div>`;
-  }
-}
-
-/* ---------- Offene Zahlungen: bereits getilgte Rückzahlungen (Historie) ---------- */
-const settledToggleBtn = document.getElementById("settledToggleBtn");
-const settledListEl = document.getElementById("settledList");
-let lastSettledPayments = [];
-let settledListExpanded = false;
-
-function renderSettledItem(s) {
-  const card = document.createElement("div");
-  card.className = "list-card";
-  card.innerHTML = `
-    <div class="list-card-text">
-      <p class="list-card-title">${nameTag(s.from)} → ${nameTag(s.to)}</p>
-      <p class="list-card-meta">${formatEuro(s.amount)} · ${formatDate(s.date)}</p>
-    </div>
-    <div class="list-card-actions"><span class="pill">✓ bestätigt</span></div>
-  `;
-  return card;
-}
-
-function renderSettledList() {
-  if (!settledListEl || !settledToggleBtn) return;
-  settledToggleBtn.classList.toggle("hidden", lastSettledPayments.length === 0);
-  settledToggleBtn.textContent = settledListExpanded
-    ? "Vergangene Zahlungen ausblenden"
-    : `Vergangene Zahlungen anzeigen (${lastSettledPayments.length})`;
-  settledListEl.classList.toggle("hidden", !settledListExpanded);
-  if (!settledListExpanded) return;
-  settledListEl.innerHTML = "";
-  lastSettledPayments.forEach((s) => settledListEl.appendChild(renderSettledItem(s)));
-}
-
-if (settledToggleBtn) {
-  settledToggleBtn.addEventListener("click", () => {
-    settledListExpanded = !settledListExpanded;
-    renderSettledList();
-  });
-}
-
-let lastSettledSignature = null;
-
-async function loadSettledPayments() {
-  if (!settledListEl) return;
-  try {
-    const res = await fetch("/api/expenses/settled");
-    if (!res.ok) throw new Error("Fehler beim Laden");
-    const payments = await res.json();
-    const signature = JSON.stringify(payments);
-    if (signature === lastSettledSignature) return;
-    lastSettledSignature = signature;
-    lastSettledPayments = payments;
-    renderSettledList();
-  } catch (err) {
-    // Netzwerkhänger ignorieren, nächster Tick versucht es erneut
   }
 }
 
@@ -3793,95 +3747,6 @@ if (settlementExplainPrevBtn) {
   });
 }
 
-/* ---------- Kosten: Zahlungen ---------- */
-const receivedListEl = document.getElementById("receivedList");
-
-function renderReceivedItem(r) {
-  const card = document.createElement("div");
-  card.className = "list-card";
-  card.innerHTML = `
-    <div class="list-card-text">
-      <p class="list-card-title">${nameTag(r.from)} behauptet: ${formatEuro(r.amount)} überwiesen</p>
-      <p class="list-card-meta">${formatDate(r.datum)} · Betrag zur Bestätigung eintippen</p>
-      <div class="form-stack">
-        <input type="number" step="0.01" min="0.01" inputmode="decimal" class="received-amount-input" placeholder="${r.amount.toFixed(2).replace('.', ',')}">
-        <p class="error-text hidden received-error"></p>
-      </div>
-    </div>
-    <div class="list-card-actions">
-      <button type="button" class="tiny confirm-received-btn">Bestätigen</button>
-    </div>
-  `;
-
-  card.querySelector(".confirm-received-btn").addEventListener("click", async () => {
-    const input = card.querySelector(".received-amount-input");
-    const errEl = card.querySelector(".received-error");
-    const amount = parseFloat(input.value);
-    errEl.classList.add("hidden");
-
-    if (!amount || amount <= 0) {
-      errEl.textContent = "Bitte einen Betrag eingeben.";
-      errEl.classList.remove("hidden");
-      return;
-    }
-
-    const res = await fetch("/api/expenses/settle/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ expense_id: r.id, amount }),
-    });
-
-    if (res.ok) {
-      refreshAllCostsData();
-    } else {
-      const data = await res.json().catch(() => ({}));
-      errEl.textContent = data.error || "Konnte nicht bestätigt werden.";
-      errEl.classList.remove("hidden");
-    }
-  });
-
-  return card;
-}
-
-let lastReceivedSignature = null;
-
-// Rote Zahl an "Kosten" (Bottom-Nav) und am "Zahlungen"-Tab, solange
-// mindestens eine Zahlung auf Bestätigung wartet — auf einen Blick ersichtlich,
-// dass hier etwas zu tun ist.
-function updateReceivedBadge(count) {
-  [document.getElementById("costsNavBadge"), document.getElementById("receivedTabBadge")].forEach((el) => {
-    if (!el) return;
-    el.textContent = String(count);
-    el.classList.toggle("hidden", count === 0);
-  });
-}
-
-async function loadReceivedPayments() {
-  if (!receivedListEl) return;
-  try {
-    const res = await fetch("/api/expenses/received");
-    if (!res.ok) throw new Error("Fehler beim Laden");
-    const received = await res.json();
-    updateReceivedBadge(received.length);
-
-    // Wichtig: ohne diesen Vergleich würde das Polling das Eingabefeld
-    // hier bei jedem Tick neu aufbauen und man könnte nie eine Zahl eintippen,
-    // obwohl sich an den Daten gar nichts geändert hat.
-    const signature = JSON.stringify(received);
-    if (signature === lastReceivedSignature) return;
-    lastReceivedSignature = signature;
-
-    receivedListEl.innerHTML = "";
-    if (received.length === 0) {
-      receivedListEl.innerHTML = `<div class="empty"><p>Keine offenen Bestätigungen.</p></div>`;
-    } else {
-      received.forEach((r) => receivedListEl.appendChild(renderReceivedItem(r)));
-    }
-  } catch (err) {
-    receivedListEl.innerHTML = `<div class="empty"><p>Konnte nicht geladen werden.</p></div>`;
-  }
-}
-
 /* ---------- Kosten: Log (wer hat Ausgaben erstellt/bearbeitet/gelöscht) ---------- */
 const expenseLogListEl = document.getElementById("expenseLogList");
 const expenseLogFilterSelect = document.getElementById("expenseLogFilterSelect");
@@ -3988,28 +3853,22 @@ function pollCostsViews() {
   loadBalance();
   loadExpenses();
   loadOpenSettlements();
-  loadReceivedPayments();
-  loadSettledPayments();
 }
 
 // Nach JEDER Änderung an Ausgaben (anlegen/bearbeiten/löschen/Zahlung
-// senden/bestätigen) müssen alle davon abhängigen Ansichten neu gerechnet
-// werden — nicht nur Liste + Saldo, sondern auch offene Zahlungen, erhaltene
-// Zahlungen und das Geldfluss-Diagramm. Die Signaturen werden dafür bewusst
-// zurückgesetzt, damit der "nur bei echter Änderung neu rendern"-Vergleich
-// nicht fälschlich glaubt, es habe sich nichts geändert (z. B. wenn ein
-// Poll-Tick zwischendurch schon denselben Endzustand gesehen hat).
+// melden) müssen alle davon abhängigen Ansichten neu gerechnet werden —
+// nicht nur Liste + Saldo, sondern auch offene Zahlungen und das
+// Geldfluss-Diagramm. Die Signaturen werden dafür bewusst zurückgesetzt,
+// damit der "nur bei echter Änderung neu rendern"-Vergleich nicht fälschlich
+// glaubt, es habe sich nichts geändert (z. B. wenn ein Poll-Tick
+// zwischendurch schon denselben Endzustand gesehen hat).
 function refreshAllCostsData() {
   lastExpensesSignature = null;
   lastBalanceSignature = null;
   lastOpenSettlementsSignature = null;
-  lastReceivedSignature = null;
-  lastSettledSignature = null;
   loadExpenses();
   loadBalance();
   loadOpenSettlements();
-  loadReceivedPayments();
-  loadSettledPayments();
 }
 
 /* ---------- Auto-Update: neuen Deploy selbstständig erkennen und neu laden ---------- */

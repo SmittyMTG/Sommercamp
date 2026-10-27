@@ -278,7 +278,6 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 /* Offene Zahlungen: animierter Rechenweg */
 .link-button{background:none;border:none;color:var(--me-color,var(--yellow));font-weight:800;font-size:13px;padding:0;margin-left:4px;cursor:pointer;text-decoration:underline}
 .link-button.danger{color:var(--red);margin-left:0}
-.settled-toggle{display:block;margin:20px 0 10px}
 .explain-body{min-height:220px;padding:6px 2px}
 /* Feste Kartenhöhe nur für dieses Mehrschritt-Modal (nicht global auf
    .modal-card, das brauchen die einfachen Formular-Dialoge nicht): Kopf und

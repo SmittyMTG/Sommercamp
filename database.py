@@ -247,9 +247,10 @@ class Ausgabe(Base):
     datum = Column(Date, nullable=False, default=_today_berlin, index=True)
     gezahlt = Column(Boolean, nullable=False, default=False)
     # Normale Ausgaben behalten für immer status="offen" (Default) und werden nie
-    # angefasst. Nur Tilgungseinträge (Rückzahlungen, erzeugt beim Bestätigen einer
-    # offenen Zahlung) durchlaufen "pending" -> "getilgt", sobald der Gläubiger den
-    # Empfang bestätigt hat.
+    # angefasst. Tilgungseinträge (Rückzahlungen, erzeugt beim Melden einer Zahlung
+    # über POST /api/expenses/settle) entstehen direkt mit status="getilgt" und
+    # erscheinen sofort in der Ausgaben-Liste. ("pending" aus dem früheren
+    # Bestätigungs-Workflow existiert nicht mehr; die Spalte bleibt für Altlasten.)
     status = Column(String(20), nullable=False, default="offen", index=True)
     # Verbindet alle Zeilen, die in einem einzigen "Ausgabe hinzufügen"-Vorgang
     # entstanden sind (ein Eintrag pro betroffener Person). Ermöglicht Bearbeiten/
@@ -506,7 +507,8 @@ _consolidate_expense_created_logs()
 def _backfill_payment_log_messages():
     """Einmaliger Nachtrag für payment_reported/payment_confirmed-Logeinträge von
     vor dem Fix, der die betroffene Person namentlich statt mit dem generischen
-    "dir"/"deine" nennt (settle_expenses/confirm_received_payment in main.py) —
+    "dir"/"deine" nennt (früher von settle_expenses bzw. dem inzwischen entfernten
+    confirm_received_payment in main.py erzeugt) —
     das Log zeigt denselben Text ungefiltert JEDER Person, die es sich ansieht,
     "dir"/"deine" stimmte davon nur für die eine tatsächlich betroffene Person
     (analog zum älteren Fix in _backfill_expense_log_messages oben). Läuft nur
