@@ -1,6 +1,5 @@
 // ===========================================================
-// Sommercamp 2026 — Grundgerüst
-// Screen-Navigation + Countdown. Datenanbindung folgt später.
+// Sommercamp 2026 — Kosten & Schulden
 // ===========================================================
 
 // Zentrale 401-Behandlung für ALLE fetch()-Aufrufe in dieser Datei: sobald die
@@ -40,9 +39,6 @@ function updateUserLookupMaps(users) {
 function goToScreen(name, opts = {}) {
   document.querySelectorAll(".screen").forEach((el) => {
     el.classList.toggle("active", el.id === `screen-${name}`);
-  });
-  document.querySelectorAll(".bottom-nav button").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.screen === name);
   });
   // Schwebende "+"-Buttons liegen außerhalb von .app-shell (siehe
   // index.html) und werden deshalb hier statt über CSS-Verschachtelung
@@ -129,15 +125,6 @@ let uiStateReadyPromise = null;
 function ensureUiStateLoaded(username) {
   if (!uiStateReadyPromise) uiStateReadyPromise = loadUiState(username);
   return uiStateReadyPromise;
-}
-
-function initNavigation() {
-  document.querySelectorAll("[data-screen]").forEach((btn) => {
-    btn.addEventListener("click", () => goToScreen(btn.dataset.screen));
-  });
-  document.querySelectorAll("[data-go]").forEach((btn) => {
-    btn.addEventListener("click", () => goToScreen(btn.dataset.go));
-  });
 }
 
 /* ---------- Helpers ---------- */
@@ -240,7 +227,7 @@ if (confirmDialogEl) {
 function snapshotModalFormState() {
   return Array.from(modalBody.querySelectorAll("input, textarea, select"))
     .filter((el) => {
-      // [data-live-save] Felder (z. B. Tag-Anlege-/Bearbeiten-Felder) speichern sofort
+      // [data-live-save] Felder (z. B. Profilbild, Nutzer anlegen) speichern sofort
       // eigenständig beim Ändern — sollen daher nicht als "ungespeicherte
       // Eingabe" des Hauptformulars zählen und keinen unnötigen Verwerfen-
       // Dialog auslösen. Deaktivierte Felder (reine Ansehen-Ansicht, siehe
@@ -2268,7 +2255,6 @@ fetchUsersAndMe().then(async ({ me }) => {
 
 /* ---------- Init ---------- */
 document.addEventListener("DOMContentLoaded", () => {
-  initNavigation();
   // So früh wie möglich, damit USER_COLORS/USER_AVATARS (nameTag()) beim
   // allerersten Render schon befüllt sind statt erst nach dem ersten Poll.
   fetchUsersAndMe();

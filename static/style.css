@@ -44,10 +44,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .icon-button.avatar-button{border-radius:999px;width:32px;height:32px;padding:0;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:14px;box-sizing:border-box;border:2px solid var(--me-color,var(--line))}
 .avatar-img{width:100%;height:100%;object-fit:cover;border-radius:999px}
 .avatar-preview{width:64px;height:64px;border-radius:999px;object-fit:cover;background:var(--surface2);display:block}
-.hero-card,.card{background:linear-gradient(145deg,#212127,#141418);border:1px solid var(--line);border-radius:24px;padding:20px;box-shadow:var(--shadow)}
-.hero-card{padding:24px}.mini-hero{margin-bottom:18px}
+.card{background:linear-gradient(145deg,#212127,#141418);border:1px solid var(--line);border-radius:24px;padding:20px;box-shadow:var(--shadow)}
 .eyebrow{text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-size:11px;font-weight:850}
-.countdown{font-size:34px;line-height:1.05;font-weight:1000;margin:10px 0 8px}.countdown small{font-size:.4em;font-weight:800;color:var(--muted);letter-spacing:.02em;margin-right:.35em}.muted{color:var(--muted);font-size:13px}
+.muted{color:var(--muted);font-size:13px}
 .section-heading{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:12px;margin:2px 0 12px}.section-heading h2{margin:0;font-size:23px}
 .stack{display:grid;gap:10px}
 /* Kompakte Kachel für die Event-Ideen-Liste (Termine ohne Datum) — keine
@@ -67,7 +66,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
    Inneren (die nowrap-Zeilen), egal was min-width:0 weiter innen an
    .list-card-text schon sagt. Muss also auf JEDER verschachtelten Ebene
    gesetzt sein, nicht nur an der Stelle, die den Text abschneidet. */
-.list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;min-width:0;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}.list-card.done{opacity:.5}.list-card.done .list-card-title{text-decoration:line-through}
+.list-card{display:flex;justify-content:space-between;gap:12px;align-items:center;min-width:0;padding:14px 12px 14px 15px;background:var(--surface);border:1px solid var(--line);border-radius:16px;min-height:56px;transition:background .15s,opacity .15s}
 /* Ausgaben-Kacheln: Profilbild des Zahlers dezent transparent im Hintergrund
    statt nur der farbigen Randlinie (siehe --avatar-url in app.js). ::before
    liegt HINTER dem Kartentext (die direkten Kinder bekommen z-index:1);
@@ -101,7 +100,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .jump-top-btn:active{background:var(--surface)}
 .list-card.clickable{cursor:pointer}.list-card.clickable:active{background:var(--surface2)}
 .list-card-content{flex:1;display:flex;align-items:center;gap:13px;min-width:0}
-.list-card-checkbox{width:24px;height:24px;flex-shrink:0;border-radius:999px;border:2px solid var(--line);background:none;display:flex;align-items:center;justify-content:center;transition:background .15s,border-color .15s,transform .1s}.list-card-checkbox:active{transform:scale(.9)}.list-card-checkbox.checked{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow))}.list-card-checkbox.checked::after{content:'✓';color:#111;font-weight:900;font-size:13px}
 .list-card-text{flex:1;min-width:0}.list-card-title{font-weight:800;color:var(--text);margin:0;overflow-wrap:anywhere}.list-card-meta{font-size:12px;color:var(--muted);margin:3px 0 0;overflow-wrap:anywhere}
 /* Ausgaben-Liste: jede Kachel bleibt exakt gleich hoch, egal wie lang
    Betreff/Namen sind — jede Zeile bleibt einzeilig (kein Umbruch mehr); was
@@ -114,26 +112,13 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .list-card-text.no-wrap .list-card-meta{font-size:12px}
 .list-card-actions{display:flex;gap:4px;align-items:center;flex-shrink:0}
 .delete-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s;opacity:.7}.delete-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}
-.urgent-btn{background:transparent;border:none;color:var(--muted);font-size:16px;width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;transition:background .15s,color .15s,opacity .15s;opacity:.45}.urgent-btn:hover{background:rgba(255,98,98,.12);color:var(--red);opacity:1}.urgent-btn.active{opacity:1;color:var(--red);background:rgba(255,98,98,.15)}
 .meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:7px}.pill{background:var(--surface2);border:1px solid var(--line);border-radius:999px;padding:5px 8px;font-size:11px;color:var(--muted)}
 .action-row{display:flex;flex-wrap:wrap;gap:7px}.tiny{padding:8px 10px;border-radius:11px;border:none;background:var(--surface2);color:var(--text);font-weight:850;min-height:32px;display:flex;align-items:center;justify-content:center}
 /* font-weight ist bei .filter UND .filter.active bewusst identisch (900) —
    sonst ändert sich beim Umschalten (fett vs. normal) die Textbreite und der
    Button "springt" sichtbar in der Größe statt nur die Farbe zu wechseln. */
-.concert-stat-tiles{display:flex;gap:8px;margin-bottom:16px}
-.concert-stat-tile{flex:1;background:var(--surface2);border:1px solid var(--line);border-radius:13px;padding:12px 8px;text-align:center}
-.concert-stat-tile-value{font-size:22px;font-weight:900;line-height:1.1}
-.concert-stat-tile-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:800;margin-top:2px}
-.concert-companion-stats{margin-bottom:18px}
-.concert-bar-row{display:grid;grid-template-columns:minmax(0,112px) 1fr 22px;align-items:center;gap:10px;padding:5px 0}
-.concert-bar-row-label{min-width:0;overflow:hidden}
-.concert-bar-row-label .name-with-avatar{max-width:100%}
-.concert-bar-track{height:10px;border-radius:6px;background:var(--surface2);border:1px solid var(--line);overflow:hidden}
-.concert-bar-fill{height:100%;border-radius:6px;min-width:3px}
-.concert-bar-row-count{text-align:right;font-size:12px;font-weight:900;color:var(--text)}
 .filter-row{display:flex;gap:8px;overflow:auto;padding-bottom:10px}.filter{white-space:nowrap;border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:8px 11px;border-radius:999px;font-weight:900}.filter.active{background:var(--me-color,var(--yellow));border-color:var(--me-color,var(--yellow));color:#111}
 .filter-row.two-row{flex-wrap:wrap;overflow:visible}
-.compact-hero{padding:14px 16px}.compact-hero .eyebrow{margin-bottom:1px}.compact-hero .countdown{font-size:22px;margin:4px 0 2px}.compact-hero .muted{font-size:12px}
 .screen{display:none}.screen.active{display:block}
 .form-stack{display:grid;gap:12px}.form-stack label{display:grid;gap:6px;color:var(--muted);font-size:13px;font-weight:700}.checkbox-group{display:grid;gap:6px}
 .form-row-2col{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -158,8 +143,6 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .balance-chip-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
 .balance-chip-value{font-size:10px;font-weight:900}
 .balance-chip-value.success{color:var(--green)}.balance-chip-value.danger{color:var(--red)}.balance-chip-value.muted{color:var(--muted)}
-.source-tag{display:inline-block;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;color:#111;margin-top:5px}
-.name-tag{display:inline-block;padding:1px 7px;border-radius:999px;font-weight:800;color:#111}
 .name-with-avatar{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
 .name-avatar{border-radius:999px;object-fit:cover;flex:none}
 .name-avatar-fallback{display:flex;align-items:center;justify-content:center;background:var(--surface2);color:var(--muted);font-weight:800;flex:none}
@@ -169,27 +152,15 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
 .name-with-avatar.name-pill .name-avatar,.name-with-avatar.name-pill .name-avatar-fallback{box-shadow:0 0 0 1px rgba(0,0,0,.15)}
 .settle-btn{white-space:nowrap}
 input,select,textarea{width:100%;border:1px solid var(--line);background:#0f0f13;color:var(--text);border-radius:13px;padding:13px;outline:none}textarea{min-height:90px;resize:vertical}input:focus,select:focus,textarea:focus{border-color:var(--me-color,var(--yellow))}
-.error-text{color:var(--red)!important;margin:0}.checkbox-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.check-card{display:flex!important;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:10px;overflow-wrap:anywhere;min-width:0}.check-card input{width:auto;flex-shrink:0}
+.error-text{color:var(--red)!important;margin:0}
 /* Farbige Chips statt Checkbox+Text (z. B. "Für wen?" bei Ausgaben) — blass
    in der Nutzerfarbe solange unausgewählt, voll gesättigt sobald ausgewählt.
    :has() ist die primäre Umschaltung, .checked (von JS gesetzt) ein Fallback
    für Browser ohne :has()-Unterstützung. flex-wrap statt festem Grid, damit
    kurze Namen mehr Chips pro Zeile packen. */
-.chip-row{display:flex;flex-wrap:wrap;gap:8px}
 .beneficiary-chip{position:relative;display:inline-flex;align-items:center;gap:6px;padding:9px 15px;border-radius:999px;font-weight:800;cursor:pointer;background:var(--chip-pale,var(--surface2));border:1px solid var(--chip-pale,var(--line));color:var(--text);transition:background .15s,border-color .15s,color .15s}
 .beneficiary-chip input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
 .beneficiary-chip.checked,.beneficiary-chip:has(input:checked){background:var(--chip-color,var(--yellow));border-color:var(--chip-color,var(--yellow));color:#111}
-/* Band-Picker (Headliner/Vorband, Concerts): Dropdown-Auswahl (siehe
-   bandSelectOptionsHtml in app.js) fügt die Band als kleinen entfernbaren
-   Chip hier drunter hinzu, statt eine Checkbox anzuhaken. */
-.band-selected-chip{display:inline-flex;align-items:center;gap:5px;padding:6px 8px 6px 12px;border-radius:999px;background:var(--surface2);border:1px solid var(--line);font-weight:700;font-size:13px;color:var(--text)}
-.band-selected-remove{background:none;border:none;color:var(--muted);padding:2px;display:flex;line-height:1;font-size:11px}
-.band-selected-remove:active{color:var(--red)}
-/* Gemeinsames Layout für alle "Name-Feld + Anlegen-Button"-Inline-Formulare
-   (neue Band, neues Land, neuer Ort im Konzert-Formular). */
-.band-picker-add-row{display:flex;gap:8px;margin-top:8px}
-.band-picker-add-row input{flex:1}
-.band-picker-add-row button{flex:none}
 /* "Für wen?": jede Person bekommt eine feste Spalte mit Namens-Chip UND direkt
    darunter ihrem Betragsfeld — Grid statt flex-wrap, damit alle Spalten exakt
    die gleiche Breite haben und Chip+Feld exakt übereinander stehen. Das
@@ -285,4 +256,3 @@ dialog{border:none;padding:0;background:transparent;width:min(620px,calc(100% - 
 .money-flow-diagram svg{display:block;width:100%;height:auto}
 .money-flow-node-amount{font-size:10px;fill:var(--muted)}
 .money-flow-edge-label{font-size:10px;font-weight:800;paint-order:stroke;stroke:var(--bg);stroke-width:3px;stroke-linejoin:round}
-@media(min-width:650px){.checkbox-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
