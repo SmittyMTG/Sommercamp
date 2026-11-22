@@ -30,30 +30,6 @@
     </header>
 
     <section id="appContent">
-      <!-- ============ PLAN ============ -->
-      <section id="screen-plan" class="screen">
-        <div class="section-heading">
-          <div><h2>Kalender</h2></div>
-        </div>
-
-        <div class="calendar-toolbar">
-          <div class="calendar-nav">
-            <button type="button" id="calPrevBtn" class="icon-button" aria-label="Zurück">‹</button>
-            <button type="button" id="calTodayBtn" class="secondary compact">Heute</button>
-            <button type="button" id="calNextBtn" class="icon-button" aria-label="Weiter">›</button>
-          </div>
-          <div id="calendarLabel" class="calendar-label"></div>
-        </div>
-        <div class="filter-row" id="calendarViewSwitch">
-          <button type="button" class="filter active" data-calview="month">Monat</button>
-          <button type="button" class="filter" data-calview="week">Woche</button>
-          <button type="button" class="filter" data-calview="day">Tag</button>
-          <button type="button" class="filter" data-calview="list">Termine</button>
-        </div>
-
-        <div id="calendarContainer"></div>
-      </section>
-
       <!-- ============ COSTS ============ -->
       <section id="screen-costs" class="screen active">
         <div class="section-heading">
@@ -121,17 +97,11 @@
   </main>
 
   <!-- Als Geschwister von .app-shell (nicht darin verschachtelt) platziert,
-       genau wie #bottomNav — position:fixed tief innerhalb des scrollenden
+       denn position:fixed tief innerhalb des scrollenden
        .app-shell landete auf manchen Geräten nicht zuverlässig am
        Bildschirmrand. Sichtbarkeit pro Screen wird von goToScreen() in
        app.js über data-fab-for gesteuert. -->
   <button id="addExpenseButton" class="primary compact fab-button" data-fab-for="costs">＋ Ausgabe</button>
-  <button id="addPlanButton" class="primary compact fab-button hidden" data-fab-for="plan">＋ Eintrag</button>
-
-  <nav id="bottomNav" class="bottom-nav hidden">
-    <button class="nav-item" data-screen="plan"><span>▣</span>Kalender</button>
-    <button class="nav-item active" data-screen="costs"><span>€</span>Kosten</button>
-  </nav>
 
   <dialog id="modal">
     <form id="modalForm" class="modal-card">

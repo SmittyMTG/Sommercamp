@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Date, Time, Numeric, ForeignKey, Text
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Date, Numeric, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from passlib.context import CryptContext
@@ -72,118 +72,6 @@ class UserSession(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Persönlicher Tag (Bezeichnung+Farbe), von jeder Person selbst verwaltet
-# (siehe /api/tags in main.py) — ein Tag ist eine private Mehrfach-Markierung:
-# JEDE Person markiert Termine mit ihren EIGENEN Tags, unabhängig davon, wer
-# den Termin angelegt hat oder ob andere ihn auch sehen. Zwei Personen können
-# denselben geteilten Termin unterschiedlich taggen, ohne sich gegenseitig zu
-# beeinflussen (siehe _sync_personal_tags).
-class Tag(Base):
-    __tablename__ = "tags"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    bezeichnung = Column(String(24), nullable=False)
-    farbe = Column(String(7), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-# Verknüpfungstabellen Tag <-> Termin/Vorlage (viele-zu-viele). Kein
-# ORM-Cascade konfiguriert — Aufräumen beim Löschen von Tag/Termin/Vorlage
-# läuft wie überall in main.py per expliziter Query (siehe delete_tag,
-# delete_plan_event).
-class PlanEventTag(Base):
-    __tablename__ = "plan_event_tags"
-    id = Column(Integer, primary_key=True, index=True)
-    plan_event_id = Column(Integer, ForeignKey("plan_events.id"), nullable=False, index=True)
-    tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
-
-
-class EventTemplateTag(Base):
-    __tablename__ = "event_template_tags"
-    id = Column(Integer, primary_key=True, index=True)
-    event_template_id = Column(Integer, ForeignKey("event_templates.id"), nullable=False, index=True)
-    tag_id = Column(Integer, ForeignKey("tags.id"), nullable=False, index=True)
-
-
-# Projekt: geteilte Sichtbarkeits-Gruppe für Termine/Vorlagen (siehe
-# PlanEvent.shared_project_id bzw. EventTemplate.shared_project_id): ohne
-# Projekt gilt ein Eintrag als "privat" (nur für created_by sichtbar), mit
-# Projekt als geteilt mit allen Usern, die eine ProjectAccess-Zeile dafür
-# haben. Admin-verwaltbar (anlegen + Mitglieder pflegen), s. /api/projects.
-class Project(Base):
-    __tablename__ = "projects"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(60), nullable=False, unique=True)
-    created_by = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class ProjectAccess(Base):
-    __tablename__ = "project_access"
-    id = Column(Integer, primary_key=True, index=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-
-# Camp-Plan-Termin: nur Admins legen Termine an. Standardmäßig nur für die
-# anlegende Person selbst sichtbar — erst durch Freigabe für ein Projekt
-# (shared_project_id) sehen auch dessen Mitglieder den Termin (siehe
-# _can_access_plan_event in main.py).
-class PlanEvent(Base):
-    __tablename__ = "plan_events"
-    id = Column(Integer, primary_key=True, index=True)
-    # Optional: ohne Datum ist der Termin "noch offen" (siehe Panel im Camp-Plan)
-    # und wird erst per Schnellaktion/Bearbeiten fest auf einen Tag gelegt.
-    datum = Column(Date, nullable=True)
-    # Optionales Ende eines mehrtägigen Termins (z. B. ein Ausflug über 3 Tage)
-    # — NULL heißt eintägig (Ende = datum). Muss main.py zufolge >= datum sein.
-    datum_ende = Column(Date, nullable=True)
-    # Ohne Datum ergibt eine Uhrzeit keinen Sinn — daher ebenfalls optional,
-    # serverseitig erzwungen: nur zusammen mit datum gesetzt (main.py).
-    uhrzeit = Column(Time, nullable=True)
-    # Ende der Uhrzeitspanne, optional — ohne Angabe ist der Termin nur ein
-    # Zeitpunkt ohne Dauer (main.py erzwingt uhrzeit_ende > uhrzeit, falls gesetzt).
-    uhrzeit_ende = Column(Time, nullable=True)
-    bezeichnung = Column(String(60), nullable=False)
-    location = Column(String(120), nullable=True)
-    beschreibung = Column(Text, nullable=True)
-    # Projekt, für das dieser Termin freigegeben wurde — NULL heißt "nur für
-    # created_by sichtbar" (siehe _can_access_plan_event in main.py).
-    shared_project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
-    # Gegenteil von "privat": für ALLE sichtbar, unabhängig von Projekt-
-    # Mitgliedschaft (siehe _can_access_plan_event in main.py).
-    is_public = Column(Boolean, nullable=False, default=False)
-    created_by = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    # Gemeinsame ID aller auf einmal erzeugten Termine einer wiederkehrenden
-    # Serie (siehe _generate_recurring_events in main.py) — NULL heißt
-    # "einzelner Termin". Rein zum Gruppieren fürs Löschen der ganzen Serie;
-    # die einzelnen Termine sind danach unabhängige Zeilen ohne fortlaufend
-    # gepflegte Wiederholungsregel (bewusst kein RRULE-Format o.ä., dafür ist
-    # der Anwendungsfall hier zu einfach).
-    recurrence_group = Column(String(32), nullable=True, index=True)
-
-
-# Vorlage für wiederkehrend ähnliche Termine (z. B. "Zahnarzt", immer gleiche
-# Uhrzeit+Ort), OHNE eigenes Datum — beim Anlegen eines neuen Termins schlägt
-# das Frontend per Präfix-Match auf bezeichnung eine passende Vorlage vor
-# (siehe wirePlanTemplateAutocomplete in app.js) und übernimmt deren Felder.
-# Rein persönlich (user_id), analog zum Tag-Modell oben: fremde Vorlagen gehen
-# niemanden sonst etwas an, auch wenn der ursprüngliche Termin geteilt war.
-class EventTemplate(Base):
-    __tablename__ = "event_templates"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    bezeichnung = Column(String(60), nullable=False)
-    uhrzeit = Column(Time, nullable=True)
-    uhrzeit_ende = Column(Time, nullable=True)
-    location = Column(String(120), nullable=True)
-    beschreibung = Column(Text, nullable=True)
-    shared_project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
-    is_public = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 # Persönliche Länder-/Orte-Datenbanken (analog zu Band): jeweils eine simple
 # Namensliste, direkt im "neuer Ort"-Formular per Dropdown+"+ neu anlegen"
 # anlegbar (siehe wireSimpleCreateSelect in app.js) — genau wie bei Bands soll
@@ -204,7 +92,7 @@ class City(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Persönliche Orte-Datenbank (analog zu Tags/Band): ein Ort wird EINMAL mit
+# Persönliche Orte-Datenbank (analog zu Band): ein Ort wird EINMAL mit
 # Bezeichnung + Land/Ort (je eine Referenz auf die Länder-/Orte-Listen) + Location-Detail
 # angelegt und danach im Formular per Dropdown wiederverwendet, statt bei jedem Ort
 # alle Felder erneut einzutippen.
@@ -219,7 +107,7 @@ class Location(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Persönliche Band-Datenbank (analog zu Tags): frei von der Person selbst
+# Persönliche Band-Datenbank: frei von der Person selbst
 # gepflegt, u. a. direkt in der Konzert-Eingabemaske anlegbar (siehe
 # wireBandPickers in app.js), damit man beim Erfassen nicht erst in ein
 # separates Verwaltungs-Fenster wechseln muss.
@@ -307,11 +195,6 @@ _ensure_column("ausgaben", "created_by", "TEXT")
 _ensure_column("users", "avatar_path", "TEXT")
 _ensure_column("users", "color", "TEXT")
 _ensure_column("users", "ui_state", "TEXT")
-_ensure_column("plan_events", "uhrzeit_ende", "TIME")
-_ensure_column("plan_events", "shared_project_id", "INTEGER")
-_ensure_column("plan_events", "datum_ende", "DATE")
-_ensure_column("plan_events", "is_public", "BOOLEAN", "DEFAULT 0")
-_ensure_column("plan_events", "recurrence_group", "TEXT")
 _ensure_column("locations", "country_id", "INTEGER")
 _ensure_column("locations", "city_id", "INTEGER")
 
@@ -330,50 +213,6 @@ _ensure_index("ix_ausgaben_glaubiger_id", "ausgaben", "glaubiger_id")
 _ensure_index("ix_ausgaben_schuldner_id", "ausgaben", "schuldner_id")
 _ensure_index("ix_ausgaben_status", "ausgaben", "status")
 _ensure_index("ix_ausgaben_datum", "ausgaben", "datum")
-
-
-def _relax_plan_events_not_null():
-    """plan_events.datum und .uhrzeit waren ursprünglich NOT NULL; seit "noch
-    offene" (datums-/uhrzeitlose) Termine möglich sind, müssen beide Spalten
-    NULL erlauben. SQLite kennt kein ALTER COLUMN für Constraints, daher wird
-    die Tabelle bei Bedarf einmalig neu aufgebaut (Rename, Neuanlage mit
-    lockerem Schema, Daten kopieren, alte Tabelle löschen). Läuft nur, wenn
-    noch mindestens eine der beiden Spalten NOT NULL ist, ist also bei jedem
-    weiteren Start ein No-Op.
-    """
-    with engine.connect() as conn:
-        info = conn.exec_driver_sql("PRAGMA table_info(plan_events)").fetchall()
-        by_name = {row[1]: row for row in info}
-        still_not_null = any(by_name[c][3] == 1 for c in ("datum", "uhrzeit") if c in by_name)
-        if not still_not_null:
-            return
-
-        conn.exec_driver_sql("ALTER TABLE plan_events RENAME TO plan_events_old")
-        conn.exec_driver_sql(
-            """
-            CREATE TABLE plan_events (
-                id INTEGER PRIMARY KEY,
-                datum DATE,
-                uhrzeit TIME,
-                bezeichnung VARCHAR(60) NOT NULL,
-                location VARCHAR(120),
-                beschreibung TEXT,
-                created_by VARCHAR,
-                created_at DATETIME
-            )
-            """
-        )
-        conn.exec_driver_sql(
-            "INSERT INTO plan_events (id, datum, uhrzeit, bezeichnung, location, beschreibung, "
-            "created_by, created_at) "
-            "SELECT id, datum, uhrzeit, bezeichnung, location, beschreibung, created_by, created_at "
-            "FROM plan_events_old"
-        )
-        conn.exec_driver_sql("DROP TABLE plan_events_old")
-        conn.commit()
-
-
-_relax_plan_events_not_null()
 
 
 def _backfill_expense_batch_ids():
